@@ -44,6 +44,8 @@ Expected Rust coverage:
 - UI Automation root access succeeds through `CUIAutomation`.
 - SQLite opens in memory through `rusqlite`.
 - TOML parses through `toml`.
+- DPAPI protects and unprotects a secret through `CryptProtectData` and `CryptUnprotectData`.
+- Named pipes exchange a ping/pong message through `CreateNamedPipeW` and `CreateFileW`.
 
 Expected WPF coverage:
 
