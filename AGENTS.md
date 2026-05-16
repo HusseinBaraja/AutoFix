@@ -28,6 +28,7 @@ AutoFix runs quietly from the system tray, includes a Flow Launcher-style settin
 
 ## Git Workflow
 
+- Never commit to main. If the project is checked out to main and the user asks for a task, create a new branch and do the work in there.
 - If the user explicitly says no branch is needed, do not create one.
 - Commit incrementally when a logical checkpoint is complete.
 - Close all PowerShell/CMD instances you created during the session after you are done working and the codebase is clean and committed.

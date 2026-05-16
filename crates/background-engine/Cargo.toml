@@ -9,4 +9,5 @@ rust-version.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+windows = { version = "0.61", features = ["Win32_System_Com", "Win32_UI_Accessibility"] }
 windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging"] }
