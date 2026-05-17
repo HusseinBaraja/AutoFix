@@ -32,35 +32,48 @@ exit
 ## Verify CodeRabbit
 
 ```bash
-~/.local/bin/coderabbit --version
-~/.local/bin/coderabbit auth status
-~/.local/bin/coderabbit doctor
+cr --version
+cr auth status
+cr doctor
 ```
 
-The short alias should also work:
+If `cr` is not in `PATH`, use the installed path:
 
 ```bash
 ~/.local/bin/cr --version
 ```
 
-## Review the Current Branch
+## Review Local Changes
 
-Review the current branch against `main`:
+CodeRabbit's CLI credit email recommends `cr` for feedback on staged and
+unstaged changes before committing. Use this as the default review flow:
 
 ```bash
-~/.local/bin/coderabbit review --base main --type all
+cr
+```
+
+This is equivalent to reviewing local changes:
+
+```bash
+cr review
+```
+
+For structured output that an AI agent can act on:
+
+```bash
+cr --agent
 ```
 
 For plain log output:
 
 ```bash
-~/.local/bin/coderabbit review --base main --type all --no-color
+cr --plain --no-color
 ```
 
-For structured agent output:
+Check local review history and usage stats:
 
 ```bash
-~/.local/bin/coderabbit review --base main --type all --agent
+cr stats
 ```
 
 ## Useful Review Scopes
@@ -68,19 +81,40 @@ For structured agent output:
 Review only uncommitted changes:
 
 ```bash
-~/.local/bin/coderabbit review --type uncommitted
+cr review --type uncommitted
 ```
 
 Review only committed branch changes:
 
 ```bash
-~/.local/bin/coderabbit review --base main --type committed
+cr review --base main --type committed
+```
+
+Review the current branch against `main`:
+
+```bash
+cr review --base main --type all
 ```
 
 Review one directory:
 
 ```bash
-~/.local/bin/coderabbit review --base main --dir crates/app
+cr review --base main --dir crates/app
+```
+
+## CLI Credits
+
+The CodeRabbit CLI credit email says the included credits apply to CLI file
+reviews. A completed review charges by reviewed file. If `cr stats` shows no
+history, the review did not finish and credits were not consumed.
+
+The dashboard may continue to show `$0.00` spent until CodeRabbit records a
+completed chargeable CLI review.
+
+Use the same organization shown by:
+
+```bash
+cr auth status
 ```
 
 ## Long-Running Review
@@ -95,4 +129,6 @@ Stop a stuck review only when needed:
 
 ```bash
 pkill -f "coderabbit review"
+pkill -f "coderabbit --plain"
+pkill -f "coderabbit --agent"
 ```
