@@ -11,3 +11,11 @@ Planned capabilities include:
 - Clipboard preservation, app-level undo, and secure-field blocking.
 
 This repository is currently in setup stage.
+
+## Repository Structure
+
+- `app-core-rust/` - Rust background engine and shared core logic.
+- `ui/settings-ui/` - WPF settings application.
+- `shared-schema/` - Shared config schemas, IPC contracts, and documentation.
+- `installer/` - Installer scripts and packaging assets later.
+- `docs/` - Architecture and design notes.

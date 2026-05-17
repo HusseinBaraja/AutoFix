@@ -1,0 +1,13 @@
+[package]
+name = "background-engine"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+windows = { version = "0.61", features = ["Win32_System_Com", "Win32_UI_Accessibility"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_UI_WindowsAndMessaging"] }

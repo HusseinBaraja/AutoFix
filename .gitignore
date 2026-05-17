@@ -1,1 +1,8 @@
 .agents/
+target/
+bin/
+obj/
+/.idea/.gitignore
+/.idea/AutoFix.iml
+/.idea/modules.xml
+/.idea/vcs.xml
