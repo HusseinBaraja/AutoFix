@@ -7,7 +7,9 @@ use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
 
 pub(crate) fn ui_automation_root_available() -> Result<bool> {
     unsafe {
-        CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
+        let initialization_result = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let initialization_succeeded = initialization_result.is_ok();
+        initialization_result.ok()?;
 
         let result = (|| {
             let automation: IUIAutomation =
@@ -16,7 +18,9 @@ pub(crate) fn ui_automation_root_available() -> Result<bool> {
             Ok(true)
         })();
 
-        CoUninitialize();
+        if initialization_succeeded {
+            CoUninitialize();
+        }
         result
     }
 }
