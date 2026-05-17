@@ -1,4 +1,4 @@
-# Settings UI WPF
+# Settings UI
 
 WPF settings application for AutoFix.
 
