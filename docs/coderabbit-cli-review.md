@@ -76,6 +76,36 @@ Check local review history and usage stats:
 cr stats
 ```
 
+## Output Options
+
+CodeRabbit CLI does not currently have an official Markdown output mode.
+
+Official modes:
+
+```bash
+cr                # default plain text review
+cr --plain        # detailed plain text review
+cr --interactive  # terminal UI
+cr --agent        # structured JSON stream for agents
+```
+
+Save plain text into a Markdown file:
+
+```bash
+cr --plain --no-color > coderabbit-review.md
+```
+
+This creates a `.md` file, but the content is still CodeRabbit plain text.
+
+Save agent output for later conversion:
+
+```bash
+cr --agent > coderabbit-review.jsonl
+```
+
+Use `coderabbit-review.jsonl` when an AI agent should turn findings into a
+Markdown report or act on the structured findings.
+
 ## Useful Review Scopes
 
 Review only uncommitted changes:
