@@ -44,7 +44,14 @@ Invoke-Check ".NET SDK" { dotnet --info }
 $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
 if (Test-Path $vswhere) {
     Invoke-Check "Visual Studio Build Tools C++ workload" {
-        & $vswhere -products * -requires Microsoft.VisualStudio.Workload.VCTools -property installationPath
+        $vswhereOutput = & $vswhere -products * -requires Microsoft.VisualStudio.Workload.VCTools -property installationPath
+        $vswhereExitCode = $LASTEXITCODE
+        if ($vswhereExitCode -ne 0 -or -not $vswhereOutput) {
+            $global:LASTEXITCODE = if ($vswhereExitCode -ne 0) { $vswhereExitCode } else { 1 }
+            return
+        }
+
+        $vswhereOutput
     }
 } else {
     Write-Host "FAILED: vswhere.exe not found"
