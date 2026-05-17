@@ -15,7 +15,7 @@ This repository is currently in setup stage.
 ## Repository Structure
 
 - `app-core-rust/` - Rust background engine and shared core logic.
-- `settings-ui-wpf/` - WPF settings application.
+- `ui/settings-ui/` - WPF settings application.
 - `shared-schema/` - Shared config schemas, IPC contracts, and documentation.
 - `installer/` - Installer scripts and packaging assets later.
 - `docs/` - Architecture and design notes.
