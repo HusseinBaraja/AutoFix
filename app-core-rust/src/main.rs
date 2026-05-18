@@ -1,7 +1,7 @@
 mod accessibility;
 mod ipc;
 mod platform;
-mod secrets;
+pub mod secrets;
 mod settings;
 mod storage;
 

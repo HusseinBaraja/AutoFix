@@ -1,8 +1,10 @@
 use std::ptr::{null, null_mut};
 
-use windows_sys::Win32::Foundation::LocalFree;
-use windows_sys::Win32::Security::Cryptography::{
-    CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+use windows_sys::Win32::{
+    Foundation::LocalFree,
+    Security::Cryptography::{
+        CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+    },
 };
 
 pub(crate) fn dpapi_round_trip_available() -> bool {
