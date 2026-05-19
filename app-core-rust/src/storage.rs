@@ -81,7 +81,3 @@ impl Database {
         Ok(())
     }
 }
-
-pub(crate) fn open_memory_database() -> Result<Database> {
-    Database::open_memory()
-}
