@@ -5,5 +5,7 @@ mod toml_io;
 mod validation;
 
 pub(crate) use model::AppConfig;
-pub(crate) use toml_io::{default_config_toml, load_config, save_config, ConfigIoError};
+#[cfg(test)]
+pub(crate) use toml_io::default_config_toml;
+pub(crate) use toml_io::{load_config, save_config, ConfigIoError};
 pub(crate) use validation::ValidateConfig;

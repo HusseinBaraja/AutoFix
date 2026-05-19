@@ -48,6 +48,7 @@ pub(crate) fn parse_config(input: &str) -> Result<AppConfig, ConfigIoError> {
     Ok(config)
 }
 
+#[cfg(test)]
 pub(crate) fn default_config_toml() -> Result<String, ConfigIoError> {
     config_to_toml(&AppConfig::default())
 }
