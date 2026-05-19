@@ -146,6 +146,16 @@ fn rejects_streaming_correction() {
 }
 
 #[test]
+fn rejects_zero_log_retention_days() {
+    let mut config = AppConfig::default();
+    config.logging.log_retention_days = Some(0);
+
+    let error = config.validate().unwrap_err();
+
+    assert_eq!(error.field(), "logging.log_retention_days");
+}
+
+#[test]
 fn saves_and_loads_config() {
     let path = std::env::temp_dir().join(format!(
         "autofix-config-{}.toml",
