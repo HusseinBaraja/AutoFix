@@ -2,8 +2,10 @@ use rusqlite::Connection;
 use std::{fs, time::SystemTime};
 
 use super::{
-    logs::SafeDebugEvent, migrations::CURRENT_SCHEMA_VERSION, AppRule, CorrectionMetadata,
-    CustomDictionaryEntry, Database, LanguageOverride, LearnedCorrectionRule,
+    logs::SafeDebugEvent,
+    migrations::{self, CURRENT_SCHEMA_VERSION},
+    AppRule, CorrectionMetadata, CustomDictionaryEntry, Database, LanguageOverride,
+    LearnedCorrectionRule,
 };
 
 #[test]
@@ -201,6 +203,77 @@ fn debug_events_store_full_text_only_with_explicit_full_text_payload() {
 }
 
 #[test]
+fn v2_migration_preserves_full_debug_mode() {
+    let connection = Connection::open_in_memory().unwrap();
+    connection
+        .execute_batch(
+            "
+            create table schema_migrations (
+                version integer primary key,
+                applied_at text not null default current_timestamp
+            );
+            insert into schema_migrations (version) values (1);
+
+            create table correction_metadata (
+                id integer primary key,
+                occurred_at text not null default current_timestamp,
+                session_id text not null,
+                trigger_type text not null,
+                confidence_tier text not null,
+                engine_used text not null,
+                replacement_method text not null,
+                result_reason text not null,
+                latency_ms integer not null check (latency_ms >= 0)
+            );
+
+            create table debug_events (
+                id integer primary key,
+                occurred_at text not null default current_timestamp,
+                session_id text,
+                event_type text not null,
+                severity text not null,
+                message text not null,
+                typed_text text,
+                full_debug_enabled integer not null default 0 check (full_debug_enabled in (0, 1)),
+                check (full_debug_enabled = 1 or typed_text is null)
+            );
+            create index idx_debug_events_session on debug_events(session_id, occurred_at);
+
+            insert into debug_events (
+                session_id, event_type, severity, message, typed_text, full_debug_enabled
+            )
+            values
+                ('session-1', 'capture', 'debug', 'full', 'private words', 1),
+                ('session-1', 'capture', 'debug', 'redacted', null, 0);
+            ",
+        )
+        .unwrap();
+
+    migrations::migrate(&connection).unwrap();
+
+    let modes = debug_modes(&connection);
+    assert_eq!(
+        modes,
+        vec![
+            (1, "full_text".to_owned(), Some("private words".to_owned())),
+            (2, "redacted".to_owned(), None),
+        ]
+    );
+    assert_column_is_required(&connection, "debug_events", "debug_mode");
+    assert!(connection
+        .execute(
+            "
+            insert into debug_events (
+                session_id, event_type, severity, message, debug_mode
+            )
+            values ('session-1', 'capture', 'debug', 'bad mode', 'invalid')
+            ",
+            [],
+        )
+        .is_err());
+}
+
+#[test]
 fn debug_events_are_off_by_default() {
     let database = Database::open_memory().unwrap();
     database
@@ -271,4 +344,33 @@ fn row_count(connection: &Connection, table_name: &str) -> i64 {
             row.get(0)
         })
         .unwrap()
+}
+
+fn debug_modes(connection: &Connection) -> Vec<(i64, String, Option<String>)> {
+    let mut statement = connection
+        .prepare("select id, debug_mode, typed_text from debug_events order by id")
+        .unwrap();
+    statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+}
+
+fn assert_column_is_required(connection: &Connection, table_name: &str, column_name: &str) {
+    let mut statement = connection
+        .prepare(&format!("pragma table_info({table_name})"))
+        .unwrap();
+    let is_required = statement
+        .query_map([], |row| {
+            let name: String = row.get(1)?;
+            let not_null: bool = row.get(3)?;
+            Ok((name, not_null))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .into_iter()
+        .any(|(name, not_null)| name == column_name && not_null);
+    assert!(is_required);
 }

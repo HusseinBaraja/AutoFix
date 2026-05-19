@@ -117,8 +117,41 @@ fn migrate_to_v2(connection: &Connection) -> Result<()> {
     connection.execute_batch(
         "
         alter table correction_metadata add column app_process_name text not null default 'unknown';
-        alter table debug_events add column debug_mode text not null default 'redacted' check (debug_mode in ('redacted', 'full_text'));
+        alter table debug_events add column debug_mode text;
         alter table debug_events add column redacted_label text;
+        update debug_events
+        set debug_mode = case
+            when full_debug_enabled = 1 then 'full_text'
+            else 'redacted'
+        end
+        where debug_mode is null;
+
+        create table debug_events_v2 (
+            id integer primary key,
+            occurred_at text not null default current_timestamp,
+            session_id text,
+            event_type text not null,
+            severity text not null,
+            message text not null,
+            typed_text text,
+            full_debug_enabled integer not null default 0 check (full_debug_enabled in (0, 1)),
+            debug_mode text not null check (debug_mode in ('redacted', 'full_text')),
+            redacted_label text,
+            check (full_debug_enabled = 1 or typed_text is null)
+        );
+
+        insert into debug_events_v2 (
+            id, occurred_at, session_id, event_type, severity, message, typed_text,
+            full_debug_enabled, debug_mode, redacted_label
+        )
+        select
+            id, occurred_at, session_id, event_type, severity, message, typed_text,
+            full_debug_enabled, debug_mode, redacted_label
+        from debug_events;
+
+        drop table debug_events;
+        alter table debug_events_v2 rename to debug_events;
+        create index idx_debug_events_session on debug_events(session_id, occurred_at);
         ",
     )
 }
