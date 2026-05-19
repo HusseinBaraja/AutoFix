@@ -4,6 +4,7 @@ use std::{fs, time::SystemTime};
 use super::{
     logs::SafeDebugEvent,
     migrations::{self, CURRENT_SCHEMA_VERSION},
+    types::{DebugEvent, DebugLogMode, DebugPayload},
     AppRule, CorrectionMetadata, CustomDictionaryEntry, Database, LanguageOverride,
     LearnedCorrectionRule,
 };
@@ -200,6 +201,24 @@ fn debug_events_store_full_text_only_with_explicit_full_text_payload() {
         .query_row("select typed_text from debug_events", [], |row| row.get(0))
         .unwrap();
     assert_eq!(typed_text, Some("private words".to_owned()));
+}
+
+#[test]
+fn debug_events_reject_mismatched_mode_and_payload() {
+    let database = Database::open_memory().unwrap();
+    let result = database.debug_events().record(&DebugEvent {
+        session_id: Some("session-1".to_owned()),
+        event_type: "correction_skipped".to_owned(),
+        severity: "debug".to_owned(),
+        message: "bad debug event".to_owned(),
+        mode: DebugLogMode::FullText,
+        payload: DebugPayload::Redacted {
+            label: "typed_text".to_owned(),
+        },
+    });
+
+    assert!(result.is_err());
+    assert_eq!(row_count(&database.connection, "debug_events"), 0);
 }
 
 #[test]

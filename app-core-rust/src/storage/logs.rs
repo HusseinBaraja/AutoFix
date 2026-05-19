@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, Error, Result};
 
 use super::types::{CorrectionMetadata, DebugEvent, DebugLogMode, DebugPayload};
 
@@ -44,21 +44,22 @@ impl<'a> DebugEventRepository<'a> {
     }
 
     pub(crate) fn record(&self, event: &DebugEvent) -> Result<()> {
-        let debug_mode = match event.mode {
-            DebugLogMode::Off => return Ok(()),
-            DebugLogMode::Redacted => "redacted",
-            DebugLogMode::FullText => "full_text",
-        };
-        let full_debug_enabled = matches!(event.mode, DebugLogMode::FullText);
-        let (redacted_label, typed_text) = match (&event.mode, &event.payload) {
-            (DebugLogMode::Redacted, DebugPayload::Redacted { label }) => {
-                (Some(label.as_str()), None)
-            }
-            (DebugLogMode::FullText, DebugPayload::FullText { typed_text }) => {
-                (None, Some(typed_text.as_str()))
-            }
-            _ => (None, None),
-        };
+        let (debug_mode, full_debug_enabled, redacted_label, typed_text) =
+            match (&event.mode, &event.payload) {
+                (DebugLogMode::Off, _) => return Ok(()),
+                (DebugLogMode::Redacted, DebugPayload::Redacted { label }) => {
+                    ("redacted", false, Some(label.as_str()), None)
+                }
+                (DebugLogMode::FullText, DebugPayload::FullText { typed_text }) => {
+                    ("full_text", true, None, Some(typed_text.as_str()))
+                }
+                _ => {
+                    return Err(Error::InvalidParameterName(format!(
+                        "debug event mode/payload mismatch: mode={:?}, payload={:?}",
+                        event.mode, event.payload
+                    )));
+                }
+            };
         self.connection.execute(
             "
             insert into debug_events (
