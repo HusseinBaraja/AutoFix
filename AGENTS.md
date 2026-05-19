@@ -20,6 +20,9 @@ AutoFix runs quietly from the system tray, includes a Flow Launcher-style settin
 
 - Follow test-driven development when making code changes: add or update tests as you go.
 - Keep tests focused on the behavior changed.
+- A task is not complete until the app compiles, runs, and has been verified with no warnings or errors.
+- Fix warnings and errors properly by addressing the underlying issue; do not silence, bypass, or hide them just to make output clean.
+- Only call the task done after tests pass and the app has been run cleanly.
 
 ## PR Review Fixes
 
