@@ -123,6 +123,7 @@ log_retention_days = 30
         config.correction.enabled_grammar_categories,
         vec![GrammarCategory::Agreement, GrammarCategory::Punctuation]
     );
+    assert_eq!(config.logging.log_retention_days, Some(30));
 }
 
 #[test]
