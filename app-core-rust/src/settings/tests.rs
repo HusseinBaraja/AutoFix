@@ -40,6 +40,7 @@ fn default_config_has_requested_values() {
     assert!(!config.logging.debug_mode_enabled);
     assert!(!config.logging.redacted_debug_mode_enabled);
     assert!(!config.logging.full_text_debug_mode_enabled);
+    assert_eq!(config.logging.log_retention_days, None);
 }
 
 #[test]
@@ -110,6 +111,7 @@ metadata_only_logs_enabled = true
 debug_mode_enabled = false
 redacted_debug_mode_enabled = false
 full_text_debug_mode_enabled = false
+log_retention_days = 30
 "#,
     )
     .unwrap();

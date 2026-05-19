@@ -203,6 +203,12 @@ fn validate_logging(config: &AppConfig) -> Result<(), ConfigValidationError> {
             "requires debug_mode_enabled",
         ));
     }
+    if config.logging.log_retention_days == Some(0) {
+        return Err(ConfigValidationError::new(
+            "logging.log_retention_days",
+            "must be empty or greater than zero",
+        ));
+    }
 
     Ok(())
 }

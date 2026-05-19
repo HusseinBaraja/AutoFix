@@ -2,8 +2,8 @@ use rusqlite::Connection;
 use std::{fs, time::SystemTime};
 
 use super::{
-    migrations::CURRENT_SCHEMA_VERSION, AppRule, CorrectionMetadata, CustomDictionaryEntry,
-    Database, DebugEvent, LanguageOverride, LearnedCorrectionRule,
+    logs::SafeDebugEvent, migrations::CURRENT_SCHEMA_VERSION, AppRule, CorrectionMetadata,
+    CustomDictionaryEntry, Database, LanguageOverride, LearnedCorrectionRule,
 };
 
 #[test]
@@ -139,6 +139,7 @@ fn correction_metadata_has_no_text_columns() {
         .correction_metadata()
         .record(&CorrectionMetadata {
             session_id: "session-1".to_owned(),
+            app_process_name: "notepad.exe".to_owned(),
             trigger_type: "manual_shortcut".to_owned(),
             confidence_tier: "high".to_owned(),
             engine_used: "local".to_owned(),
@@ -150,21 +151,23 @@ fn correction_metadata_has_no_text_columns() {
 
     let columns = table_columns(&database.connection, "correction_metadata");
     assert!(!columns.iter().any(|column| column.contains("text")));
+    assert!(columns.contains(&"app_process_name".to_owned()));
 }
 
 #[test]
-fn debug_events_drop_typed_text_unless_full_debug_enabled() {
+fn debug_events_drop_text_unless_full_text_debug_is_explicit() {
     let database = Database::open_memory().unwrap();
     database
         .debug_events()
-        .record(&DebugEvent {
-            session_id: Some("session-1".to_owned()),
-            event_type: "correction_skipped".to_owned(),
-            severity: "debug".to_owned(),
-            message: "blocked app".to_owned(),
-            typed_text: Some("private words".to_owned()),
-            full_debug_enabled: false,
-        })
+        .record(
+            &SafeDebugEvent::new(
+                Some("session-1".to_owned()),
+                "correction_skipped",
+                "debug",
+                "blocked app",
+            )
+            .redacted("typed_text"),
+        )
         .unwrap();
 
     let typed_text: Option<String> = database
@@ -175,12 +178,55 @@ fn debug_events_drop_typed_text_unless_full_debug_enabled() {
 }
 
 #[test]
+fn debug_events_store_full_text_only_with_explicit_full_text_payload() {
+    let database = Database::open_memory().unwrap();
+    database
+        .debug_events()
+        .record(
+            &SafeDebugEvent::new(
+                Some("session-1".to_owned()),
+                "correction_skipped",
+                "debug",
+                "full capture",
+            )
+            .full_text("private words"),
+        )
+        .unwrap();
+
+    let typed_text: Option<String> = database
+        .connection
+        .query_row("select typed_text from debug_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(typed_text, Some("private words".to_owned()));
+}
+
+#[test]
+fn debug_events_are_off_by_default() {
+    let database = Database::open_memory().unwrap();
+    database
+        .debug_events()
+        .record(
+            &SafeDebugEvent::new(
+                Some("session-1".to_owned()),
+                "correction_skipped",
+                "debug",
+                "blocked app",
+            )
+            .off(),
+        )
+        .unwrap();
+
+    assert_eq!(row_count(&database.connection, "debug_events"), 0);
+}
+
+#[test]
 fn clear_logs_removes_correction_metadata_and_debug_events() {
     let database = Database::open_memory().unwrap();
     database
         .correction_metadata()
         .record(&CorrectionMetadata {
             session_id: "session-1".to_owned(),
+            app_process_name: "notepad.exe".to_owned(),
             trigger_type: "character".to_owned(),
             confidence_tier: "medium".to_owned(),
             engine_used: "api".to_owned(),
@@ -191,14 +237,15 @@ fn clear_logs_removes_correction_metadata_and_debug_events() {
         .unwrap();
     database
         .debug_events()
-        .record(&DebugEvent {
-            session_id: Some("session-1".to_owned()),
-            event_type: "api_timeout".to_owned(),
-            severity: "warn".to_owned(),
-            message: "timeout".to_owned(),
-            typed_text: None,
-            full_debug_enabled: false,
-        })
+        .record(
+            &SafeDebugEvent::new(
+                Some("session-1".to_owned()),
+                "api_timeout",
+                "warn",
+                "timeout",
+            )
+            .redacted("none"),
+        )
         .unwrap();
 
     database.clear_logs().unwrap();
