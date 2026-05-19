@@ -20,6 +20,7 @@ impl ConfigValidationError {
         Self { field, message }
     }
 
+    #[cfg(test)]
     pub(crate) fn field(&self) -> &'static str {
         self.field
     }

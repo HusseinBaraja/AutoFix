@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod logs;
 mod migrations;
 mod repositories;
@@ -9,12 +11,13 @@ use std::path::Path;
 
 use rusqlite::{Connection, Result};
 
-pub(crate) use logs::{CorrectionMetadataRepository, DebugEventRepository};
-pub(crate) use repositories::{
+use logs::{CorrectionMetadataRepository, DebugEventRepository};
+use repositories::{
     AppRuleRepository, CustomDictionaryRepository, LanguageOverrideRepository,
     LearnedRuleRepository,
 };
-pub(crate) use types::{
+#[cfg(test)]
+use types::{
     AppRule, CorrectionMetadata, CustomDictionaryEntry, DebugEvent, LanguageOverride,
     LearnedCorrectionRule,
 };
@@ -80,8 +83,4 @@ impl Database {
             .execute("delete from correction_metadata", [])?;
         Ok(())
     }
-}
-
-pub(crate) fn open_memory_database() -> Result<Database> {
-    Database::open_memory()
 }

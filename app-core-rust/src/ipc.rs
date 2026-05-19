@@ -17,10 +17,6 @@ use windows_sys::Win32::System::Pipes::{
     PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 
-pub(crate) fn named_pipe_round_trip_available() -> bool {
-    named_pipe_round_trip("autofix-pipe-check").is_ok_and(|reply| reply == b"pong")
-}
-
 fn named_pipe_round_trip(name: &str) -> Result<Vec<u8>, &'static str> {
     let pipe_path = format!(r"\\.\pipe\{name}-{}", std::process::id());
     let server_path = pipe_path.clone();
