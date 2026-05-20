@@ -1,4 +1,4 @@
-use super::{TrayCommandTargets, TrayMenuContext, TrayVisualState};
+use super::{assets, TrayCommandTargets, TrayMenuContext, TrayVisualState};
 use std::{error::Error, path::Path, process::Command};
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
@@ -135,6 +135,10 @@ fn open_path(path: &Path) {
 }
 
 fn icon_for_state(state: TrayVisualState) -> Result<Icon, tray_icon::BadIcon> {
+    if let Some(icon) = brand_icon() {
+        return Ok(icon);
+    }
+
     let rgba = match state {
         TrayVisualState::Idle => [91, 99, 112, 255],
         TrayVisualState::Active => [38, 166, 91, 255],
@@ -143,6 +147,16 @@ fn icon_for_state(state: TrayVisualState) -> Result<Icon, tray_icon::BadIcon> {
         TrayVisualState::Error => [220, 76, 70, 255],
     };
     Icon::from_rgba(tinted_logo_icon(rgba), 16, 16)
+}
+
+fn brand_icon() -> Option<Icon> {
+    match Icon::from_path(assets::brand_icon_path(), Some((16, 16))) {
+        Ok(icon) => Some(icon),
+        Err(error) => {
+            tracing::warn!("failed to load brand tray icon asset: {}", error);
+            None
+        }
+    }
 }
 
 fn tinted_logo_icon(rgba: [u8; 4]) -> Vec<u8> {

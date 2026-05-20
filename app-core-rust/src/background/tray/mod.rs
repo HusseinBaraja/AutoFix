@@ -1,3 +1,4 @@
+mod assets;
 #[cfg(not(test))]
 mod native;
 #[cfg(test)]
