@@ -36,6 +36,7 @@ pub(crate) struct LanguageOverride {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CorrectionMetadata {
     pub(crate) session_id: String,
+    pub(crate) app_process_name: String,
     pub(crate) trigger_type: String,
     pub(crate) confidence_tier: String,
     pub(crate) engine_used: String,
@@ -50,6 +51,20 @@ pub(crate) struct DebugEvent {
     pub(crate) event_type: String,
     pub(crate) severity: String,
     pub(crate) message: String,
-    pub(crate) typed_text: Option<String>,
-    pub(crate) full_debug_enabled: bool,
+    pub(crate) mode: DebugLogMode,
+    pub(crate) payload: DebugPayload,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DebugLogMode {
+    Off,
+    Redacted,
+    FullText,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DebugPayload {
+    None,
+    Redacted { label: String },
+    FullText { typed_text: String },
 }

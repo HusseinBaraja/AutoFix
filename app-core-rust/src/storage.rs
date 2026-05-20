@@ -18,8 +18,7 @@ use repositories::{
 };
 #[cfg(test)]
 use types::{
-    AppRule, CorrectionMetadata, CustomDictionaryEntry, DebugEvent, LanguageOverride,
-    LearnedCorrectionRule,
+    AppRule, CorrectionMetadata, CustomDictionaryEntry, LanguageOverride, LearnedCorrectionRule,
 };
 
 pub(crate) struct Database {
@@ -48,7 +47,7 @@ impl Database {
 
     pub(crate) fn schema_version(&self) -> Result<i64> {
         self.connection
-            .query_row("select version from schema_migrations", [], |row| {
+            .query_row("select max(version) from schema_migrations", [], |row| {
                 row.get(0)
             })
     }

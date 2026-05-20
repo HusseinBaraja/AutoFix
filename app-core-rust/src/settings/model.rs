@@ -220,6 +220,7 @@ pub(crate) struct LoggingConfig {
     pub(crate) debug_mode_enabled: bool,
     pub(crate) redacted_debug_mode_enabled: bool,
     pub(crate) full_text_debug_mode_enabled: bool,
+    pub(crate) log_retention_days: Option<u16>,
 }
 
 impl Default for LoggingConfig {
@@ -229,6 +230,7 @@ impl Default for LoggingConfig {
             debug_mode_enabled: false,
             redacted_debug_mode_enabled: false,
             full_text_debug_mode_enabled: false,
+            log_retention_days: None,
         }
     }
 }

@@ -1,6 +1,6 @@
 use rusqlite::{Connection, Result};
 
-pub(super) const CURRENT_SCHEMA_VERSION: i64 = 1;
+pub(super) const CURRENT_SCHEMA_VERSION: i64 = 2;
 
 pub(super) fn migrate(connection: &Connection) -> Result<()> {
     connection.pragma_update(None, "foreign_keys", "ON")?;
@@ -16,10 +16,11 @@ pub(super) fn migrate(connection: &Connection) -> Result<()> {
     let version = current_version(connection)?;
     if version < 1 {
         migrate_to_v1(connection)?;
-        connection.execute(
-            "insert into schema_migrations (version) values (?1)",
-            [CURRENT_SCHEMA_VERSION],
-        )?;
+        connection.execute("insert into schema_migrations (version) values (1)", [])?;
+    }
+    if version < 2 {
+        migrate_to_v2(connection)?;
+        connection.execute("insert into schema_migrations (version) values (2)", [])?;
     }
 
     Ok(())
@@ -107,6 +108,49 @@ fn migrate_to_v1(connection: &Connection) -> Result<()> {
         create index idx_dictionary_lookup on custom_dictionary_entries(language_code, app_process_name, entry);
         create index idx_learned_rules_lookup on learned_correction_rules(rule_type, app_process_name, language_code);
         create index idx_correction_metadata_session on correction_metadata(session_id, occurred_at);
+        create index idx_debug_events_session on debug_events(session_id, occurred_at);
+        ",
+    )
+}
+
+fn migrate_to_v2(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "
+        alter table correction_metadata add column app_process_name text not null default 'unknown';
+        alter table debug_events add column debug_mode text;
+        alter table debug_events add column redacted_label text;
+        update debug_events
+        set debug_mode = case
+            when full_debug_enabled = 1 then 'full_text'
+            else 'redacted'
+        end
+        where debug_mode is null;
+
+        create table debug_events_v2 (
+            id integer primary key,
+            occurred_at text not null default current_timestamp,
+            session_id text,
+            event_type text not null,
+            severity text not null,
+            message text not null,
+            typed_text text,
+            full_debug_enabled integer not null default 0 check (full_debug_enabled in (0, 1)),
+            debug_mode text not null check (debug_mode in ('redacted', 'full_text')),
+            redacted_label text,
+            check (full_debug_enabled = 1 or typed_text is null)
+        );
+
+        insert into debug_events_v2 (
+            id, occurred_at, session_id, event_type, severity, message, typed_text,
+            full_debug_enabled, debug_mode, redacted_label
+        )
+        select
+            id, occurred_at, session_id, event_type, severity, message, typed_text,
+            full_debug_enabled, debug_mode, redacted_label
+        from debug_events;
+
+        drop table debug_events;
+        alter table debug_events_v2 rename to debug_events;
         create index idx_debug_events_session on debug_events(session_id, occurred_at);
         ",
     )
