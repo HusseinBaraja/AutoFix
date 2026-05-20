@@ -3,7 +3,6 @@ mod accessibility;
 mod background;
 #[cfg(test)]
 mod ipc;
-#[cfg(test)]
 mod platform;
 #[cfg(test)]
 pub mod secrets;

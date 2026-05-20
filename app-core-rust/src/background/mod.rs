@@ -1,6 +1,7 @@
 mod admin;
 mod components;
 mod paths;
+mod tray;
 #[cfg(test)]
 mod tests;
 
@@ -15,9 +16,10 @@ use self::{
     admin::reject_elevated_process,
     components::{
         CorrectionEngineRouter, GlobalShortcutListener, NamedPipeIpcServer, ReplacementEngine,
-        SessionManager, TrayIcon,
+        SessionManager,
     },
     paths::RuntimePaths,
+    tray::TrayIcon,
 };
 
 pub(crate) struct BackgroundRuntime {
@@ -70,7 +72,8 @@ impl Error for BackgroundError {
 }
 
 pub(crate) fn run_background_mode() -> Result<(), BackgroundError> {
-    let runtime = BackgroundRuntime::start(RuntimePaths::for_current_user()?)?;
+    let mut runtime = BackgroundRuntime::start(RuntimePaths::for_current_user()?)?;
+    runtime.run_until_exit();
     runtime.shutdown();
     Ok(())
 }
@@ -98,6 +101,10 @@ impl BackgroundRuntime {
         drop(self.database);
         tracing::info!("AutoFix background process exited cleanly");
     }
+
+    fn run_until_exit(&mut self) {
+        self.components.run_until_exit();
+    }
 }
 
 impl RuntimeComponents {
@@ -120,10 +127,49 @@ impl RuntimeComponents {
         self.ipc_server.shutdown();
         self.tray_icon.shutdown();
     }
+
+    fn run_until_exit(&mut self) {
+        message_loop::run_until_exit(|| self.tray_icon.process_menu_events());
+    }
 }
 
 fn initialize_logging() {
     let _ = tracing_subscriber::fmt().with_target(false).try_init();
+}
+
+#[cfg(windows)]
+mod message_loop {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, GetMessageW, PostQuitMessage, TranslateMessage, MSG,
+    };
+
+    pub(super) fn run_until_exit(mut should_exit: impl FnMut() -> bool) {
+        unsafe {
+            let mut message = std::mem::zeroed::<MSG>();
+            loop {
+                let result = GetMessageW(&mut message, std::ptr::null_mut(), 0, 0);
+                if result <= 0 {
+                    break;
+                }
+
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+
+                if should_exit() {
+                    PostQuitMessage(0);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod message_loop {
+    pub(super) fn run_until_exit(mut should_exit: impl FnMut() -> bool) {
+        while !should_exit() {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    }
 }
 
 fn ensure_parent_directory(path: &Path) -> Result<(), BackgroundError> {
