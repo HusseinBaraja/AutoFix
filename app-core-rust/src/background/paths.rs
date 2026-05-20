@@ -5,6 +5,7 @@ use crate::background::BackgroundError;
 pub(crate) struct RuntimePaths {
     config_path: PathBuf,
     database_path: PathBuf,
+    log_directory: PathBuf,
 }
 
 impl RuntimePaths {
@@ -22,13 +23,19 @@ impl RuntimePaths {
         Ok(Self::new(
             root.join("config.toml"),
             root.join("autofix.sqlite"),
+            root.join("logs"),
         ))
     }
 
-    pub(crate) fn new(config_path: PathBuf, database_path: PathBuf) -> Self {
+    pub(crate) fn new(
+        config_path: PathBuf,
+        database_path: PathBuf,
+        log_directory: PathBuf,
+    ) -> Self {
         Self {
             config_path,
             database_path,
+            log_directory,
         }
     }
 
@@ -38,5 +45,9 @@ impl RuntimePaths {
 
     pub(crate) fn database_path(&self) -> &Path {
         &self.database_path
+    }
+
+    pub(crate) fn log_directory(&self) -> &Path {
+        &self.log_directory
     }
 }

@@ -111,7 +111,7 @@ impl RuntimeComponents {
     fn start(config: &AppConfig, paths: &RuntimePaths) -> Self {
         Self {
             tray_icon: TrayIcon::initialize(config, paths),
-            ipc_server: NamedPipeIpcServer::initialize(),
+            ipc_server: NamedPipeIpcServer::initialize(config, paths),
             global_shortcut: GlobalShortcutListener::initialize(config),
             session_manager: SessionManager::initialize(),
             correction_engine_router: CorrectionEngineRouter::initialize(config),

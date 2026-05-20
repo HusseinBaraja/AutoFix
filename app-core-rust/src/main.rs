@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod accessibility;
 mod background;
-#[cfg(test)]
 mod ipc;
 mod platform;
 #[cfg(test)]

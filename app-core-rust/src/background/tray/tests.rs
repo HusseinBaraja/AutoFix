@@ -59,10 +59,14 @@ fn pause_status_exists_as_placeholder_only() {
 #[test]
 fn command_targets_open_config_and_runtime_folder() {
     let root = std::env::temp_dir().join("autofix-tray-targets");
-    let paths = RuntimePaths::new(root.join("config.toml"), root.join("autofix.sqlite"));
+    let paths = RuntimePaths::new(
+        root.join("config.toml"),
+        root.join("autofix.sqlite"),
+        root.join("logs"),
+    );
 
     let targets = TrayCommandTargets::from_paths(&paths);
 
     assert_eq!(targets.settings_path, root.join("config.toml"));
-    assert_eq!(targets.logs_path, root);
+    assert_eq!(targets.logs_path, root.join("logs"));
 }

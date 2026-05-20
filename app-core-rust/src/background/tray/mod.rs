@@ -115,15 +115,9 @@ impl TrayMenuContext {
 
 impl TrayCommandTargets {
     fn from_paths(paths: &RuntimePaths) -> Self {
-        let logs_path = paths
-            .database_path()
-            .parent()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
-
         Self {
             settings_path: paths.config_path().to_path_buf(),
-            logs_path,
+            logs_path: paths.log_directory().to_path_buf(),
         }
     }
 }
