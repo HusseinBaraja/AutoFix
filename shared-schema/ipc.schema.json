@@ -52,7 +52,7 @@
       "properties": {
         "path": {
           "type": "string",
-          "enum": ["correction.mode", "correction.engine"]
+          "pattern": "^[a-z_]+(\\.[a-z_]+)+$"
         },
         "value": {}
       },

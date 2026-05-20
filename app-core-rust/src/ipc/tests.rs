@@ -50,6 +50,23 @@ fn updates_correction_engine_setting_and_persists_config() {
 }
 
 #[test]
+fn updates_any_valid_config_setting_by_path() {
+    let fixture = IpcFixture::start();
+    let response = send_request(
+        &fixture.pipe_path,
+        &IpcRequest::UpdateSetting(UpdateSettingRequest {
+            path: "shortcuts.correct".to_owned(),
+            value: json!("Ctrl+Shift+Space"),
+        }),
+    )
+    .unwrap();
+
+    assert!(matches!(response, IpcResponse::SettingUpdated(_)));
+    let config = crate::settings::load_config(&fixture.config_path).unwrap();
+    assert_eq!(config.shortcuts.correct, "Ctrl+Shift+Space");
+}
+
+#[test]
 fn reloads_config_from_disk() {
     let fixture = IpcFixture::start();
     let mut config = AppConfig::default();

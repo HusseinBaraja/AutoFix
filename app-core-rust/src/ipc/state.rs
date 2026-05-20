@@ -93,16 +93,39 @@ fn apply_setting(
     path: &str,
     value: serde_json::Value,
 ) -> Result<(), String> {
-    match path {
-        "correction.mode" => {
-            config.correction.mode = serde_json::from_value(value).map_err(|e| e.to_string())?
-        }
-        "correction.engine" => {
-            config.correction.engine = serde_json::from_value(value).map_err(|e| e.to_string())?
-        }
-        _ => return Err(format!("unsupported setting path: {path}")),
+    let mut document = serde_json::to_value(&*config).map_err(|error| error.to_string())?;
+    replace_path_value(&mut document, path, value)?;
+    *config = serde_json::from_value(document).map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+fn replace_path_value(
+    document: &mut serde_json::Value,
+    path: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    let segments = path.split('.').collect::<Vec<_>>();
+    if segments.is_empty() || segments.iter().any(|segment| segment.is_empty()) {
+        return Err("setting path must not be empty".to_owned());
     }
 
+    let mut current = document;
+    for segment in &segments[..segments.len() - 1] {
+        current = current
+            .get_mut(*segment)
+            .ok_or_else(|| format!("unknown setting path: {path}"))?;
+    }
+
+    let leaf = segments.last().expect("path has at least one segment");
+    let object = current
+        .as_object_mut()
+        .ok_or_else(|| format!("setting path is not editable: {path}"))?;
+    if !object.contains_key(*leaf) {
+        return Err(format!("unknown setting path: {path}"));
+    }
+
+    object.insert((*leaf).to_owned(), value);
     Ok(())
 }
 
