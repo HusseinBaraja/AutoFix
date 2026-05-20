@@ -1,5 +1,5 @@
-use super::{TrayMenuContext, TrayVisualState};
-use std::error::Error;
+use super::{TrayCommandTargets, TrayMenuContext, TrayVisualState};
+use std::{error::Error, path::Path, process::Command};
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     Icon, TrayIcon as NativeIcon, TrayIconBuilder,
@@ -17,11 +17,15 @@ pub(crate) struct NativeTray {
     mode: MenuItem,
     engine: MenuItem,
     undo: MenuItem,
+    targets: TrayCommandTargets,
 }
 
 impl NativeTray {
-    pub(crate) fn initialize(context: &TrayMenuContext) -> Option<Self> {
-        match Self::build(context) {
+    pub(crate) fn initialize(
+        context: &TrayMenuContext,
+        targets: TrayCommandTargets,
+    ) -> Option<Self> {
+        match Self::build(context, targets) {
             Ok(tray) => Some(tray),
             Err(error) => {
                 tracing::error!("failed to initialize tray icon: {}", error);
@@ -38,8 +42,8 @@ impl NativeTray {
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             match event.id.as_ref() {
                 ID_UNDO => tracing::info!("undo last correction requested from tray"),
-                ID_SETTINGS => tracing::info!("open settings requested from tray"),
-                ID_LOGS => tracing::info!("view logs requested from tray"),
+                ID_SETTINGS => self.open_settings(),
+                ID_LOGS => self.view_logs(),
                 ID_EXIT => exit_requested = true,
                 _ => {}
             }
@@ -48,7 +52,10 @@ impl NativeTray {
         exit_requested
     }
 
-    fn build(context: &TrayMenuContext) -> Result<Self, Box<dyn Error>> {
+    fn build(
+        context: &TrayMenuContext,
+        targets: TrayCommandTargets,
+    ) -> Result<Self, Box<dyn Error>> {
         let menu = Menu::new();
         let status = MenuItem::with_id("autofix.status", "", false, None);
         let app = MenuItem::with_id("autofix.current_app", "", false, None);
@@ -85,6 +92,7 @@ impl NativeTray {
             mode,
             engine,
             undo,
+            targets,
         };
         tray.apply_context(context);
         Ok(tray)
@@ -101,9 +109,26 @@ impl NativeTray {
         if let Err(error) = self.icon.set_tooltip(Some(context.tooltip())) {
             tracing::warn!("failed to update tray tooltip: {}", error);
         }
-        if let Err(error) = self.icon.set_icon(icon_for_state(context.visual_state).ok()) {
+        if let Err(error) = self
+            .icon
+            .set_icon(icon_for_state(context.visual_state).ok())
+        {
             tracing::warn!("failed to update tray icon state: {}", error);
         }
+    }
+
+    fn open_settings(&self) {
+        open_path(&self.targets.settings_path);
+    }
+
+    fn view_logs(&self) {
+        open_path(&self.targets.logs_path);
+    }
+}
+
+fn open_path(path: &Path) {
+    if let Err(error) = Command::new("explorer.exe").arg(path).spawn() {
+        tracing::warn!("failed to open {}: {}", path.display(), error);
     }
 }
 

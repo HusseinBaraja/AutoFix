@@ -4,9 +4,12 @@ mod native;
 mod tests;
 
 use crate::{
+    background::paths::RuntimePaths,
     platform,
     settings::{AppConfig, CorrectionEngine, CorrectionMode},
 };
+
+use std::path::PathBuf;
 
 pub(crate) struct TrayIcon {
     context: TrayMenuContext,
@@ -40,10 +43,10 @@ pub(crate) enum TrayVisualState {
 }
 
 impl TrayIcon {
-    pub(crate) fn initialize(config: &AppConfig) -> Self {
+    pub(crate) fn initialize(config: &AppConfig, paths: &RuntimePaths) -> Self {
         let context = TrayMenuContext::from_config(config);
         let _ = (TrayStatus::placeholder_states(), TrayVisualState::all());
-        let native = NativeTray::initialize(&context);
+        let native = NativeTray::initialize(&context, TrayCommandTargets::from_paths(paths));
         tracing::info!("tray icon initialized");
         Self { context, native }
     }
@@ -60,6 +63,12 @@ impl TrayIcon {
         drop(self.native);
         tracing::info!("tray icon shut down");
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TrayCommandTargets {
+    settings_path: PathBuf,
+    logs_path: PathBuf,
 }
 
 impl TrayMenuContext {
@@ -83,7 +92,10 @@ impl TrayMenuContext {
         vec![
             format!("Status: {}", self.status.label()),
             format!("Current app: {}", self.app_name),
-            format!("Correction mode: {}", correction_mode_label(&self.correction_mode)),
+            format!(
+                "Correction mode: {}",
+                correction_mode_label(&self.correction_mode)
+            ),
             format!("Engine: {}", engine_label(&self.engine)),
             "Undo last correction".to_owned(),
             "Open settings".to_owned(),
@@ -98,6 +110,21 @@ impl TrayMenuContext {
             self.status.label(),
             self.visual_state.label()
         )
+    }
+}
+
+impl TrayCommandTargets {
+    fn from_paths(paths: &RuntimePaths) -> Self {
+        let logs_path = paths
+            .database_path()
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        Self {
+            settings_path: paths.config_path().to_path_buf(),
+            logs_path,
+        }
     }
 }
 
@@ -159,7 +186,7 @@ struct NativeTray;
 
 #[cfg(test)]
 impl NativeTray {
-    fn initialize(_context: &TrayMenuContext) -> Option<Self> {
+    fn initialize(_context: &TrayMenuContext, _targets: TrayCommandTargets) -> Option<Self> {
         None
     }
 

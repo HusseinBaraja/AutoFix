@@ -1,9 +1,9 @@
 mod admin;
 mod components;
 mod paths;
-mod tray;
 #[cfg(test)]
 mod tests;
+mod tray;
 
 use std::{error::Error, fmt, fs, path::Path};
 
@@ -87,7 +87,7 @@ impl BackgroundRuntime {
 
         let config = load_or_create_config(paths.config_path())?;
         let database = Database::open(paths.database_path()).map_err(BackgroundError::Database)?;
-        let components = RuntimeComponents::start(&config);
+        let components = RuntimeComponents::start(&config, &paths);
 
         tracing::info!("AutoFix background process started");
         Ok(Self {
@@ -108,9 +108,9 @@ impl BackgroundRuntime {
 }
 
 impl RuntimeComponents {
-    fn start(config: &AppConfig) -> Self {
+    fn start(config: &AppConfig, paths: &RuntimePaths) -> Self {
         Self {
-            tray_icon: TrayIcon::initialize(config),
+            tray_icon: TrayIcon::initialize(config, paths),
             ipc_server: NamedPipeIpcServer::initialize(),
             global_shortcut: GlobalShortcutListener::initialize(config),
             session_manager: SessionManager::initialize(),
