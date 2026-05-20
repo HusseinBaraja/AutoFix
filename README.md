@@ -12,6 +12,30 @@ Planned capabilities include:
 
 This repository is currently in setup stage.
 
+## Run Background App
+
+From the repository root, run the Rust background app with:
+
+```powershell
+cargo run -p background-engine
+```
+
+The app starts the background process and Windows tray icon. It keeps running until
+you choose `Exit` from the tray menu or stop it with `Ctrl+C` in the terminal.
+
+To build and run the executable directly:
+
+```powershell
+cargo build -p background-engine
+.\target\debug\background-engine.exe
+```
+
+The app creates its settings file at:
+
+```text
+%LOCALAPPDATA%\AutoFix\config.toml
+```
+
 ## Repository Structure
 
 - `app-core-rust/` - Rust background engine and shared core logic.
