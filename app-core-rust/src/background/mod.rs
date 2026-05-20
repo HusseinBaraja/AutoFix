@@ -87,7 +87,7 @@ impl BackgroundRuntime {
 
         let config = load_or_create_config(paths.config_path())?;
         let database = Database::open(paths.database_path()).map_err(BackgroundError::Database)?;
-        let components = RuntimeComponents::start(&config, &paths);
+        let components = RuntimeComponents::start(&config, &paths)?;
 
         tracing::info!("AutoFix background process started");
         Ok(Self {
@@ -108,15 +108,15 @@ impl BackgroundRuntime {
 }
 
 impl RuntimeComponents {
-    fn start(config: &AppConfig, paths: &RuntimePaths) -> Self {
-        Self {
+    fn start(config: &AppConfig, paths: &RuntimePaths) -> Result<Self, BackgroundError> {
+        Ok(Self {
             tray_icon: TrayIcon::initialize(config, paths),
-            ipc_server: NamedPipeIpcServer::initialize(config, paths),
+            ipc_server: NamedPipeIpcServer::initialize(config, paths)?,
             global_shortcut: GlobalShortcutListener::initialize(config),
             session_manager: SessionManager::initialize(),
             correction_engine_router: CorrectionEngineRouter::initialize(config),
             replacement_engine: ReplacementEngine::initialize(),
-        }
+        })
     }
 
     fn shutdown(self) {

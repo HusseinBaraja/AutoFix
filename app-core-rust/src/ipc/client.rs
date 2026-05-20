@@ -90,13 +90,12 @@ fn connect(pipe_path: &str) -> Result<HANDLE, IpcClientError> {
 
         let error = std::io::Error::last_os_error();
         match error.raw_os_error().map(|code| code as u32) {
-            Some(ERROR_FILE_NOT_FOUND) | Some(ERROR_PIPE_BUSY) => unsafe {
+            Some(ERROR_PIPE_BUSY) => unsafe {
                 WaitNamedPipeW(path.as_ptr(), 50);
             },
+            Some(ERROR_FILE_NOT_FOUND) => thread::sleep(Duration::from_millis(10)),
             _ => thread::sleep(Duration::from_millis(10)),
         }
-
-        thread::sleep(Duration::from_millis(10));
     }
 
     Err(IpcClientError::Unavailable)

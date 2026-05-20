@@ -35,6 +35,7 @@ fn starts_background_runtime_with_user_config_and_database() {
 
     assert!(config_path.exists());
     assert!(database_path.exists());
+    assert!(root.join("logs").exists());
     fs::remove_dir_all(root).unwrap();
 }
 

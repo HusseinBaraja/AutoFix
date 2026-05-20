@@ -11,7 +11,9 @@ use std::{
 };
 
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE},
+    Foundation::{
+        CloseHandle, ERROR_MORE_DATA, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
+    },
     Storage::FileSystem::{ReadFile, WriteFile, PIPE_ACCESS_DUPLEX},
     System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_MESSAGE,
@@ -19,9 +21,14 @@ use windows_sys::Win32::{
     },
 };
 
-use super::{protocol::IpcRequest, IpcResponse, IpcServerState};
+use super::{
+    protocol::IpcRequest,
+    server_shutdown::{join_worker, wake_connect_named_pipe},
+    IpcResponse, IpcServerState,
+};
 
 pub(crate) const PIPE_NAME: &str = "AutoFix.Background.Ipc";
+const INITIAL_READ_BUFFER_SIZE: usize = 64 * 1024;
 
 pub(crate) struct NamedPipeIpcServer {
     pipe_path: String,
@@ -53,9 +60,14 @@ impl NamedPipeIpcServer {
 
     pub(crate) fn shutdown(mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
-        let _ = super::client::send_request(&self.pipe_path, &IpcRequest::IsBackgroundRunning);
+        if let Err(error) =
+            super::client::send_request(&self.pipe_path, &IpcRequest::IsBackgroundRunning)
+        {
+            tracing::warn!("failed to wake IPC server through request path: {}", error);
+            wake_connect_named_pipe(&self.pipe_path);
+        }
         if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+            join_worker(worker);
         }
     }
 }
@@ -121,23 +133,40 @@ fn handle_pipe(pipe: HANDLE, state: &Arc<Mutex<IpcServerState>>) {
 }
 
 fn read_request(pipe: HANDLE) -> Result<IpcRequest, String> {
-    let mut buffer = vec![0_u8; 64 * 1024];
-    let mut read = 0;
-    let read_ok = unsafe {
-        ReadFile(
-            pipe,
-            buffer.as_mut_ptr() as *mut _,
-            buffer.len() as u32,
-            &mut read,
-            null_mut(),
-        )
-    };
+    let mut buffer = vec![0_u8; INITIAL_READ_BUFFER_SIZE];
+    let mut total_read = 0_usize;
 
-    if read_ok == 0 {
-        return Err(std::io::Error::last_os_error().to_string());
+    loop {
+        if total_read == buffer.len() {
+            buffer.resize(buffer.len() * 2, 0);
+        }
+
+        let capacity = buffer.len() - total_read;
+        let mut read = 0;
+        let read_ok = unsafe {
+            ReadFile(
+                pipe,
+                buffer[total_read..].as_mut_ptr() as *mut _,
+                capacity as u32,
+                &mut read,
+                null_mut(),
+            )
+        };
+
+        if read_ok == 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(ERROR_MORE_DATA as i32) {
+                return Err(error.to_string());
+            }
+        }
+
+        total_read += read as usize;
+        if read as usize == 0 || read as usize != capacity {
+            break;
+        }
     }
 
-    serde_json::from_slice(&buffer[..read as usize]).map_err(|error| error.to_string())
+    serde_json::from_slice(&buffer[..total_read]).map_err(|error| error.to_string())
 }
 
 fn write_response(pipe: HANDLE, response: &IpcResponse) -> Result<(), String> {

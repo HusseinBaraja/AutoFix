@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -15,6 +16,8 @@ use crate::{
 };
 
 use super::pipe_path_for_process;
+
+static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn reports_status_without_exposing_typed_text() {
@@ -64,6 +67,24 @@ fn updates_any_valid_config_setting_by_path() {
     assert!(matches!(response, IpcResponse::SettingUpdated(_)));
     let config = crate::settings::load_config(&fixture.config_path).unwrap();
     assert_eq!(config.shortcuts.correct, "Ctrl+Shift+Space");
+}
+
+#[test]
+fn reads_update_setting_requests_larger_than_initial_buffer() {
+    let fixture = IpcFixture::start();
+    let model = "m".repeat(70 * 1024);
+    let response = send_request(
+        &fixture.pipe_path,
+        &IpcRequest::UpdateSetting(UpdateSettingRequest {
+            path: "api.model".to_owned(),
+            value: json!(model),
+        }),
+    )
+    .unwrap();
+
+    assert!(matches!(response, IpcResponse::SettingUpdated(_)));
+    let config = crate::settings::load_config(&fixture.config_path).unwrap();
+    assert_eq!(config.api.model.len(), 70 * 1024);
 }
 
 #[test]
@@ -136,8 +157,11 @@ fn unique_temp_dir() -> PathBuf {
 }
 
 fn unique_suffix() -> u128 {
-    SystemTime::now()
+    let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_nanos()
+        .as_nanos();
+    let counter = UNIQUE_COUNTER.fetch_add(1, Ordering::Relaxed) as u128;
+
+    (nanos << 16) | counter
 }

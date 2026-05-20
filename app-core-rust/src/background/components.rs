@@ -1,4 +1,10 @@
-use crate::{background::paths::RuntimePaths, ipc::IpcServerState, settings::AppConfig};
+use std::fs;
+
+use crate::{
+    background::{paths::RuntimePaths, BackgroundError},
+    ipc::IpcServerState,
+    settings::AppConfig,
+};
 
 pub(crate) struct NamedPipeIpcServer(crate::ipc::NamedPipeIpcServer);
 pub(crate) struct GlobalShortcutListener;
@@ -7,14 +13,24 @@ pub(crate) struct CorrectionEngineRouter;
 pub(crate) struct ReplacementEngine;
 
 impl NamedPipeIpcServer {
-    pub(crate) fn initialize(config: &AppConfig, paths: &RuntimePaths) -> Self {
+    pub(crate) fn initialize(
+        config: &AppConfig,
+        paths: &RuntimePaths,
+    ) -> Result<Self, BackgroundError> {
+        fs::create_dir_all(paths.log_directory()).map_err(|source| {
+            BackgroundError::CreateDirectory {
+                path: paths.log_directory().to_path_buf(),
+                source,
+            }
+        })?;
+
         let state = IpcServerState::new(
             paths.config_path().to_path_buf(),
             paths.log_directory().to_path_buf(),
             config.clone(),
         );
         tracing::info!("named pipe IPC server initialized");
-        Self(crate::ipc::NamedPipeIpcServer::start(state))
+        Ok(Self(crate::ipc::NamedPipeIpcServer::start(state)))
     }
 
     pub(crate) fn shutdown(self) {

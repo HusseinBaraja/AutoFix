@@ -207,7 +207,11 @@ fn brand_icon() -> Option<Icon> {
 }
 
 fn tinted_logo_icon(rgba: [u8; 4]) -> Vec<u8> {
-    debug_assert_eq!(TRAY_LOGO_ALPHA.len(), 16 * 16);
+    assert_eq!(
+        TRAY_LOGO_ALPHA.len(),
+        16 * 16,
+        "tray alpha asset autofix-tray-mask-16.alpha must contain exactly 256 bytes"
+    );
 
     let mut pixels = Vec::with_capacity(16 * 16 * 4);
     for alpha in TRAY_LOGO_ALPHA {

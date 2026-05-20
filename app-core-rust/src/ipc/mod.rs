@@ -1,6 +1,7 @@
 mod client;
 mod protocol;
 mod server;
+mod server_shutdown;
 mod state;
 
 #[cfg(test)]
