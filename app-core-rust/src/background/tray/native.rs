@@ -129,9 +129,28 @@ impl NativeTray {
 }
 
 fn open_path(path: &Path) {
-    if let Err(error) = Command::new("explorer.exe").arg(path).spawn() {
+    let mut command = command_for_path(path);
+
+    if let Err(error) = command.spawn() {
         tracing::warn!("failed to open {}: {}", path.display(), error);
     }
+}
+
+fn command_for_path(path: &Path) -> Command {
+    if path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+    {
+        let mut command = Command::new(path);
+        if let Some(directory) = path.parent() {
+            command.current_dir(directory);
+        }
+        return command;
+    }
+
+    let mut command = Command::new("explorer.exe");
+    command.arg(path);
+    command
 }
 
 fn icon_for_state(state: TrayVisualState) -> Result<Icon, tray_icon::BadIcon> {
@@ -147,6 +166,34 @@ fn icon_for_state(state: TrayVisualState) -> Result<Icon, tray_icon::BadIcon> {
         TrayVisualState::Error => [220, 76, 70, 255],
     };
     Icon::from_rgba(tinted_logo_icon(rgba), 16, 16)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+    use std::path::Path;
+
+    use super::command_for_path;
+
+    #[test]
+    fn executable_paths_launch_directly_from_their_directory() {
+        let path = Path::new(r"C:\AutoFix\AutoFix.SettingsUi.exe");
+        let command = command_for_path(path);
+
+        assert_eq!(command.get_program(), path.as_os_str());
+        assert_eq!(command.get_current_dir(), Some(Path::new(r"C:\AutoFix")));
+        assert_eq!(command.get_args().count(), 0);
+    }
+
+    #[test]
+    fn non_executable_paths_open_with_explorer() {
+        let path = Path::new(r"C:\AutoFix\logs");
+        let command = command_for_path(path);
+        let args = command.get_args().collect::<Vec<_>>();
+
+        assert_eq!(command.get_program(), OsStr::new("explorer.exe"));
+        assert_eq!(args, [path.as_os_str()]);
+    }
 }
 
 fn brand_icon() -> Option<Icon> {

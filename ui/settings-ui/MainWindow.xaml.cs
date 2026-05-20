@@ -140,6 +140,11 @@ public partial class MainWindow : Window
             ApplyUnavailable();
             DetailText.Text = "Background process is not running.";
         }
+        catch (Exception error)
+        {
+            ApplyUnavailable();
+            DetailText.Text = $"Settings UI could not read background status: {error.Message}";
+        }
         finally
         {
             SetControlsEnabled(true);
