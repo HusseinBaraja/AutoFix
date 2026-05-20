@@ -9,6 +9,8 @@ const ID_UNDO: &str = "autofix.undo_last_correction";
 const ID_SETTINGS: &str = "autofix.open_settings";
 const ID_LOGS: &str = "autofix.view_logs";
 const ID_EXIT: &str = "autofix.exit";
+const TRAY_LOGO_ALPHA: &[u8] =
+    include_bytes!("../../../../assets/brand/autofix-tray-mask-16.alpha");
 
 pub(crate) struct NativeTray {
     icon: NativeIcon,
@@ -140,13 +142,20 @@ fn icon_for_state(state: TrayVisualState) -> Result<Icon, tray_icon::BadIcon> {
         TrayVisualState::Blocked => [150, 154, 160, 255],
         TrayVisualState::Error => [220, 76, 70, 255],
     };
-    Icon::from_rgba(solid_icon(rgba), 16, 16)
+    Icon::from_rgba(tinted_logo_icon(rgba), 16, 16)
 }
 
-fn solid_icon(rgba: [u8; 4]) -> Vec<u8> {
+fn tinted_logo_icon(rgba: [u8; 4]) -> Vec<u8> {
+    debug_assert_eq!(TRAY_LOGO_ALPHA.len(), 16 * 16);
+
     let mut pixels = Vec::with_capacity(16 * 16 * 4);
-    for _ in 0..(16 * 16) {
-        pixels.extend_from_slice(&rgba);
+    for alpha in TRAY_LOGO_ALPHA {
+        pixels.extend_from_slice(&[
+            rgba[0],
+            rgba[1],
+            rgba[2],
+            alpha.saturating_mul(rgba[3]) / 255,
+        ]);
     }
     pixels
 }
