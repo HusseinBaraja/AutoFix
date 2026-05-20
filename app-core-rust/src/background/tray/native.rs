@@ -120,7 +120,7 @@ impl NativeTray {
     }
 
     fn open_settings(&self) {
-        open_path(&self.targets.settings_path);
+        open_path(&self.targets.settings_app_path);
     }
 
     fn view_logs(&self) {

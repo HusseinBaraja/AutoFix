@@ -68,7 +68,7 @@ impl TrayIcon {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TrayCommandTargets {
-    settings_path: PathBuf,
+    settings_app_path: PathBuf,
     logs_path: PathBuf,
 }
 
@@ -117,10 +117,33 @@ impl TrayMenuContext {
 impl TrayCommandTargets {
     fn from_paths(paths: &RuntimePaths) -> Self {
         Self {
-            settings_path: paths.config_path().to_path_buf(),
+            settings_app_path: settings_app_path(),
             logs_path: paths.log_directory().to_path_buf(),
         }
     }
+}
+
+fn settings_app_path() -> PathBuf {
+    let file_name = "AutoFix.SettingsUi.exe";
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(directory) = current_exe.parent() {
+            let bundled = directory.join(file_name);
+            if bundled.exists() {
+                return bundled;
+            }
+        }
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .parent()
+        .unwrap_or(&manifest_dir)
+        .join("ui")
+        .join("settings-ui")
+        .join("bin")
+        .join("Debug")
+        .join("net8.0-windows")
+        .join(file_name)
 }
 
 impl TrayStatus {

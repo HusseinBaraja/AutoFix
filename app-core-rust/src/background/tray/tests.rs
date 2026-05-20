@@ -57,7 +57,7 @@ fn pause_status_exists_as_placeholder_only() {
 }
 
 #[test]
-fn command_targets_open_config_and_runtime_folder() {
+fn command_targets_open_settings_app_and_runtime_folder() {
     let root = std::env::temp_dir().join("autofix-tray-targets");
     let paths = RuntimePaths::new(
         root.join("config.toml"),
@@ -67,6 +67,9 @@ fn command_targets_open_config_and_runtime_folder() {
 
     let targets = TrayCommandTargets::from_paths(&paths);
 
-    assert_eq!(targets.settings_path, root.join("config.toml"));
+    assert_eq!(
+        targets.settings_app_path.file_name(),
+        Some(std::ffi::OsStr::new("AutoFix.SettingsUi.exe"))
+    );
     assert_eq!(targets.logs_path, root.join("logs"));
 }
