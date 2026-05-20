@@ -1,22 +1,9 @@
 use crate::settings::AppConfig;
-
-pub(crate) struct TrayIcon;
 pub(crate) struct NamedPipeIpcServer;
 pub(crate) struct GlobalShortcutListener;
 pub(crate) struct SessionManager;
 pub(crate) struct CorrectionEngineRouter;
 pub(crate) struct ReplacementEngine;
-
-impl TrayIcon {
-    pub(crate) fn initialize(_config: &AppConfig) -> Self {
-        tracing::info!("tray icon placeholder initialized");
-        Self
-    }
-
-    pub(crate) fn shutdown(self) {
-        tracing::info!("tray icon placeholder shut down");
-    }
-}
 
 impl NamedPipeIpcServer {
     pub(crate) fn initialize() -> Self {

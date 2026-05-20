@@ -4,7 +4,7 @@ mod tests;
 mod toml_io;
 mod validation;
 
-pub(crate) use model::AppConfig;
+pub(crate) use model::{AppConfig, CorrectionEngine, CorrectionMode};
 #[cfg(test)]
 pub(crate) use toml_io::default_config_toml;
 pub(crate) use toml_io::{load_config, save_config, ConfigIoError};

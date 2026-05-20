@@ -3,6 +3,7 @@ mod components;
 mod paths;
 #[cfg(test)]
 mod tests;
+mod tray;
 
 use std::{error::Error, fmt, fs, path::Path};
 
@@ -15,9 +16,10 @@ use self::{
     admin::reject_elevated_process,
     components::{
         CorrectionEngineRouter, GlobalShortcutListener, NamedPipeIpcServer, ReplacementEngine,
-        SessionManager, TrayIcon,
+        SessionManager,
     },
     paths::RuntimePaths,
+    tray::TrayIcon,
 };
 
 pub(crate) struct BackgroundRuntime {
@@ -70,7 +72,8 @@ impl Error for BackgroundError {
 }
 
 pub(crate) fn run_background_mode() -> Result<(), BackgroundError> {
-    let runtime = BackgroundRuntime::start(RuntimePaths::for_current_user()?)?;
+    let mut runtime = BackgroundRuntime::start(RuntimePaths::for_current_user()?)?;
+    runtime.run_until_exit();
     runtime.shutdown();
     Ok(())
 }
@@ -84,7 +87,7 @@ impl BackgroundRuntime {
 
         let config = load_or_create_config(paths.config_path())?;
         let database = Database::open(paths.database_path()).map_err(BackgroundError::Database)?;
-        let components = RuntimeComponents::start(&config);
+        let components = RuntimeComponents::start(&config, &paths);
 
         tracing::info!("AutoFix background process started");
         Ok(Self {
@@ -98,12 +101,16 @@ impl BackgroundRuntime {
         drop(self.database);
         tracing::info!("AutoFix background process exited cleanly");
     }
+
+    fn run_until_exit(&mut self) {
+        self.components.run_until_exit();
+    }
 }
 
 impl RuntimeComponents {
-    fn start(config: &AppConfig) -> Self {
+    fn start(config: &AppConfig, paths: &RuntimePaths) -> Self {
         Self {
-            tray_icon: TrayIcon::initialize(config),
+            tray_icon: TrayIcon::initialize(config, paths),
             ipc_server: NamedPipeIpcServer::initialize(),
             global_shortcut: GlobalShortcutListener::initialize(config),
             session_manager: SessionManager::initialize(),
@@ -120,10 +127,49 @@ impl RuntimeComponents {
         self.ipc_server.shutdown();
         self.tray_icon.shutdown();
     }
+
+    fn run_until_exit(&mut self) {
+        message_loop::run_until_exit(|| self.tray_icon.process_menu_events());
+    }
 }
 
 fn initialize_logging() {
     let _ = tracing_subscriber::fmt().with_target(false).try_init();
+}
+
+#[cfg(windows)]
+mod message_loop {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, GetMessageW, PostQuitMessage, TranslateMessage, MSG,
+    };
+
+    pub(super) fn run_until_exit(mut should_exit: impl FnMut() -> bool) {
+        unsafe {
+            let mut message = std::mem::zeroed::<MSG>();
+            loop {
+                let result = GetMessageW(&mut message, std::ptr::null_mut(), 0, 0);
+                if result <= 0 {
+                    break;
+                }
+
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+
+                if should_exit() {
+                    PostQuitMessage(0);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod message_loop {
+    pub(super) fn run_until_exit(mut should_exit: impl FnMut() -> bool) {
+        while !should_exit() {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    }
 }
 
 fn ensure_parent_directory(path: &Path) -> Result<(), BackgroundError> {
