@@ -3,107 +3,267 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="AutoFix Settings"
         Icon="{StaticResource AutoFixLogoImage}"
-        Width="720"
-        Height="480"
+        Width="1080"
+        Height="720"
+        MinWidth="920"
+        MinHeight="620"
+        Background="#F6F7FB"
         Loaded="Window_Loaded">
-    <Grid Margin="24">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="16" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="24" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
 
-        <DockPanel>
-            <StackPanel Orientation="Horizontal"
-                        VerticalAlignment="Center">
-                <Image Source="{StaticResource AutoFixLogoImage}"
-                       Width="32"
-                       Height="28"
-                       Margin="0,0,10,0" />
-                <TextBlock Text="AutoFix Settings"
-                           FontSize="24"
-                           FontWeight="SemiBold"
-                           VerticalAlignment="Center" />
-            </StackPanel>
-            <Button x:Name="RefreshButton"
-                    Content="Refresh"
-                    Width="96"
-                    HorizontalAlignment="Right"
-                    Click="RefreshButton_Click" />
-        </DockPanel>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="14,8" />
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="BorderBrush" Value="#D7DBE7" />
+        </Style>
 
-        <Border Grid.Row="2"
-                Background="#F3F4F6"
-                BorderBrush="#D1D5DB"
-                BorderThickness="1"
-                Padding="16">
-            <StackPanel>
-                <TextBlock x:Name="StatusText"
-                           Text="Checking background process..."
-                           FontWeight="SemiBold" />
-                <TextBlock x:Name="DetailText"
-                           Margin="0,6,0,0"
-                           Foreground="#4B5563" />
-            </StackPanel>
+        <Style x:Key="SidebarItem" TargetType="ListBoxItem">
+            <Setter Property="Margin" Value="8,2" />
+            <Setter Property="Padding" Value="14,10" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Root"
+                                Background="Transparent"
+                                CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#ECE8FF" />
+                                <Setter Property="Foreground" Value="#4D2FBA" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#F1F3F8" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ToggleSwitch" TargetType="CheckBox">
+            <Setter Property="Width" Value="48" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Grid>
+                            <Border x:Name="Track"
+                                    Background="#CDD3DF"
+                                    CornerRadius="12" />
+                            <Ellipse x:Name="Thumb"
+                                     Width="18"
+                                     Height="18"
+                                     Margin="3"
+                                     Fill="#FFFFFF"
+                                     HorizontalAlignment="Left" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Track" Property="Background" Value="#6F54E8" />
+                                <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="260" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Border Background="#FFFFFF"
+                BorderBrush="#E5E8F0"
+                BorderThickness="0,0,1,0">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top" Margin="20,20,20,16">
+                    <StackPanel Orientation="Horizontal">
+                        <Image Source="{StaticResource AutoFixLogoImage}"
+                               Width="30"
+                               Height="30"
+                               Margin="0,0,10,0" />
+                        <TextBlock Text="AutoFix"
+                                   FontSize="22"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                             Margin="0,18,0,0"
+                             Height="36"
+                             Padding="12,8"
+                             BorderBrush="#D7DBE7"
+                             Background="#F8F9FC" />
+                </StackPanel>
+
+                <ListBox ItemsSource="{Binding SectionView}"
+                         SelectedItem="{Binding SelectedSection}"
+                         ItemContainerStyle="{StaticResource SidebarItem}"
+                         BorderThickness="0"
+                         Background="Transparent">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Name}"
+                                       FontSize="14"
+                                       FontWeight="SemiBold" />
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
         </Border>
 
-        <Grid Grid.Row="4">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="16" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+        <Grid Grid.Column="1" Margin="28">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="14" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="18" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
 
-            <StackPanel>
-                <TextBlock Text="Correction mode"
-                           FontWeight="SemiBold" />
-                <ComboBox x:Name="ModeComboBox"
-                          Margin="0,8,0,0"
-                          SelectedValuePath="Tag">
-                    <ComboBoxItem Content="Typos only" Tag="typos_only" />
-                    <ComboBoxItem Content="Typos + grammar" Tag="typos_plus_grammar" />
-                </ComboBox>
-                <Button Content="Update mode"
-                        Margin="0,10,0,0"
-                        Click="UpdateModeButton_Click" />
-            </StackPanel>
+            <DockPanel>
+                <StackPanel>
+                    <TextBlock Text="{Binding SelectedSection.Name}"
+                               FontSize="28"
+                               FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding SelectedSection.Description}"
+                               Margin="0,5,0,0"
+                               Foreground="#667085" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal"
+                            DockPanel.Dock="Right"
+                            HorizontalAlignment="Right">
+                    <Button Content="Import"
+                            Command="{Binding ImportConfigCommand}"
+                            Margin="0,0,8,0" />
+                    <Button Content="Export"
+                            Command="{Binding ExportConfigCommand}" />
+                </StackPanel>
+            </DockPanel>
 
-            <StackPanel Grid.Column="2">
-                <TextBlock Text="Engine"
-                           FontWeight="SemiBold" />
-                <ComboBox x:Name="EngineComboBox"
-                          Margin="0,8,0,0"
-                          SelectedValuePath="Tag">
-                    <ComboBoxItem Content="Local" Tag="local" />
-                    <ComboBoxItem Content="API" Tag="api" />
-                </ComboBox>
-                <Button Content="Update engine"
-                        Margin="0,10,0,0"
-                        Click="UpdateEngineButton_Click" />
-            </StackPanel>
+            <Border Grid.Row="2"
+                    Padding="16"
+                    Background="#FFFFFF"
+                    BorderBrush="#E5E8F0"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                <DockPanel>
+                    <StackPanel>
+                        <TextBlock Text="{Binding StatusTitle}"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding StatusDetail}"
+                                   Margin="0,4,0,0"
+                                   Foreground="#667085" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal"
+                                DockPanel.Dock="Right"
+                                HorizontalAlignment="Right">
+                        <Button Content="Launch later"
+                                Command="{Binding LaunchBackgroundCommand}"
+                                Margin="0,0,8,0" />
+                        <Button Content="Refresh"
+                                Command="{Binding RefreshStatusCommand}" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <ItemsControl ItemsSource="{Binding SelectedSection.Settings}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,10"
+                                        Padding="18"
+                                        Background="#FFFFFF"
+                                        BorderBrush="#E5E8F0"
+                                        BorderThickness="1"
+                                        CornerRadius="8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="240" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Title}"
+                                                       FontWeight="SemiBold"
+                                                       FontSize="15" />
+                                            <TextBlock Text="{Binding Description}"
+                                                       Margin="0,4,0,0"
+                                                       Foreground="#667085"
+                                                       TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <Grid Grid.Column="1" HorizontalAlignment="Right">
+                                            <CheckBox Style="{StaticResource ToggleSwitch}"
+                                                      IsChecked="{Binding IsEnabled}"
+                                                      Visibility="{Binding IsToggle, Converter={StaticResource BoolToVisibility}}" />
+                                            <ComboBox Width="220"
+                                                      Height="34"
+                                                      SelectedValue="{Binding SelectedValue}"
+                                                      Visibility="{Binding IsDropdown, Converter={StaticResource BoolToVisibility}}">
+                                                <ComboBoxItem Content="System" />
+                                                <ComboBoxItem Content="Light" />
+                                                <ComboBoxItem Content="Dark" />
+                                                <ComboBoxItem Content="Typos only" />
+                                                <ComboBoxItem Content="Typos + grammar" />
+                                                <ComboBoxItem Content="Local" />
+                                                <ComboBoxItem Content="API" />
+                                                <ComboBoxItem Content="Info" />
+                                                <ComboBoxItem Content="Debug" />
+                                            </ComboBox>
+                                            <TextBox Width="220"
+                                                     Height="34"
+                                                     Padding="10,7"
+                                                     Text="{Binding TextValue}"
+                                                     Visibility="{Binding IsText, Converter={StaticResource BoolToVisibility}}" />
+                                            <Button Width="220"
+                                                    Content="{Binding Hotkey}"
+                                                    Command="{Binding DataContext.CaptureHotkeyCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding Title}"
+                                                    Visibility="{Binding IsHotkey, Converter={StaticResource BoolToVisibility}}" />
+                                        </Grid>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <DataGrid ItemsSource="{Binding SelectedSection.AppRules}"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              HeadersVisibility="Column"
+                              Margin="0,0,0,10"
+                              Visibility="{Binding SelectedSection.HasAppRules, Converter={StaticResource BoolToVisibility}}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="App" Binding="{Binding App}" Width="*" />
+                            <DataGridTextColumn Header="Scope" Binding="{Binding Scope}" Width="110" />
+                            <DataGridTextColumn Header="Mode" Binding="{Binding Mode}" Width="140" />
+                            <DataGridTextColumn Header="Engine" Binding="{Binding Engine}" Width="120" />
+                            <DataGridTextColumn Header="Notes" Binding="{Binding Notes}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <DataGrid ItemsSource="{Binding SelectedSection.Dictionary}"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              HeadersVisibility="Column"
+                              Visibility="{Binding SelectedSection.HasDictionary, Converter={StaticResource BoolToVisibility}}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Word" Binding="{Binding Word}" Width="*" />
+                            <DataGridTextColumn Header="Language" Binding="{Binding Language}" Width="120" />
+                            <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="160" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </ScrollViewer>
         </Grid>
-
-        <WrapPanel Grid.Row="6"
-                   HorizontalAlignment="Right">
-            <Button Content="Reload config"
-                    Width="112"
-                    Margin="0,0,8,0"
-                    Click="ReloadConfigButton_Click" />
-            <Button Content="View logs"
-                    Width="96"
-                    Margin="0,0,8,0"
-                    Click="ViewLogsButton_Click" />
-            <Button Content="Undo last"
-                    Width="96"
-                    Margin="0,0,8,0"
-                    Click="UndoButton_Click" />
-            <Button Content="Test engine later"
-                    Width="128"
-                    Click="TestEngineButton_Click" />
-        </WrapPanel>
     </Grid>
 </Window>
