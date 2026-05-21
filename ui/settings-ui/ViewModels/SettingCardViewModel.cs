@@ -1,5 +1,8 @@
 namespace AutoFix.SettingsUi.ViewModels;
 
+using System.Collections.ObjectModel;
+using AutoFix.SettingsUi.Models;
+
 public sealed class SettingCardViewModel : ObservableObject
 {
     private bool isEnabled;
@@ -10,6 +13,7 @@ public sealed class SettingCardViewModel : ObservableObject
     public string Title { get; init; } = "";
     public string Description { get; init; } = "";
     public string Kind { get; init; } = "";
+    public ObservableCollection<OptionItem> Options { get; init; } = [];
 
     public bool IsEnabled
     {

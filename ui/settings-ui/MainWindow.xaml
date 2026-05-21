@@ -10,70 +10,14 @@
         Background="#F6F7FB"
         Loaded="Window_Loaded">
     <Window.Resources>
-        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
-
-        <Style TargetType="Button">
-            <Setter Property="Padding" Value="14,8" />
-            <Setter Property="MinHeight" Value="34" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Background" Value="#FFFFFF" />
-            <Setter Property="BorderBrush" Value="#D7DBE7" />
-        </Style>
-
-        <Style x:Key="SidebarItem" TargetType="ListBoxItem">
-            <Setter Property="Margin" Value="8,2" />
-            <Setter Property="Padding" Value="14,10" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ListBoxItem">
-                        <Border x:Name="Root"
-                                Background="Transparent"
-                                CornerRadius="6"
-                                Padding="{TemplateBinding Padding}">
-                            <ContentPresenter />
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#ECE8FF" />
-                                <Setter Property="Foreground" Value="#4D2FBA" />
-                            </Trigger>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#F1F3F8" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="ToggleSwitch" TargetType="CheckBox">
-            <Setter Property="Width" Value="48" />
-            <Setter Property="Height" Value="24" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="CheckBox">
-                        <Grid>
-                            <Border x:Name="Track"
-                                    Background="#CDD3DF"
-                                    CornerRadius="12" />
-                            <Ellipse x:Name="Thumb"
-                                     Width="18"
-                                     Height="18"
-                                     Margin="3"
-                                     Fill="#FFFFFF"
-                                     HorizontalAlignment="Left" />
-                        </Grid>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Track" Property="Background" Value="#6F54E8" />
-                                <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Resources/SettingsChrome.xaml" />
+                <ResourceDictionary Source="Resources/SettingsControls.xaml" />
+                <ResourceDictionary Source="Resources/SettingsTables.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        </ResourceDictionary>
     </Window.Resources>
 
     <Grid>
@@ -99,10 +43,7 @@
                     </StackPanel>
                     <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
                              Margin="0,18,0,0"
-                             Height="36"
-                             Padding="12,8"
-                             BorderBrush="#D7DBE7"
-                             Background="#F8F9FC" />
+                             Height="40" />
                 </StackPanel>
 
                 <ListBox ItemsSource="{Binding SectionView}"
@@ -150,12 +91,7 @@
                 </StackPanel>
             </DockPanel>
 
-            <Border Grid.Row="2"
-                    Padding="16"
-                    Background="#FFFFFF"
-                    BorderBrush="#E5E8F0"
-                    BorderThickness="1"
-                    CornerRadius="8">
+            <Border Grid.Row="2" Style="{StaticResource SettingsCard}">
                 <DockPanel>
                     <StackPanel>
                         <TextBlock Text="{Binding StatusTitle}"
@@ -181,12 +117,7 @@
                     <ItemsControl ItemsSource="{Binding SelectedSection.Settings}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Border Margin="0,0,0,10"
-                                        Padding="18"
-                                        Background="#FFFFFF"
-                                        BorderBrush="#E5E8F0"
-                                        BorderThickness="1"
-                                        CornerRadius="8">
+                                <Border Style="{StaticResource SettingsCard}">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
@@ -196,35 +127,25 @@
                                             <TextBlock Text="{Binding Title}"
                                                        FontWeight="SemiBold"
                                                        FontSize="15" />
-                                            <TextBlock Text="{Binding Description}"
+                                            <TextBlock Style="{StaticResource BodyText}"
+                                                       Text="{Binding Description}"
                                                        Margin="0,4,0,0"
-                                                       Foreground="#667085"
                                                        TextWrapping="Wrap" />
                                         </StackPanel>
                                         <Grid Grid.Column="1" HorizontalAlignment="Right">
                                             <CheckBox Style="{StaticResource ToggleSwitch}"
                                                       IsChecked="{Binding IsEnabled}"
                                                       Visibility="{Binding IsToggle, Converter={StaticResource BoolToVisibility}}" />
-                                            <ComboBox Width="220"
-                                                      Height="34"
+                                            <ComboBox Width="250"
+                                                      ItemsSource="{Binding Options}"
+                                                      DisplayMemberPath="Label"
+                                                      SelectedValuePath="Value"
                                                       SelectedValue="{Binding SelectedValue}"
-                                                      Visibility="{Binding IsDropdown, Converter={StaticResource BoolToVisibility}}">
-                                                <ComboBoxItem Content="System" />
-                                                <ComboBoxItem Content="Light" />
-                                                <ComboBoxItem Content="Dark" />
-                                                <ComboBoxItem Content="Typos only" />
-                                                <ComboBoxItem Content="Typos + grammar" />
-                                                <ComboBoxItem Content="Local" />
-                                                <ComboBoxItem Content="API" />
-                                                <ComboBoxItem Content="Info" />
-                                                <ComboBoxItem Content="Debug" />
-                                            </ComboBox>
-                                            <TextBox Width="220"
-                                                     Height="34"
-                                                     Padding="10,7"
+                                                      Visibility="{Binding IsDropdown, Converter={StaticResource BoolToVisibility}}" />
+                                            <TextBox Width="250"
                                                      Text="{Binding TextValue}"
                                                      Visibility="{Binding IsText, Converter={StaticResource BoolToVisibility}}" />
-                                            <Button Width="220"
+                                            <Button Width="250"
                                                     Content="{Binding Hotkey}"
                                                     Command="{Binding DataContext.CaptureHotkeyCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                     CommandParameter="{Binding Title}"

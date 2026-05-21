@@ -41,4 +41,19 @@ public sealed class SettingsSkeletonTests
         Assert.IsTrue(appRules.HasAppRules);
         Assert.IsTrue(dictionary.HasDictionary);
     }
+
+    [TestMethod]
+    public void CreateSectionsProvidesDropdownOptions()
+    {
+        var sections = SettingsSkeleton.CreateSections();
+
+        var correction = sections
+            .Single(section => section.Name == "Correction")
+            .Settings
+            .Single(setting => setting.Title == "Correction mode");
+
+        CollectionAssert.AreEqual(
+            new[] { "typos_only", "typos_plus_grammar" },
+            correction.Options.Select(option => option.Value).ToArray());
+    }
 }

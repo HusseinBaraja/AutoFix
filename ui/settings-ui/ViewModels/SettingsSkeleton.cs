@@ -129,11 +129,36 @@ public static class SettingsSkeleton
         new() { Title = title, Description = description, Kind = "Toggle", IsEnabled = value };
 
     private static SettingCardViewModel Dropdown(string title, string description, string value) =>
-        new() { Title = title, Description = description, Kind = "Dropdown", SelectedValue = value };
+        new()
+        {
+            Title = title,
+            Description = description,
+            Kind = "Dropdown",
+            SelectedValue = value,
+            Options = OptionsFor(title),
+        };
 
     private static SettingCardViewModel Hotkey(string title, string description, string hotkey) =>
         new() { Title = title, Description = description, Kind = "Hotkey", Hotkey = hotkey };
 
     private static SettingCardViewModel Text(string title, string description, string value) =>
         new() { Title = title, Description = description, Kind = "Text", TextValue = value };
+
+    private static ObservableCollection<OptionItem> OptionsFor(string title) => title switch
+    {
+        "Theme" =>
+        [
+            new("System", "System"),
+            new("Light", "Light"),
+            new("Dark", "Dark"),
+        ],
+        "Correction mode" => Modes(),
+        "Active engine" => Engines(),
+        "Log level" =>
+        [
+            new("Info", "Info"),
+            new("Debug", "Debug"),
+        ],
+        _ => [],
+    };
 }
