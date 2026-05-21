@@ -9,6 +9,8 @@ namespace AutoFix.SettingsUi.Ipc;
 public sealed class BackgroundIpcClient
 {
     private const string PipeName = @"Local\AutoFix.Background.Ipc";
+    private static readonly TimeSpan ConnectTimeout = TimeSpan.FromMilliseconds(400);
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromMilliseconds(400);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -100,15 +102,16 @@ public sealed class BackgroundIpcClient
             PipeDirection.InOut,
             PipeOptions.Asynchronous);
 
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
-        await pipe.ConnectAsync(timeout.Token).ConfigureAwait(false);
+        using var connectTimeout = new CancellationTokenSource(ConnectTimeout);
+        await pipe.ConnectAsync(connectTimeout.Token).ConfigureAwait(false);
 
         var requestBytes = JsonSerializer.SerializeToUtf8Bytes(request, JsonOptions);
-        await pipe.WriteAsync(requestBytes, timeout.Token).ConfigureAwait(false);
-        await pipe.FlushAsync(timeout.Token).ConfigureAwait(false);
+        using var requestTimeout = new CancellationTokenSource(RequestTimeout);
+        await pipe.WriteAsync(requestBytes, requestTimeout.Token).ConfigureAwait(false);
+        await pipe.FlushAsync(requestTimeout.Token).ConfigureAwait(false);
 
         using var reader = new StreamReader(pipe, Encoding.UTF8, leaveOpen: true);
-        var responseText = await reader.ReadToEndAsync(timeout.Token).ConfigureAwait(false);
+        var responseText = await reader.ReadToEndAsync(requestTimeout.Token).ConfigureAwait(false);
         return JsonSerializer.Deserialize<IpcEnvelope>(responseText, JsonOptions)
             ?? throw new InvalidDataException("IPC response was empty.");
     }
