@@ -56,4 +56,18 @@ public sealed class SettingsSkeletonTests
             new[] { "typos_only", "typos_plus_grammar" },
             correction.Options.Select(option => option.Value).ToArray());
     }
+
+    [TestMethod]
+    public void CreateSectionsPlacesConfigTransferOnAdvanced()
+    {
+        var sections = SettingsSkeleton.CreateSections();
+
+        var advanced = sections.Single(section => section.Name == "Advanced");
+
+        Assert.IsTrue(advanced.Settings.Single(setting => setting.Title == "Settings import/export").IsConfigTransfer);
+        Assert.IsFalse(sections
+            .Where(section => section.Name != "Advanced")
+            .SelectMany(section => section.Settings)
+            .Any(setting => setting.IsConfigTransfer));
+    }
 }

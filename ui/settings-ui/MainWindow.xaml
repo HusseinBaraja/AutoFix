@@ -71,25 +71,14 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <DockPanel>
-                <StackPanel>
-                    <TextBlock Text="{Binding SelectedSection.Name}"
-                               FontSize="28"
-                               FontWeight="SemiBold" />
-                    <TextBlock Text="{Binding SelectedSection.Description}"
-                               Margin="0,5,0,0"
-                               Foreground="#667085" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal"
-                            DockPanel.Dock="Right"
-                            HorizontalAlignment="Right">
-                    <Button Content="Import"
-                            Command="{Binding ImportConfigCommand}"
-                            Margin="0,0,8,0" />
-                    <Button Content="Export"
-                            Command="{Binding ExportConfigCommand}" />
-                </StackPanel>
-            </DockPanel>
+            <StackPanel>
+                <TextBlock Text="{Binding SelectedSection.Name}"
+                           FontSize="28"
+                           FontWeight="SemiBold" />
+                <TextBlock Text="{Binding SelectedSection.Description}"
+                           Margin="0,5,0,0"
+                           Foreground="#667085" />
+            </StackPanel>
 
             <Border Grid.Row="2" Style="{StaticResource SettingsCard}">
                 <DockPanel>
@@ -150,6 +139,15 @@
                                                     Command="{Binding DataContext.CaptureHotkeyCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                     CommandParameter="{Binding Title}"
                                                     Visibility="{Binding IsHotkey, Converter={StaticResource BoolToVisibility}}" />
+                                            <StackPanel Orientation="Horizontal"
+                                                        HorizontalAlignment="Right"
+                                                        Visibility="{Binding IsConfigTransfer, Converter={StaticResource BoolToVisibility}}">
+                                                <Button Content="Import"
+                                                        Command="{Binding DataContext.ImportConfigCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        Margin="0,0,8,0" />
+                                                <Button Content="Export"
+                                                        Command="{Binding DataContext.ExportConfigCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                            </StackPanel>
                                         </Grid>
                                     </Grid>
                                 </Border>

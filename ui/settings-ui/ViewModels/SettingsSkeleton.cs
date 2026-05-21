@@ -76,6 +76,7 @@ public static class SettingsSkeleton
         ]),
         Section("Advanced", "Config import/export and low-level behavior",
         [
+            ConfigTransfer("Settings import/export", "Import a saved AutoFix config or export the current one."),
             Toggle("Use allowlist mode", "Only run in approved apps.", false),
             Text("IPC pipe name", "Named pipe used by settings UI.", @"Local\AutoFix.Background.Ipc"),
         ]),
@@ -143,6 +144,9 @@ public static class SettingsSkeleton
 
     private static SettingCardViewModel Text(string title, string description, string value) =>
         new() { Title = title, Description = description, Kind = "Text", TextValue = value };
+
+    private static SettingCardViewModel ConfigTransfer(string title, string description) =>
+        new() { Title = title, Description = description, Kind = "ConfigTransfer" };
 
     private static ObservableCollection<OptionItem> OptionsFor(string title) => title switch
     {
