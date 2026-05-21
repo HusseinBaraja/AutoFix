@@ -216,11 +216,18 @@ public partial class MainWindow : Window
         catch (Win32Exception)
         {
             Directory.CreateDirectory(path);
-            Process.Start(new ProcessStartInfo
+            try
             {
-                FileName = path,
-                UseShellExecute = true,
-            });
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true,
+                });
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to open folder after creating directory: {path}", ex);
+            }
         }
     }
 }
