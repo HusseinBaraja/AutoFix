@@ -1,5 +1,9 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="SettingsTheme.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+
     <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF" />
     <SolidColorBrush x:Key="PanelBrush" Color="#F6F7FB" />
     <SolidColorBrush x:Key="ControlBrush" Color="#FCFDFE" />
@@ -35,7 +39,7 @@
         <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrushSoft}" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="CornerRadius" Value="{StaticResource SettingsCornerRadius}" />
         <Setter Property="Effect" Value="{StaticResource CardShadow}" />
     </Style>
 
@@ -57,7 +61,7 @@
                             Background="{TemplateBinding Background}"
                             BorderBrush="{TemplateBinding BorderBrush}"
                             BorderThickness="{TemplateBinding BorderThickness}"
-                            CornerRadius="7"
+                            CornerRadius="{StaticResource SettingsCornerRadius}"
                             SnapsToDevicePixels="True">
                         <ContentPresenter HorizontalAlignment="Center"
                                           VerticalAlignment="Center"
@@ -88,18 +92,44 @@
     <Style x:Key="InputTextBox" TargetType="TextBox">
         <Setter Property="Height" Value="40" />
         <Setter Property="Padding" Value="13,9" />
-        <Setter Property="Background" Value="{StaticResource ControlBrush}" />
-        <Setter Property="BorderBrush" Value="{StaticResource BorderBrushSoft}" />
-        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         <Setter Property="FontSize" Value="14" />
     </Style>
 
     <Style TargetType="TextBox" BasedOn="{StaticResource InputTextBox}" />
 
+    <Style x:Key="InputShell" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource ControlBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrushSoft}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{StaticResource SettingsCornerRadius}" />
+    </Style>
+
     <Style TargetType="ComboBoxItem">
         <Setter Property="Padding" Value="12,8" />
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border x:Name="Root"
+                            Background="Transparent"
+                            CornerRadius="{StaticResource SettingsCornerRadius}"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{StaticResource ControlHoverBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <Style TargetType="ComboBox">
@@ -128,7 +158,7 @@
                                             Background="{TemplateBinding Background}"
                                             BorderBrush="{TemplateBinding BorderBrush}"
                                             BorderThickness="{TemplateBinding BorderThickness}"
-                                            CornerRadius="7">
+                                            CornerRadius="{StaticResource SettingsCornerRadius}">
                                         <Grid>
                                             <ContentPresenter Margin="13,0,36,0"
                                                               Content="{TemplateBinding Content}"
@@ -169,7 +199,7 @@
                                     Background="{StaticResource SurfaceBrush}"
                                     BorderBrush="{StaticResource BorderBrushSoft}"
                                     BorderThickness="1"
-                                    CornerRadius="8"
+                                    CornerRadius="{StaticResource SettingsCornerRadius}"
                                     Effect="{StaticResource CardShadow}">
                                 <ScrollViewer MaxHeight="240">
                                     <ItemsPresenter />

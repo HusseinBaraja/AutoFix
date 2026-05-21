@@ -1,15 +1,28 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="SettingsTheme.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+
     <SolidColorBrush x:Key="TableSurfaceBrush" Color="#FFFFFF" />
     <SolidColorBrush x:Key="TableBorderBrush" Color="#DCE2EE" />
     <SolidColorBrush x:Key="TableTextBrush" Color="#111827" />
     <SolidColorBrush x:Key="TableMutedTextBrush" Color="#5D6B82" />
     <SolidColorBrush x:Key="TableAccentSoftBrush" Color="#F0EDFF" />
 
-    <Style TargetType="DataGrid">
+    <Style x:Key="TableShell" TargetType="Border">
         <Setter Property="Background" Value="{StaticResource TableSurfaceBrush}" />
         <Setter Property="BorderBrush" Value="{StaticResource TableBorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{StaticResource SettingsCornerRadius}" />
+        <Setter Property="Padding" Value="1" />
+        <Setter Property="ClipToBounds" Value="True" />
+    </Style>
+
+    <Style TargetType="DataGrid">
+        <Setter Property="Background" Value="{StaticResource TableSurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource TableBorderBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
         <Setter Property="GridLinesVisibility" Value="None" />
         <Setter Property="RowHeaderWidth" Value="0" />
         <Setter Property="HeadersVisibility" Value="Column" />

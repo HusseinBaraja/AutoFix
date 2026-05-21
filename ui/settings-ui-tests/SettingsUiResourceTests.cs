@@ -9,7 +9,7 @@ public sealed class SettingsUiResourceTests
     private static readonly XNamespace Xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
 
     [TestMethod]
-    public void TextBoxesUseStockTemplateWithExplicitPlaceholders()
+    public void TextBoxesUseStockTemplateInsideRoundedShells()
     {
         var controls = LoadXaml("Resources", "SettingsControls.xaml");
         var window = LoadXaml("MainWindow.xaml");
@@ -17,6 +17,12 @@ public sealed class SettingsUiResourceTests
         Assert.IsFalse(controls
             .Descendants(Presentation + "ControlTemplate")
             .Any(template => (string?)template.Attribute("TargetType") == "TextBox"));
+        Assert.IsTrue(controls
+            .Descendants(Presentation + "Style")
+            .Any(style => (string?)style.Attribute(Xaml + "Key") == "InputShell"));
+        Assert.IsTrue(window
+            .Descendants(Presentation + "Border")
+            .Any(border => (string?)border.Attribute("Style") == "{StaticResource InputShell}"));
         Assert.IsTrue(window
             .Descendants(Presentation + "TextBlock")
             .Any(text => (string?)text.Attribute("Text") == "Search settings"));
@@ -38,6 +44,57 @@ public sealed class SettingsUiResourceTests
             .Any(button => (string?)button.Attribute("Content") == "{TemplateBinding SelectionBoxItem}"
                 && (string?)button.Attribute("ContentTemplate") == "{TemplateBinding SelectionBoxItemTemplate}"
                 && (string?)button.Attribute("ContentStringFormat") == "{TemplateBinding SelectionBoxItemStringFormat}"));
+    }
+
+    [TestMethod]
+    public void RoundedSurfacesUseSharedCornerRadius()
+    {
+        var window = LoadXaml("MainWindow.xaml");
+        var controls = LoadXaml("Resources", "SettingsControls.xaml");
+        var chrome = LoadXaml("Resources", "SettingsChrome.xaml");
+        var tables = LoadXaml("Resources", "SettingsTables.xaml");
+
+        Assert.AreEqual("Resources/SettingsTheme.xaml", window
+            .Descendants(Presentation + "ResourceDictionary")
+            .Select(dictionary => (string?)dictionary.Attribute("Source"))
+            .First(source => source is not null));
+        Assert.AreEqual("8", (string?)LoadXaml("Resources", "SettingsTheme.xaml")
+            .Elements(Presentation + "CornerRadius")
+            .Single(radius => (string?)radius.Attribute(Xaml + "Key") == "SettingsCornerRadius"));
+        Assert.IsFalse(new[] { controls, chrome, tables }
+            .SelectMany(resource => resource.Descendants())
+            .Any(element => (string?)element.Attribute("CornerRadius") is "6" or "7" or "8"));
+        Assert.IsTrue(new[] { controls, chrome, tables }
+            .SelectMany(resource => resource.Descendants())
+            .Any(element => (string?)element.Attribute("CornerRadius") == "{StaticResource SettingsCornerRadius}"));
+    }
+
+    [TestMethod]
+    public void WindowIconUsesDeferredApplicationResourceLookup()
+    {
+        var window = LoadXaml("MainWindow.xaml");
+
+        Assert.AreEqual("{DynamicResource AutoFixLogoImage}", (string?)window.Attribute("Icon"));
+    }
+
+    [TestMethod]
+    public void TablesRenderInsideRoundedShells()
+    {
+        var tables = LoadXaml("Resources", "SettingsTables.xaml");
+        var window = LoadXaml("MainWindow.xaml");
+
+        Assert.IsTrue(tables
+            .Descendants(Presentation + "Style")
+            .Any(style => (string?)style.Attribute(Xaml + "Key") == "TableShell"));
+        Assert.IsTrue(window
+            .Descendants(Presentation + "Border")
+            .Any(border => (string?)border.Attribute("Style") == "{StaticResource TableShell}"));
+        Assert.IsTrue(tables
+            .Descendants(Presentation + "Style")
+            .Where(style => (string?)style.Attribute("TargetType") == "DataGrid")
+            .Descendants(Presentation + "Setter")
+            .Any(setter => (string?)setter.Attribute("Property") == "BorderThickness"
+                && (string?)setter.Attribute("Value") == "0"));
     }
 
     [TestMethod]
