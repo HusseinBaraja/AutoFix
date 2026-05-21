@@ -71,6 +71,7 @@
                 <ListBox ItemsSource="{Binding SectionView}"
                          SelectedItem="{Binding SelectedSection}"
                          ItemContainerStyle="{StaticResource SidebarItem}"
+                         AutomationProperties.Name="Settings sections"
                          BorderThickness="0"
                          Background="Transparent">
                     <ListBox.ItemTemplate>
