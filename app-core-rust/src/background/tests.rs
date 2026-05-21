@@ -24,13 +24,18 @@ fn starts_background_runtime_with_user_config_and_database() {
     let root = unique_temp_dir();
     let config_path = root.join("config.toml");
     let database_path = root.join("autofix.sqlite");
-    let paths = RuntimePaths::new(config_path.clone(), database_path.clone());
+    let paths = RuntimePaths::new(
+        config_path.clone(),
+        database_path.clone(),
+        root.join("logs"),
+    );
 
     let runtime = BackgroundRuntime::start(paths).unwrap();
     runtime.shutdown();
 
     assert!(config_path.exists());
     assert!(database_path.exists());
+    assert!(root.join("logs").exists());
     fs::remove_dir_all(root).unwrap();
 }
 

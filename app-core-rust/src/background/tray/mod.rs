@@ -1,5 +1,7 @@
+mod assets;
 #[cfg(not(test))]
 mod native;
+mod settings_app_path;
 #[cfg(test)]
 mod tests;
 
@@ -8,6 +10,7 @@ use crate::{
     platform,
     settings::{AppConfig, CorrectionEngine, CorrectionMode},
 };
+use settings_app_path::settings_app_path;
 
 use std::path::PathBuf;
 
@@ -60,14 +63,13 @@ impl TrayIcon {
     }
 
     pub(crate) fn shutdown(self) {
-        drop(self.native);
         tracing::info!("tray icon shut down");
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TrayCommandTargets {
-    settings_path: PathBuf,
+    settings_app_path: PathBuf,
     logs_path: PathBuf,
 }
 
@@ -115,15 +117,9 @@ impl TrayMenuContext {
 
 impl TrayCommandTargets {
     fn from_paths(paths: &RuntimePaths) -> Self {
-        let logs_path = paths
-            .database_path()
-            .parent()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
-
         Self {
-            settings_path: paths.config_path().to_path_buf(),
-            logs_path,
+            settings_app_path: settings_app_path(),
+            logs_path: paths.log_directory().to_path_buf(),
         }
     }
 }

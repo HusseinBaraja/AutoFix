@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofix.local/schema/ipc.schema.json",
+  "title": "AutoFix local IPC protocol",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/response" }
+  ],
+  "$defs": {
+    "correctionMode": {
+      "type": "string",
+      "enum": ["typos_only", "typos_plus_grammar"]
+    },
+    "correctionEngine": {
+      "type": "string",
+      "enum": ["local", "api"]
+    },
+    "request": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "get_app_status",
+            "get_correction_mode",
+            "get_current_engine",
+            "reload_config",
+            "update_setting",
+            "open_logs",
+            "request_undo_last_correction",
+            "test_correction_engine_later",
+            "is_background_running"
+          ]
+        },
+        "payload": {
+          "oneOf": [{ "$ref": "#/$defs/updateSettingRequest" }]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "update_setting" } } },
+          "then": { "required": ["payload"] },
+          "else": { "not": { "required": ["payload"] } }
+        }
+      ]
+    },
+    "updateSettingRequest": {
+      "type": "object",
+      "required": ["path", "value"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^[a-z_]+(\\.[a-z_]+)+$"
+        },
+        "value": {}
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "app_status",
+            "correction_mode",
+            "current_engine",
+            "config_reloaded",
+            "setting_updated",
+            "logs",
+            "undo_requested",
+            "test_correction_engine_queued",
+            "background_running",
+            "error"
+          ]
+        },
+        "payload": { "type": "object" }
+      }
+    }
+  }
+}

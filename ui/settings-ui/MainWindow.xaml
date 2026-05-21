@@ -2,12 +2,108 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="AutoFix Settings"
+        Icon="{StaticResource AutoFixLogoImage}"
         Width="720"
-        Height="480">
+        Height="480"
+        Loaded="Window_Loaded">
     <Grid Margin="24">
-        <TextBlock Text="AutoFix Settings"
-                   FontSize="24"
-                   FontWeight="SemiBold"
-                   VerticalAlignment="Top" />
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="16" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="24" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <DockPanel>
+            <StackPanel Orientation="Horizontal"
+                        VerticalAlignment="Center">
+                <Image Source="{StaticResource AutoFixLogoImage}"
+                       Width="32"
+                       Height="28"
+                       Margin="0,0,10,0" />
+                <TextBlock Text="AutoFix Settings"
+                           FontSize="24"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+            <Button x:Name="RefreshButton"
+                    Content="Refresh"
+                    Width="96"
+                    HorizontalAlignment="Right"
+                    Click="RefreshButton_Click" />
+        </DockPanel>
+
+        <Border Grid.Row="2"
+                Background="#F3F4F6"
+                BorderBrush="#D1D5DB"
+                BorderThickness="1"
+                Padding="16">
+            <StackPanel>
+                <TextBlock x:Name="StatusText"
+                           Text="Checking background process..."
+                           FontWeight="SemiBold" />
+                <TextBlock x:Name="DetailText"
+                           Margin="0,6,0,0"
+                           Foreground="#4B5563" />
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel>
+                <TextBlock Text="Correction mode"
+                           FontWeight="SemiBold" />
+                <ComboBox x:Name="ModeComboBox"
+                          Margin="0,8,0,0"
+                          SelectedValuePath="Tag">
+                    <ComboBoxItem Content="Typos only" Tag="typos_only" />
+                    <ComboBoxItem Content="Typos + grammar" Tag="typos_plus_grammar" />
+                </ComboBox>
+                <Button Content="Update mode"
+                        Margin="0,10,0,0"
+                        Click="UpdateModeButton_Click" />
+            </StackPanel>
+
+            <StackPanel Grid.Column="2">
+                <TextBlock Text="Engine"
+                           FontWeight="SemiBold" />
+                <ComboBox x:Name="EngineComboBox"
+                          Margin="0,8,0,0"
+                          SelectedValuePath="Tag">
+                    <ComboBoxItem Content="Local" Tag="local" />
+                    <ComboBoxItem Content="API" Tag="api" />
+                </ComboBox>
+                <Button Content="Update engine"
+                        Margin="0,10,0,0"
+                        Click="UpdateEngineButton_Click" />
+            </StackPanel>
+        </Grid>
+
+        <WrapPanel Grid.Row="6"
+                   HorizontalAlignment="Right">
+            <Button Content="Reload config"
+                    Width="112"
+                    Margin="0,0,8,0"
+                    Click="ReloadConfigButton_Click" />
+            <Button Content="View logs"
+                    Width="96"
+                    Margin="0,0,8,0"
+                    Click="ViewLogsButton_Click" />
+            <Button Content="Undo last"
+                    Width="96"
+                    Margin="0,0,8,0"
+                    Click="UndoButton_Click" />
+            <Button Content="Test engine later"
+                    Width="128"
+                    Click="TestEngineButton_Click" />
+        </WrapPanel>
     </Grid>
 </Window>
