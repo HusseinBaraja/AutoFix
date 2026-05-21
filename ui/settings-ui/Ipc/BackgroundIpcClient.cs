@@ -78,6 +78,14 @@ public sealed class BackgroundIpcClient
         {
             return IpcResult<BackgroundRunningResponse>.Unavailable();
         }
+        catch (JsonException)
+        {
+            return IpcResult<BackgroundRunningResponse>.Unavailable();
+        }
+        catch (InvalidDataException)
+        {
+            return IpcResult<BackgroundRunningResponse>.Unavailable();
+        }
         catch (OperationCanceledException)
         {
             return IpcResult<BackgroundRunningResponse>.Unavailable();
