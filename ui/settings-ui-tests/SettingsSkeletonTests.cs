@@ -70,4 +70,18 @@ public sealed class SettingsSkeletonTests
             .SelectMany(section => section.Settings)
             .Any(setting => setting.IsConfigTransfer));
     }
+
+    [TestMethod]
+    public void CreateSectionsPlacesBackgroundStatusFirstOnGeneralOnly()
+    {
+        var sections = SettingsSkeleton.CreateSections();
+
+        var general = sections.Single(section => section.Name == "General");
+
+        Assert.IsTrue(general.Settings.First().IsBackgroundStatus);
+        Assert.IsFalse(sections
+            .Where(section => section.Name != "General")
+            .SelectMany(section => section.Settings)
+            .Any(setting => setting.IsBackgroundStatus));
+    }
 }

@@ -21,6 +21,7 @@ public static class SettingsSkeleton
     [
         Section("General", "Startup, tray, theme, and update behavior",
         [
+            BackgroundStatus(),
             Toggle("Start AutoFix with Windows", "Launch background mode after sign-in.", true),
             Toggle("Show tray notifications", "Notify when corrections are applied.", true),
             Dropdown("Theme", "Match Windows by default.", "System"),
@@ -147,6 +148,9 @@ public static class SettingsSkeleton
 
     private static SettingCardViewModel ConfigTransfer(string title, string description) =>
         new() { Title = title, Description = description, Kind = "ConfigTransfer" };
+
+    private static SettingCardViewModel BackgroundStatus() =>
+        new() { Title = "Background process status", Kind = "BackgroundStatus" };
 
     private static ObservableCollection<OptionItem> OptionsFor(string title) => title switch
     {

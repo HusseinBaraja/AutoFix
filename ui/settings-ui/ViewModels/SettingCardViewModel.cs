@@ -44,4 +44,6 @@ public sealed class SettingCardViewModel : ObservableObject
     public bool IsHotkey => Kind == "Hotkey";
     public bool IsText => Kind == "Text";
     public bool IsConfigTransfer => Kind == "ConfigTransfer";
+    public bool IsBackgroundStatus => Kind == "BackgroundStatus";
+    public bool IsRegularSetting => !IsBackgroundStatus;
 }
