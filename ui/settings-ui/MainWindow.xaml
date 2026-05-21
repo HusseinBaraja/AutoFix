@@ -41,10 +41,27 @@
                                    FontWeight="SemiBold"
                                    VerticalAlignment="Center" />
                     </StackPanel>
-                    <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                             Tag="Search settings"
-                             Margin="0,18,0,0"
-                             Height="40" />
+                    <Grid Margin="0,18,0,0">
+                        <TextBox x:Name="SearchBox"
+                                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                 Height="40" />
+                        <TextBlock Text="Search settings"
+                                   Margin="13,0"
+                                   Foreground="{StaticResource MutedTextBrush}"
+                                   IsHitTestVisible="False"
+                                   VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource BodyText}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
                 </StackPanel>
 
                 <ListBox ItemsSource="{Binding SectionView}"
@@ -79,21 +96,24 @@
                            Foreground="#667085" />
             </StackPanel>
 
-            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
-                <StackPanel>
-                    <ItemsControl ItemsSource="{Binding SelectedSection.Settings}">
+            <ScrollViewer x:Name="SettingsScrollViewer"
+                          Grid.Row="2"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel Width="{Binding ViewportWidth, ElementName=SettingsScrollViewer}">
+                    <ItemsControl ItemsSource="{Binding SelectedSection.Settings}"
+                                  Width="{Binding ViewportWidth, ElementName=SettingsScrollViewer}">
+                        <ItemsControl.ItemContainerStyle>
+                            <Style TargetType="ContentPresenter">
+                                <Setter Property="HorizontalAlignment" Value="Stretch" />
+                            </Style>
+                        </ItemsControl.ItemContainerStyle>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Style="{StaticResource SettingsCard}">
                                     <Grid>
-                                        <DockPanel Visibility="{Binding IsBackgroundStatus, Converter={StaticResource BoolToVisibility}}">
-                                            <StackPanel>
-                                                <TextBlock Text="{Binding DataContext.StatusTitle, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                           FontWeight="SemiBold" />
-                                                <TextBlock Text="{Binding DataContext.StatusDetail, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                           Margin="0,4,0,0"
-                                                           Foreground="#667085" />
-                                            </StackPanel>
+                                        <DockPanel LastChildFill="True"
+                                                   Visibility="{Binding IsBackgroundStatus, Converter={StaticResource BoolToVisibility}}">
                                             <StackPanel Orientation="Horizontal"
                                                         DockPanel.Dock="Right"
                                                         HorizontalAlignment="Right">
@@ -102,6 +122,13 @@
                                                         Margin="0,0,8,0" />
                                                 <Button Content="Refresh"
                                                         Command="{Binding DataContext.RefreshStatusCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                            </StackPanel>
+                                            <StackPanel Margin="0,0,16,0">
+                                                <TextBlock Text="{Binding DataContext.StatusTitle, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                           FontWeight="SemiBold" />
+                                                <TextBlock Text="{Binding DataContext.StatusDetail, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                           Margin="0,4,0,0"
+                                                           Foreground="#667085" />
                                             </StackPanel>
                                         </DockPanel>
                                         <Grid Visibility="{Binding IsRegularSetting, Converter={StaticResource BoolToVisibility}}">
@@ -120,6 +147,7 @@
                                             </StackPanel>
                                             <Grid Grid.Column="1" HorizontalAlignment="Stretch">
                                                 <CheckBox Style="{StaticResource ToggleSwitch}"
+                                                          HorizontalAlignment="Right"
                                                           IsChecked="{Binding IsEnabled}"
                                                           Visibility="{Binding IsToggle, Converter={StaticResource BoolToVisibility}}" />
                                                 <ComboBox Width="280"
@@ -128,10 +156,26 @@
                                                           SelectedValuePath="Value"
                                                           SelectedValue="{Binding SelectedValue}"
                                                           Visibility="{Binding IsDropdown, Converter={StaticResource BoolToVisibility}}" />
-                                                <TextBox Width="280"
-                                                         Text="{Binding TextValue}"
-                                                         Tag="{Binding Description}"
-                                                         Visibility="{Binding IsText, Converter={StaticResource BoolToVisibility}}" />
+                                                <Grid Visibility="{Binding IsText, Converter={StaticResource BoolToVisibility}}">
+                                                    <TextBox Width="280"
+                                                             Text="{Binding TextValue}" />
+                                                    <TextBlock Text="{Binding Description}"
+                                                               Margin="13,0"
+                                                               Foreground="{StaticResource MutedTextBrush}"
+                                                               IsHitTestVisible="False"
+                                                               VerticalAlignment="Center">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock" BasedOn="{StaticResource BodyText}">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding TextValue}" Value="">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </Grid>
                                                 <Button Width="280"
                                                         Content="{Binding Hotkey}"
                                                         Command="{Binding DataContext.CaptureHotkeyCommand, RelativeSource={RelativeSource AncestorType=Window}}"

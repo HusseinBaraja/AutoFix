@@ -58,6 +58,14 @@ public sealed class SettingsSkeletonTests
     }
 
     [TestMethod]
+    public void DropdownOptionsRenderAsLabels()
+    {
+        var option = SettingsSkeleton.Modes().First();
+
+        Assert.AreEqual("Typos only", option.ToString());
+    }
+
+    [TestMethod]
     public void CreateSectionsPlacesConfigTransferOnAdvanced()
     {
         var sections = SettingsSkeleton.CreateSections();

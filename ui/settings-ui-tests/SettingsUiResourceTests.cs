@@ -9,20 +9,20 @@ public sealed class SettingsUiResourceTests
     private static readonly XNamespace Xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
 
     [TestMethod]
-    public void TextBoxTemplateRendersPlaceholderAndTypedText()
+    public void TextBoxesUseStockTemplateWithExplicitPlaceholders()
     {
         var controls = LoadXaml("Resources", "SettingsControls.xaml");
-        var textBoxTemplate = controls
-            .Descendants(Presentation + "ControlTemplate")
-            .Single(template => (string?)template.Attribute("TargetType") == "TextBox");
+        var window = LoadXaml("MainWindow.xaml");
 
-        Assert.IsTrue(textBoxTemplate
-            .Descendants(Presentation + "ScrollViewer")
-            .Any(viewer => (string?)viewer.Attribute(Xaml + "Name") == "PART_ContentHost"));
-        Assert.IsTrue(textBoxTemplate
+        Assert.IsFalse(controls
+            .Descendants(Presentation + "ControlTemplate")
+            .Any(template => (string?)template.Attribute("TargetType") == "TextBox"));
+        Assert.IsTrue(window
             .Descendants(Presentation + "TextBlock")
-            .Any(text => (string?)text.Attribute(Xaml + "Name") == "PlaceholderText"
-                && (string?)text.Attribute("Text") == "{TemplateBinding Tag}"));
+            .Any(text => (string?)text.Attribute("Text") == "Search settings"));
+        Assert.IsTrue(window
+            .Descendants(Presentation + "TextBlock")
+            .Any(text => (string?)text.Attribute("Text") == "{Binding Description}"));
     }
 
     [TestMethod]
@@ -53,6 +53,35 @@ public sealed class SettingsUiResourceTests
         Assert.IsFalse(window
             .Descendants()
             .Any(element => ((string?)element.Attribute("Width")) == "250"));
+    }
+
+    [TestMethod]
+    public void SettingsContentIsConstrainedToScrollViewport()
+    {
+        var window = LoadXaml("MainWindow.xaml");
+        var scrollViewer = window
+            .Descendants(Presentation + "ScrollViewer")
+            .Single(element => (string?)element.Attribute(Xaml + "Name") == "SettingsScrollViewer");
+        var settingsItems = window
+            .Descendants(Presentation + "ItemsControl")
+            .Single(element => (string?)element.Attribute("ItemsSource") == "{Binding SelectedSection.Settings}");
+
+        var content = scrollViewer.Element(Presentation + "StackPanel");
+
+        Assert.AreEqual("Disabled", (string?)scrollViewer.Attribute("HorizontalScrollBarVisibility"));
+        Assert.AreEqual("{Binding ViewportWidth, ElementName=SettingsScrollViewer}", (string?)content?.Attribute("Width"));
+        Assert.AreEqual("{Binding ViewportWidth, ElementName=SettingsScrollViewer}", (string?)settingsItems.Attribute("Width"));
+    }
+
+    [TestMethod]
+    public void ToggleSettingsAreRightAligned()
+    {
+        var window = LoadXaml("MainWindow.xaml");
+
+        Assert.IsTrue(window
+            .Descendants(Presentation + "CheckBox")
+            .Any(checkBox => (string?)checkBox.Attribute("Style") == "{StaticResource ToggleSwitch}"
+                && (string?)checkBox.Attribute("HorizontalAlignment") == "Right"));
     }
 
     private static XElement LoadXaml(params string[] pathParts)
