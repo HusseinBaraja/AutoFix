@@ -42,6 +42,7 @@
                                    VerticalAlignment="Center" />
                     </StackPanel>
                     <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                             Tag="Search settings"
                              Margin="0,18,0,0"
                              Height="40" />
                 </StackPanel>
@@ -106,7 +107,7 @@
                                         <Grid Visibility="{Binding IsRegularSetting, Converter={StaticResource BoolToVisibility}}">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="240" />
+                                                <ColumnDefinition Width="280" />
                                             </Grid.ColumnDefinitions>
                                             <StackPanel>
                                                 <TextBlock Text="{Binding Title}"
@@ -117,20 +118,21 @@
                                                            Margin="0,4,0,0"
                                                            TextWrapping="Wrap" />
                                             </StackPanel>
-                                            <Grid Grid.Column="1" HorizontalAlignment="Right">
+                                            <Grid Grid.Column="1" HorizontalAlignment="Stretch">
                                                 <CheckBox Style="{StaticResource ToggleSwitch}"
                                                           IsChecked="{Binding IsEnabled}"
                                                           Visibility="{Binding IsToggle, Converter={StaticResource BoolToVisibility}}" />
-                                                <ComboBox Width="250"
+                                                <ComboBox Width="280"
                                                           ItemsSource="{Binding Options}"
                                                           DisplayMemberPath="Label"
                                                           SelectedValuePath="Value"
                                                           SelectedValue="{Binding SelectedValue}"
                                                           Visibility="{Binding IsDropdown, Converter={StaticResource BoolToVisibility}}" />
-                                                <TextBox Width="250"
+                                                <TextBox Width="280"
                                                          Text="{Binding TextValue}"
+                                                         Tag="{Binding Description}"
                                                          Visibility="{Binding IsText, Converter={StaticResource BoolToVisibility}}" />
-                                                <Button Width="250"
+                                                <Button Width="280"
                                                         Content="{Binding Hotkey}"
                                                         Command="{Binding DataContext.CaptureHotkeyCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                         CommandParameter="{Binding Title}"
