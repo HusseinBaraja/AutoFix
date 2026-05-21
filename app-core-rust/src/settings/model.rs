@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub(crate) struct AppConfig {
     pub(crate) general: GeneralConfig,
     pub(crate) shortcuts: ShortcutsConfig,
@@ -10,21 +10,6 @@ pub(crate) struct AppConfig {
     pub(crate) api: ApiConfig,
     pub(crate) feedback: FeedbackConfig,
     pub(crate) logging: LoggingConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            shortcuts: ShortcutsConfig::default(),
-            triggers: TriggersConfig::default(),
-            context: ContextConfig::default(),
-            correction: CorrectionConfig::default(),
-            api: ApiConfig::default(),
-            feedback: FeedbackConfig::default(),
-            logging: LoggingConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -1,6 +1,7 @@
 mod assets;
 #[cfg(not(test))]
 mod native;
+mod settings_app_path;
 #[cfg(test)]
 mod tests;
 
@@ -9,6 +10,7 @@ use crate::{
     platform,
     settings::{AppConfig, CorrectionEngine, CorrectionMode},
 };
+use settings_app_path::settings_app_path;
 
 use std::path::PathBuf;
 
@@ -61,7 +63,6 @@ impl TrayIcon {
     }
 
     pub(crate) fn shutdown(self) {
-        drop(self.native);
         tracing::info!("tray icon shut down");
     }
 }
@@ -121,29 +122,6 @@ impl TrayCommandTargets {
             logs_path: paths.log_directory().to_path_buf(),
         }
     }
-}
-
-fn settings_app_path() -> PathBuf {
-    let file_name = "AutoFix.SettingsUi.exe";
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(directory) = current_exe.parent() {
-            let bundled = directory.join(file_name);
-            if bundled.exists() {
-                return bundled;
-            }
-        }
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir
-        .parent()
-        .unwrap_or(&manifest_dir)
-        .join("ui")
-        .join("settings-ui")
-        .join("bin")
-        .join("Debug")
-        .join("net8.0-windows")
-        .join(file_name)
 }
 
 impl TrayStatus {
