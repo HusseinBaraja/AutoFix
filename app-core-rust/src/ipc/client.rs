@@ -5,14 +5,17 @@ use std::{
 
 use windows_sys::Win32::{
     Foundation::{
-        CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_PIPE_NOT_CONNECTED, GENERIC_READ,
-        GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+        CloseHandle, GetLastError, ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA,
+        ERROR_PIPE_BUSY, ERROR_PIPE_NOT_CONNECTED, GENERIC_READ, GENERIC_WRITE, HANDLE,
+        INVALID_HANDLE_VALUE,
     },
     Storage::FileSystem::{CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING},
-    System::Pipes::WaitNamedPipeW,
+    System::Pipes::{SetNamedPipeHandleState, WaitNamedPipeW, PIPE_READMODE_MESSAGE},
 };
 
 use super::protocol::{IpcRequest, IpcResponse};
+
+const READ_CHUNK_SIZE: usize = 64 * 1024;
 
 #[derive(Debug)]
 pub(crate) enum IpcClientError {
@@ -85,6 +88,7 @@ fn connect(pipe_path: &str) -> Result<HANDLE, IpcClientError> {
         };
 
         if pipe != INVALID_HANDLE_VALUE {
+            set_message_read_mode(pipe)?;
             return Ok(pipe);
         }
 
@@ -99,6 +103,20 @@ fn connect(pipe_path: &str) -> Result<HANDLE, IpcClientError> {
     }
 
     Err(IpcClientError::Unavailable)
+}
+
+fn set_message_read_mode(pipe: HANDLE) -> Result<(), IpcClientError> {
+    let mut mode = PIPE_READMODE_MESSAGE;
+    let mode_ok = unsafe { SetNamedPipeHandleState(pipe, &mut mode, null_mut(), null_mut()) };
+    if mode_ok != 0 {
+        return Ok(());
+    }
+
+    let error = std::io::Error::last_os_error();
+    unsafe {
+        CloseHandle(pipe);
+    }
+    Err(IpcClientError::Io(error))
 }
 
 fn write_then_read(pipe: HANDLE, request: &IpcRequest) -> Result<IpcResponse, IpcClientError> {
@@ -118,23 +136,43 @@ fn write_then_read(pipe: HANDLE, request: &IpcRequest) -> Result<IpcResponse, Ip
         return Err(IpcClientError::Io(std::io::Error::last_os_error()));
     }
 
-    let mut buffer = vec![0_u8; 64 * 1024];
-    let mut read = 0;
-    let read_ok = unsafe {
-        ReadFile(
-            pipe,
-            buffer.as_mut_ptr() as *mut _,
-            buffer.len() as u32,
-            &mut read,
-            null_mut(),
-        )
-    };
+    let response = read_response_bytes(pipe)?;
 
-    if read_ok == 0 {
-        return Err(IpcClientError::Io(std::io::Error::last_os_error()));
+    serde_json::from_slice(&response).map_err(IpcClientError::Json)
+}
+
+fn read_response_bytes(pipe: HANDLE) -> Result<Vec<u8>, IpcClientError> {
+    let mut response = Vec::new();
+    let mut chunk = vec![0_u8; READ_CHUNK_SIZE];
+
+    loop {
+        let mut read = 0;
+        let read_ok = unsafe {
+            ReadFile(
+                pipe,
+                chunk.as_mut_ptr() as *mut _,
+                chunk.len() as u32,
+                &mut read,
+                null_mut(),
+            )
+        };
+        response.extend_from_slice(&chunk[..read as usize]);
+
+        if read_ok != 0 {
+            continue;
+        }
+
+        let error = unsafe { GetLastError() };
+        if matches!(error, ERROR_BROKEN_PIPE | ERROR_PIPE_NOT_CONNECTED) && !response.is_empty() {
+            return Ok(response);
+        }
+
+        if error != ERROR_MORE_DATA {
+            return Err(IpcClientError::Io(std::io::Error::from_raw_os_error(
+                error as i32,
+            )));
+        }
     }
-
-    serde_json::from_slice(&buffer[..read as usize]).map_err(IpcClientError::Json)
 }
 
 fn wide(value: &str) -> Vec<u16> {
