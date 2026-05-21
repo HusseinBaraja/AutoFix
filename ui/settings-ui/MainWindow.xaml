@@ -47,6 +47,7 @@
                         <Grid>
                             <TextBox x:Name="SearchBox"
                                      Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                     AutomationProperties.Name="Search settings"
                                      Height="40" />
                             <TextBlock Text="Search settings"
                                        Margin="13,0"

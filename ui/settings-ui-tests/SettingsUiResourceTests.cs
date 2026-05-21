@@ -13,6 +13,9 @@ public sealed class SettingsUiResourceTests
     {
         var controls = LoadXaml("Resources", "SettingsControls.xaml");
         var window = LoadXaml("MainWindow.xaml");
+        var searchBox = window
+            .Descendants(Presentation + "TextBox")
+            .Single(textBox => (string?)textBox.Attribute(Xaml + "Name") == "SearchBox");
 
         Assert.IsFalse(controls
             .Descendants(Presentation + "ControlTemplate")
@@ -26,6 +29,7 @@ public sealed class SettingsUiResourceTests
         Assert.IsTrue(window
             .Descendants(Presentation + "TextBlock")
             .Any(text => (string?)text.Attribute("Text") == "Search settings"));
+        Assert.AreEqual("Search settings", (string?)searchBox.Attribute("AutomationProperties.Name"));
         Assert.IsTrue(window
             .Descendants(Presentation + "TextBlock")
             .Any(text => (string?)text.Attribute("Text") == "{Binding Description}"));
