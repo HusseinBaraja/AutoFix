@@ -20,7 +20,7 @@ use super::pipe_path_for_process;
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn reports_status_without_exposing_typed_text() {
+fn reports_basic_app_status() {
     let fixture = IpcFixture::start();
 
     let response = send_request(&fixture.pipe_path, &IpcRequest::GetAppStatus).unwrap();
