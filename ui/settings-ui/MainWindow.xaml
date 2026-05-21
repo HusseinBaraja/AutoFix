@@ -210,6 +210,7 @@
                             Margin="0,0,0,10"
                             Visibility="{Binding SelectedSection.HasAppRules, Converter={StaticResource BoolToVisibility}}">
                         <DataGrid ItemsSource="{Binding SelectedSection.AppRules}"
+                                  AutomationProperties.Name="App Rules"
                                   AutoGenerateColumns="False"
                                   CanUserAddRows="False"
                                   HeadersVisibility="Column">
@@ -226,6 +227,7 @@
                     <Border Style="{StaticResource TableShell}"
                             Visibility="{Binding SelectedSection.HasDictionary, Converter={StaticResource BoolToVisibility}}">
                         <DataGrid ItemsSource="{Binding SelectedSection.Dictionary}"
+                                  AutomationProperties.Name="Dictionary"
                                   AutoGenerateColumns="False"
                                   CanUserAddRows="False"
                                   HeadersVisibility="Column">
