@@ -58,7 +58,7 @@ public sealed class ConfigStorageTests
 
             [api]
             provider_preset = "openai_compatible"
-            model = "gpt-4.1-mini"
+            model = "gemini-2.5-flash-lite"
             timeout_manual_ms = 3000
             timeout_auto_ms = 700
             retry_count = 1

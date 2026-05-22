@@ -115,7 +115,7 @@ public sealed class ApiConfig
     public string? BaseUrl { get; set; }
 
     [JsonPropertyName("model")]
-    public string Model { get; set; } = "gpt-4.1-mini";
+    public string Model { get; set; } = "gemini-2.5-flash-lite";
 
     [JsonPropertyName("timeout_manual_ms")]
     public long TimeoutManualMs { get; set; } = 3000;
