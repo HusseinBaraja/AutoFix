@@ -10,6 +10,7 @@ public sealed class AsyncRelayCommandTests
     {
         var expected = new InvalidOperationException("Command failed.");
         var reported = new TaskCompletionSource<Exception>();
+        var secondReported = new TaskCompletionSource<Exception>();
         var executions = 0;
         var command = new AsyncRelayCommand(
             () =>
@@ -17,7 +18,17 @@ public sealed class AsyncRelayCommandTests
                 executions++;
                 throw expected;
             },
-            onError: exception => reported.TrySetResult(exception));
+            onError: exception =>
+            {
+                if (executions == 1)
+                {
+                    reported.TrySetResult(exception);
+                }
+                else
+                {
+                    secondReported.TrySetResult(exception);
+                }
+            });
 
         command.Execute(null);
 
@@ -26,6 +37,7 @@ public sealed class AsyncRelayCommandTests
 
         command.Execute(null);
 
+        Assert.AreSame(expected, await secondReported.Task.WaitAsync(TimeSpan.FromSeconds(1)));
         Assert.AreEqual(2, executions);
     }
 }
