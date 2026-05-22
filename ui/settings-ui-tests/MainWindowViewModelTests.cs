@@ -10,7 +10,7 @@ public sealed class MainWindowViewModelTests
     [TestMethod]
     public async Task SettingChangeSavesConfigAutomatically()
     {
-        using var fixture = TempConfig.Create();
+        using var fixture = TempConfigFixture.Create();
         var ipcClient = new FakeBackgroundIpcClient();
         var viewModel = new MainWindowViewModel(ipcClient, fixture.Storage, new NullConfigFileDialog());
         await viewModel.LoadSettingsAsync();
@@ -79,27 +79,4 @@ public sealed class MainWindowViewModelTests
         public string? PickExportPath() => null;
     }
 
-    private sealed class TempConfig : IDisposable
-    {
-        private readonly string root;
-
-        private TempConfig(string root)
-        {
-            this.root = root;
-            Path = System.IO.Path.Combine(root, "settings.toml");
-            Storage = new ConfigStorage(Path);
-        }
-
-        public string Path { get; }
-        public ConfigStorage Storage { get; }
-
-        public static TempConfig Create()
-        {
-            var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"autofix-{Guid.NewGuid():N}");
-            Directory.CreateDirectory(root);
-            return new TempConfig(root);
-        }
-
-        public void Dispose() => Directory.Delete(root, true);
-    }
 }

@@ -8,7 +8,7 @@ public sealed class ConfigStorageTests
     [TestMethod]
     public void SaveWritesTomlWithoutApiKeys()
     {
-        using var fixture = TempConfig.Create();
+        using var fixture = TempConfigFixture.Create();
         var config = AppConfig.Default();
 
         fixture.Storage.Save(config);
@@ -22,7 +22,7 @@ public sealed class ConfigStorageTests
     [TestMethod]
     public void LoadReadsCurrentSettings()
     {
-        using var fixture = TempConfig.Create();
+        using var fixture = TempConfigFixture.Create();
         File.WriteAllText(
             fixture.Path,
             """
@@ -91,7 +91,7 @@ public sealed class ConfigStorageTests
     [TestMethod]
     public void ExportCreatesDestinationDirectory()
     {
-        using var fixture = TempConfig.Create();
+        using var fixture = TempConfigFixture.Create();
         var destinationPath = System.IO.Path.Combine(fixture.Root, "exports", "settings.toml");
 
         fixture.Storage.Export(destinationPath, AppConfig.Default());
@@ -99,31 +99,4 @@ public sealed class ConfigStorageTests
         Assert.IsTrue(File.Exists(destinationPath));
     }
 
-    private sealed class TempConfig : IDisposable
-    {
-        private readonly string root;
-
-        private TempConfig(string root)
-        {
-            this.root = root;
-            Path = System.IO.Path.Combine(root, "settings.toml");
-            Storage = new ConfigStorage(Path);
-        }
-
-        public string Root => root;
-        public string Path { get; }
-        public ConfigStorage Storage { get; }
-
-        public static TempConfig Create()
-        {
-            var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"autofix-settings-{Guid.NewGuid():N}");
-            Directory.CreateDirectory(root);
-            return new TempConfig(root);
-        }
-
-        public void Dispose()
-        {
-            Directory.Delete(root, true);
-        }
-    }
 }
