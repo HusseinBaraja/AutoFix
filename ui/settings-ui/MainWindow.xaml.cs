@@ -11,6 +11,7 @@ public partial class MainWindow : Window
 {
     private readonly MainWindowViewModel viewModel = new();
     private string? hotkeyBeforeRecording;
+    private SettingCardViewModel? recordingHotkey;
 
     public MainWindow()
     {
@@ -62,6 +63,7 @@ public partial class MainWindow : Window
         if (sender is FrameworkElement { DataContext: SettingCardViewModel vm })
         {
             hotkeyBeforeRecording = vm.Hotkey;
+            recordingHotkey = vm;
             vm.IsRecording = true;
         }
     }
@@ -70,7 +72,7 @@ public partial class MainWindow : Window
     {
         if (sender is FrameworkElement { DataContext: SettingCardViewModel vm })
         {
-            vm.IsRecording = false;
+            EndHotkeyRecording(vm);
         }
     }
 
@@ -85,10 +87,15 @@ public partial class MainWindow : Window
 
         if (key == Key.Escape)
         {
-            vm.Hotkey = hotkeyBeforeRecording ?? vm.DefaultHotkey;
-            vm.IsRecording = false;
-            Keyboard.ClearFocus();
+            CancelHotkeyRecording(vm);
             e.Handled = true;
+            return;
+        }
+
+        if (key == Key.Tab && Keyboard.Modifiers.HasFlag(ModifierKeys.Alt))
+        {
+            CancelHotkeyRecording(vm);
+            e.Handled = false;
             return;
         }
 
@@ -96,12 +103,22 @@ public partial class MainWindow : Window
         if (!string.IsNullOrWhiteSpace(hotkey))
         {
             vm.Hotkey = hotkey;
-            vm.IsRecording = false;
+            EndHotkeyRecording(vm);
             Keyboard.ClearFocus();
             RefreshHotkeyPills(sender as DependencyObject);
         }
 
         e.Handled = true;
+    }
+
+    private void Window_Deactivated(object? sender, EventArgs e)
+    {
+        if (recordingHotkey is not null)
+        {
+            CancelHotkeyRecording(recordingHotkey);
+        }
+
+        Keyboard.ClearFocus();
     }
 
     private void HotkeyClear_Click(object sender, RoutedEventArgs e)
@@ -147,6 +164,23 @@ public partial class MainWindow : Window
         if (pills is not null)
         {
             HotkeyPillRenderer.Render(pills);
+        }
+    }
+
+    private void CancelHotkeyRecording(SettingCardViewModel vm)
+    {
+        vm.Hotkey = hotkeyBeforeRecording ?? vm.DefaultHotkey;
+        EndHotkeyRecording(vm);
+        Keyboard.ClearFocus();
+    }
+
+    private void EndHotkeyRecording(SettingCardViewModel vm)
+    {
+        vm.IsRecording = false;
+        if (ReferenceEquals(recordingHotkey, vm))
+        {
+            recordingHotkey = null;
+            hotkeyBeforeRecording = null;
         }
     }
 

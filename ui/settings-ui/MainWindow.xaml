@@ -8,7 +8,8 @@
         MinWidth="920"
         MinHeight="620"
         Background="#F6F7FB"
-        Loaded="Window_Loaded">
+        Loaded="Window_Loaded"
+        Deactivated="Window_Deactivated">
     <Window.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>

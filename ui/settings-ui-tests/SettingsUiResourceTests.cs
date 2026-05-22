@@ -249,6 +249,7 @@ public sealed class SettingsUiResourceTests
         Assert.IsTrue(window
             .Descendants(Presentation + "TextBlock")
             .Any(text => ((string?)text.Attribute("Text"))?.Contains("Recording") == true));
+        Assert.AreEqual("Window_Deactivated", (string?)window.Attribute("Deactivated"));
     }
 
     [TestMethod]
