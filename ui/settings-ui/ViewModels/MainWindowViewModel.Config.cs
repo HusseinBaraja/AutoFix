@@ -178,5 +178,5 @@ public sealed partial class MainWindowViewModel
     }
 
     private static bool IsConfigError(Exception error) =>
-        error is IOException or InvalidDataException or ArgumentException or FormatException;
+        error is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or FormatException;
 }
