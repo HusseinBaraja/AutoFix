@@ -207,15 +207,15 @@
                                                     <!-- Recorder well: click to record -->
                                                     <Border Style="{StaticResource HotkeyRecorderWell}"
                                                             Cursor="Hand"
-                                                            MouseLeftButtonDown="HotkeyWell_MouseLeftButtonDown">
+                                                            PreviewMouseLeftButtonDown="HotkeyWell_MouseLeftButtonDown">
                                                         <Grid>
-                                                            <!-- Hidden TextBox for keyboard capture -->
-                                                            <TextBox x:Name="HotkeyCapture"
-                                                                     Opacity="0"
-                                                                     Width="0"
-                                                                     Height="0"
+                                                            <!-- Invisible TextBox for keyboard capture — needs real size to receive focus -->
+                                                            <TextBox Opacity="0"
                                                                      IsReadOnly="True"
                                                                      Focusable="True"
+                                                                     Panel.ZIndex="-1"
+                                                                     HorizontalAlignment="Stretch"
+                                                                     VerticalAlignment="Stretch"
                                                                      GotKeyboardFocus="HotkeyBox_GotKeyboardFocus"
                                                                      LostKeyboardFocus="HotkeyBox_LostKeyboardFocus"
                                                                      PreviewKeyDown="HotkeyBox_PreviewKeyDown" />
