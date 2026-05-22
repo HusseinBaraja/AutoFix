@@ -9,6 +9,8 @@ public sealed class RelayCommand : ICommand
 
     public RelayCommand(Action<object?> execute, Predicate<object?>? canExecute = null)
     {
+        ArgumentNullException.ThrowIfNull(execute);
+
         this.execute = execute;
         this.canExecute = canExecute;
     }

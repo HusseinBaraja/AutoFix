@@ -11,6 +11,8 @@ public sealed class AsyncRelayCommand : ICommand
 
     public AsyncRelayCommand(Func<Task> execute, Func<bool>? canExecute = null, Action<Exception>? onError = null)
     {
+        ArgumentNullException.ThrowIfNull(execute);
+
         this.execute = execute;
         this.canExecute = canExecute;
         this.onError = onError;

@@ -6,6 +6,12 @@ namespace AutoFix.SettingsUi.Tests;
 public sealed class AsyncRelayCommandTests
 {
     [TestMethod]
+    public void ConstructorRejectsNullExecute()
+    {
+        Assert.ThrowsException<ArgumentNullException>(() => new AsyncRelayCommand(null!));
+    }
+
+    [TestMethod]
     public async Task ExecuteReportsExceptionAndAllowsLaterExecution()
     {
         var expected = new InvalidOperationException("Command failed.");
