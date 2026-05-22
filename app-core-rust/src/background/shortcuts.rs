@@ -100,7 +100,26 @@ mod native {
         match key {
             ShortcutKey::Space => VK_SPACE as u32,
             ShortcutKey::Letter(key) | ShortcutKey::Digit(key) => *key as u32,
-            ShortcutKey::Function(number) => VK_F1 as u32 + u32::from(*number - 1),
+            ShortcutKey::Function(number) => {
+                assert!(*number >= 1, "function key number must be >= 1");
+                VK_F1 as u32 + u32::from(*number - 1)
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{virtual_key, ShortcutKey, VK_F1};
+
+        #[test]
+        fn maps_function_key_to_windows_virtual_key() {
+            assert_eq!(virtual_key(&ShortcutKey::Function(12)), VK_F1 as u32 + 11);
+        }
+
+        #[test]
+        #[should_panic(expected = "function key number must be >= 1")]
+        fn rejects_zero_function_key_number() {
+            virtual_key(&ShortcutKey::Function(0));
         }
     }
 }
