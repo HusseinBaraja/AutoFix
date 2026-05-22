@@ -121,6 +121,7 @@ log_retention_days = 30
 
     assert_eq!(config.general.run_mode, RunMode::Allowlist);
     assert_eq!(config.triggers.word_count, 12);
+    assert!(config.correction.enabled);
     assert_eq!(config.correction.mode, CorrectionMode::TyposPlusGrammar);
     assert_eq!(
         config.correction.enabled_grammar_categories,
