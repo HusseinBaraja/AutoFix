@@ -25,21 +25,25 @@ public sealed partial class MainWindowViewModel
 
     public async Task SaveSettingsAsync()
     {
+        if (isSavingSettings)
+        {
+            saveSettingsAgain = true;
+            return;
+        }
+
+        isSavingSettings = true;
         try
         {
-            ConfigFormMapper.ClearValidation(Sections);
-            var config = ConfigFormMapper.BuildConfig(Sections);
-            configStorage.Save(config);
-            IsDirty = false;
-            var reloadDetail = await NotifyReloadAsync();
-            StatusTitle = "Settings saved.";
-            StatusDetail = reloadDetail;
+            do
+            {
+                saveSettingsAgain = false;
+                await SaveCurrentSettingsAsync();
+            }
+            while (saveSettingsAgain);
         }
-        catch (Exception error) when (IsConfigError(error))
+        finally
         {
-            ConfigFormMapper.MarkValidationError(Sections, error.Message);
-            StatusTitle = "Settings not saved.";
-            StatusDetail = error.Message;
+            isSavingSettings = false;
         }
     }
 
@@ -109,6 +113,26 @@ public sealed partial class MainWindowViewModel
         }
     }
 
+    private async Task SaveCurrentSettingsAsync()
+    {
+        try
+        {
+            ConfigFormMapper.ClearValidation(Sections);
+            var config = ConfigFormMapper.BuildConfig(Sections);
+            configStorage.Save(config);
+            IsDirty = false;
+            var reloadDetail = await NotifyReloadAsync();
+            StatusTitle = "Settings saved automatically.";
+            StatusDetail = reloadDetail;
+        }
+        catch (Exception error) when (IsConfigError(error))
+        {
+            ConfigFormMapper.MarkValidationError(Sections, error.Message);
+            StatusTitle = "Settings not saved.";
+            StatusDetail = error.Message;
+        }
+    }
+
     private void ApplyConfig(AppConfig config, bool dirty)
     {
         Sections.Clear();
@@ -140,6 +164,7 @@ public sealed partial class MainWindowViewModel
             or nameof(SettingCardViewModel.TextValue))
         {
             IsDirty = true;
+            _ = SaveSettingsAsync();
         }
     }
 

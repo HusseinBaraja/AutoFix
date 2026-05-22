@@ -13,7 +13,7 @@ namespace AutoFix.SettingsUi.ViewModels;
 
 public sealed partial class MainWindowViewModel : ObservableObject
 {
-    private readonly BackgroundIpcClient ipcClient;
+    private readonly IBackgroundIpcClient ipcClient;
     private readonly ConfigStorage configStorage;
     private readonly IConfigFileDialog fileDialog;
     private SettingsSectionViewModel? selectedSection;
@@ -22,6 +22,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private string statusDetail = "Settings can be edited after AutoFix background mode is running.";
     private bool isBackgroundRunning;
     private bool isDirty;
+    private bool isSavingSettings;
+    private bool saveSettingsAgain;
 
     public MainWindowViewModel() : this(new BackgroundIpcClient())
     {
@@ -33,7 +35,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     }
 
     public MainWindowViewModel(
-        BackgroundIpcClient ipcClient,
+        IBackgroundIpcClient ipcClient,
         ConfigStorage configStorage,
         IConfigFileDialog fileDialog)
     {
@@ -48,8 +50,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         RefreshStatusCommand = new AsyncRelayCommand(RefreshStatusAsync);
         LaunchBackgroundCommand = new RelayCommand(_ => ShowLaunchPlaceholder());
-        LoadSettingsCommand = new AsyncRelayCommand(LoadSettingsAsync);
-        SaveSettingsCommand = new AsyncRelayCommand(SaveSettingsAsync);
         ImportConfigCommand = new AsyncRelayCommand(ImportConfigAsync);
         ExportConfigCommand = new AsyncRelayCommand(ExportConfigAsync);
         CaptureHotkeyCommand = new RelayCommand(p => ShowPlaceholder($"Capture {p ?? "unspecified"} hotkey later."));
@@ -61,8 +61,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public ObservableCollection<OptionItem> Engines { get; } = SettingsSkeleton.Engines();
     public ICommand RefreshStatusCommand { get; }
     public ICommand LaunchBackgroundCommand { get; }
-    public ICommand LoadSettingsCommand { get; }
-    public ICommand SaveSettingsCommand { get; }
     public ICommand ImportConfigCommand { get; }
     public ICommand ExportConfigCommand { get; }
     public ICommand CaptureHotkeyCommand { get; }
