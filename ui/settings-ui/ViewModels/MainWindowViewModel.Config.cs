@@ -18,6 +18,7 @@ public sealed partial class MainWindowViewModel
         {
             StatusTitle = "Settings load failed.";
             StatusDetail = error.Message;
+            return;
         }
 
         await RefreshStatusAsync();

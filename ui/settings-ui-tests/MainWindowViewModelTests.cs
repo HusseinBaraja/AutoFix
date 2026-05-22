@@ -47,6 +47,23 @@ public sealed class MainWindowViewModelTests
         Assert.IsTrue(viewModel.StatusDetail.Contains("api.timeout_manual_ms", StringComparison.Ordinal));
     }
 
+    [TestMethod]
+    public async Task LoadFailureKeepsConfigErrorStatus()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var config = AppConfig.Default();
+        config.Api.TimeoutManualMs = 0;
+        await File.WriteAllTextAsync(fixture.Path, ConfigStorage.ToToml(config));
+        var ipcClient = new FakeBackgroundIpcClient();
+        var viewModel = new MainWindowViewModel(ipcClient, fixture.Storage, new NullConfigFileDialog());
+
+        await viewModel.LoadSettingsAsync();
+
+        Assert.AreEqual("Settings load failed.", viewModel.StatusTitle);
+        Assert.IsTrue(viewModel.StatusDetail.Contains("api.timeout_manual_ms", StringComparison.Ordinal));
+        Assert.AreEqual(0, ipcClient.StatusCheckCount);
+    }
+
     private static SettingCardViewModel Card(MainWindowViewModel viewModel, string path) =>
         viewModel.Sections.SelectMany(section => section.Settings).Single(setting => setting.Path == path);
 
@@ -63,6 +80,7 @@ public sealed class MainWindowViewModelTests
     private sealed class FakeBackgroundIpcClient : IBackgroundIpcClient
     {
         public int ReloadCount { get; private set; }
+        public int StatusCheckCount { get; private set; }
 
         public Task<IpcResult<AppStatusResponse>> GetStatusAsync() =>
             Task.FromResult(IpcResult<AppStatusResponse>.Ok(new(true, "typos_only", "local")));
@@ -91,8 +109,11 @@ public sealed class MainWindowViewModelTests
         public Task<IpcResult<CommandAcceptedResponse>> TestCorrectionEngineLaterAsync() =>
             Task.FromResult(IpcResult<CommandAcceptedResponse>.Ok(new(true, "")));
 
-        public Task<IpcResult<BackgroundRunningResponse>> IsBackgroundRunningAsync() =>
-            Task.FromResult(IpcResult<BackgroundRunningResponse>.Ok(new(true)));
+        public Task<IpcResult<BackgroundRunningResponse>> IsBackgroundRunningAsync()
+        {
+            StatusCheckCount++;
+            return Task.FromResult(IpcResult<BackgroundRunningResponse>.Ok(new(true)));
+        }
     }
 
     private sealed class NullConfigFileDialog : IConfigFileDialog
