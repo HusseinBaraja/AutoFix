@@ -36,6 +36,29 @@ public sealed class ConfigFormMapperTests
         Assert.AreEqual("triggers.word_count: must be greater than zero", error.Message);
     }
 
+    [TestMethod]
+    public void BuildConfigRejectsDuplicatePaths()
+    {
+        var sections = SettingsSkeleton.CreateSections();
+        var duplicate = new SettingCardViewModel { Path = "general.run_mode" };
+        sections[0].Settings.Add(duplicate);
+
+        var error = Assert.ThrowsException<InvalidOperationException>(() => ConfigFormMapper.BuildConfig(sections));
+
+        Assert.AreEqual("Duplicate configuration paths found: general.run_mode", error.Message);
+    }
+
+    [TestMethod]
+    public void BuildConfigRejectsMissingRequiredPath()
+    {
+        var sections = SettingsSkeleton.CreateSections();
+        sections[0].Settings.Remove(Card(sections, "general.run_mode"));
+
+        var error = Assert.ThrowsException<InvalidOperationException>(() => ConfigFormMapper.BuildConfig(sections));
+
+        Assert.AreEqual("Missing configuration path: general.run_mode", error.Message);
+    }
+
     private static SettingCardViewModel Card(
         IEnumerable<SettingsSectionViewModel> sections,
         string path) =>

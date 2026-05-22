@@ -6,10 +6,23 @@ public static class ConfigFormMapper
 {
     public static AppConfig BuildConfig(IEnumerable<SettingsSectionViewModel> sections)
     {
-        var values = sections
+        var allSettings = sections
             .SelectMany(section => section.Settings)
             .Where(setting => !string.IsNullOrWhiteSpace(setting.Path))
-            .ToDictionary(setting => setting.Path);
+            .ToList();
+
+        var duplicates = allSettings
+            .GroupBy(setting => setting.Path)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToList();
+
+        if (duplicates.Count > 0)
+        {
+            throw new InvalidOperationException($"Duplicate configuration paths found: {string.Join(", ", duplicates)}");
+        }
+
+        var values = allSettings.ToDictionary(setting => setting.Path);
 
         var config = AppConfig.Default();
         config.General.StartWithWindows = Toggle(values, "general.start_with_windows");
@@ -97,10 +110,20 @@ public static class ConfigFormMapper
         config.Logging.LogRetentionDays = ConfigValue.OptionalInt(Text(values, "logging.log_retention_days"), "logging.log_retention_days");
     }
 
-    private static bool Toggle(IReadOnlyDictionary<string, SettingCardViewModel> values, string path) => values[path].IsEnabled;
-    private static string Dropdown(IReadOnlyDictionary<string, SettingCardViewModel> values, string path) => values[path].SelectedValue;
-    private static string Hotkey(IReadOnlyDictionary<string, SettingCardViewModel> values, string path) => values[path].Hotkey;
-    private static string Text(IReadOnlyDictionary<string, SettingCardViewModel> values, string path) => values[path].TextValue;
+    private static SettingCardViewModel Required(IReadOnlyDictionary<string, SettingCardViewModel> values, string path)
+    {
+        if (values.TryGetValue(path, out var setting))
+        {
+            return setting;
+        }
+
+        throw new InvalidOperationException($"Missing configuration path: {path}");
+    }
+
+    private static bool Toggle(IReadOnlyDictionary<string, SettingCardViewModel> values, string path) => Required(values, path).IsEnabled;
+    private static string Dropdown(IReadOnlyDictionary<string, SettingCardViewModel> values, string path) => Required(values, path).SelectedValue;
+    private static string Hotkey(IReadOnlyDictionary<string, SettingCardViewModel> values, string path) => Required(values, path).Hotkey;
+    private static string Text(IReadOnlyDictionary<string, SettingCardViewModel> values, string path) => Required(values, path).TextValue;
     private static int Int(IReadOnlyDictionary<string, SettingCardViewModel> values, string path) => ConfigValue.Int(Text(values, path), path);
     private static long Long(IReadOnlyDictionary<string, SettingCardViewModel> values, string path) => ConfigValue.Long(Text(values, path), path);
     private static List<string> List(IReadOnlyDictionary<string, SettingCardViewModel> values, string path) => ConfigValue.Split(Text(values, path));
