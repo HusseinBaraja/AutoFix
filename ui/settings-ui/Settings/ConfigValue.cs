@@ -6,8 +6,8 @@ public static class ConfigValue
 {
     public static string Join(IReadOnlyCollection<string> values) => string.Join(", ", values);
 
-    public static List<string> Split(string value) =>
-        value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).ToList();
+    public static List<string> Split(string? value) =>
+        (value ?? string.Empty).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).ToList();
 
     public static string Text(string? value) => value ?? "";
 
