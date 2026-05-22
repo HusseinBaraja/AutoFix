@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using AutoFix.SettingsUi.Models;
 using AutoFix.SettingsUi.Settings;
 
@@ -50,7 +51,7 @@ public static class SettingsSkeleton
         Section("Triggers", "Word-count and character-triggered correction",
         [
             Toggle("Word-count trigger enabled", "Correct after a configured word count.", "triggers.word_count_enabled", config.Triggers.WordCountEnabled),
-            Text("Word-count value", "Words before automatic correction.", "triggers.word_count", config.Triggers.WordCount.ToString()),
+            Text("Word-count value", "Words before automatic correction.", "triggers.word_count", config.Triggers.WordCount.ToString(CultureInfo.InvariantCulture)),
             Toggle("Character trigger enabled", "Correct after configured characters.", "triggers.character_trigger_enabled", config.Triggers.CharacterTriggerEnabled),
             Text("Trigger characters", "Comma-separated trigger characters.", "triggers.characters", ConfigValue.Join(config.Triggers.Characters)),
         ]),
@@ -67,20 +68,20 @@ public static class SettingsSkeleton
             Text("API provider preset", "Provider profile name. API keys are not stored here.", "api.provider_preset", config.Api.ProviderPreset),
             Text("API base URL", "Optional OpenAI-compatible endpoint.", "api.base_url", ConfigValue.Text(config.Api.BaseUrl)),
             Text("API model", "Model name used by the API engine.", "api.model", config.Api.Model),
-            Text("Manual API timeout (ms)", "Timeout for manual correction requests.", "api.timeout_manual_ms", config.Api.TimeoutManualMs.ToString()),
-            Text("Auto API timeout (ms)", "Timeout for automatic correction requests.", "api.timeout_auto_ms", config.Api.TimeoutAutoMs.ToString()),
-            Text("API retry count", "Retries before fallback or failure.", "api.retry_count", config.Api.RetryCount.ToString()),
+            Text("Manual API timeout (ms)", "Timeout for manual correction requests.", "api.timeout_manual_ms", config.Api.TimeoutManualMs.ToString(CultureInfo.InvariantCulture)),
+            Text("Auto API timeout (ms)", "Timeout for automatic correction requests.", "api.timeout_auto_ms", config.Api.TimeoutAutoMs.ToString(CultureInfo.InvariantCulture)),
+            Text("API retry count", "Retries before fallback or failure.", "api.retry_count", config.Api.RetryCount.ToString(CultureInfo.InvariantCulture)),
             Toggle("Fallback to local engine", "Use local correction when API is unavailable.", "api.fallback_to_local", config.Api.FallbackToLocal),
-            Text("API temperature", "Must be between 0 and 2.", "api.temperature", config.Api.Temperature.ToString("0.###")),
+            Text("API temperature", "Must be between 0 and 2.", "api.temperature", config.Api.Temperature.ToString("0.###", CultureInfo.InvariantCulture)),
         ]),
         Section("Context", "Editable and informative context limits",
         [
-            Text("Initial context words", "Words read before correction.", "context.initial_context_words", config.Context.InitialContextWords.ToString()),
+            Text("Initial context words", "Words read before correction.", "context.initial_context_words", config.Context.InitialContextWords.ToString(CultureInfo.InvariantCulture)),
             Text("Initial context boundary chars", "Comma-separated boundary characters.", "context.initial_context_boundary_chars", ConfigValue.Join(config.Context.InitialContextBoundaryChars)),
-            Text("Forward movement word limit", "Maximum words after caret movement.", "context.forward_movement_word_limit", config.Context.ForwardMovementWordLimit.ToString()),
-            Text("Informative context max chars", "Maximum read-only context characters.", "context.informative_context_max_chars", config.Context.InformativeContextMaxChars.ToString()),
-            Text("Informative context min words", "Minimum informative words.", "context.informative_context_min_words", config.Context.InformativeContextMinWords.ToString()),
-            Text("Executable context max words", "Maximum editable words in correction scope.", "context.executable_context_max_words", config.Context.ExecutableContextMaxWords.ToString()),
+            Text("Forward movement word limit", "Maximum words after caret movement.", "context.forward_movement_word_limit", config.Context.ForwardMovementWordLimit.ToString(CultureInfo.InvariantCulture)),
+            Text("Informative context max chars", "Maximum read-only context characters.", "context.informative_context_max_chars", config.Context.InformativeContextMaxChars.ToString(CultureInfo.InvariantCulture)),
+            Text("Informative context min words", "Minimum informative words.", "context.informative_context_min_words", config.Context.InformativeContextMinWords.ToString(CultureInfo.InvariantCulture)),
+            Text("Executable context max words", "Maximum editable words in correction scope.", "context.executable_context_max_words", config.Context.ExecutableContextMaxWords.ToString(CultureInfo.InvariantCulture)),
         ]),
         Section("Feedback", "Tray notices and correction feedback",
         [
@@ -97,7 +98,7 @@ public static class SettingsSkeleton
             Toggle("Debug mode enabled", "Enable diagnostic logging.", "logging.debug_mode_enabled", config.Logging.DebugModeEnabled),
             Toggle("Redacted debug mode enabled", "Allow redacted debug details.", "logging.redacted_debug_mode_enabled", config.Logging.RedactedDebugModeEnabled),
             Toggle("Full-text debug mode enabled", "Developer-only unsafe diagnostic mode.", "logging.full_text_debug_mode_enabled", config.Logging.FullTextDebugModeEnabled),
-            Text("Log retention days", "Empty disables retention cleanup.", "logging.log_retention_days", config.Logging.LogRetentionDays?.ToString() ?? ""),
+            Text("Log retention days", "Empty disables retention cleanup.", "logging.log_retention_days", config.Logging.LogRetentionDays?.ToString(CultureInfo.InvariantCulture) ?? ""),
         ]),
         Section("Advanced", "Config import/export",
         [

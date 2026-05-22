@@ -1,4 +1,6 @@
+using System.Globalization;
 using AutoFix.SettingsUi.Models;
+using AutoFix.SettingsUi.Settings;
 using AutoFix.SettingsUi.ViewModels;
 
 namespace AutoFix.SettingsUi.Tests;
@@ -106,6 +108,41 @@ public sealed class SettingsSkeletonTests
         var option = SettingsSkeleton.Modes().First();
 
         Assert.AreEqual("Typos only", option.ToString());
+    }
+
+    [TestMethod]
+    public void CreateSectionsFormatsNumericTextValuesWithInvariantCulture()
+    {
+        var originalCulture = CultureInfo.CurrentCulture;
+
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
+            var config = AppConfig.Default();
+            config.Api.Temperature = 1.25;
+            config.Logging.LogRetentionDays = 30;
+
+            var values = SettingsSkeleton.CreateSections(config)
+                .SelectMany(section => section.Settings)
+                .Where(setting => setting.Kind == "Text")
+                .ToDictionary(setting => setting.Path, setting => setting.TextValue);
+
+            Assert.AreEqual("10", values["triggers.word_count"]);
+            Assert.AreEqual("3000", values["api.timeout_manual_ms"]);
+            Assert.AreEqual("700", values["api.timeout_auto_ms"]);
+            Assert.AreEqual("1", values["api.retry_count"]);
+            Assert.AreEqual("1.25", values["api.temperature"]);
+            Assert.AreEqual("25", values["context.initial_context_words"]);
+            Assert.AreEqual("5", values["context.forward_movement_word_limit"]);
+            Assert.AreEqual("2000", values["context.informative_context_max_chars"]);
+            Assert.AreEqual("25", values["context.informative_context_min_words"]);
+            Assert.AreEqual("80", values["context.executable_context_max_words"]);
+            Assert.AreEqual("30", values["logging.log_retention_days"]);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = originalCulture;
+        }
     }
 
     [TestMethod]
