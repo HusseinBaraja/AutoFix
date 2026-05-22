@@ -1,4 +1,5 @@
 using AutoFix.SettingsUi.Settings;
+using System.Security;
 
 namespace AutoFix.SettingsUi.Tests;
 
@@ -26,6 +27,21 @@ public sealed class TempConfigFixture : IDisposable
 
     public void Dispose()
     {
-        Directory.Delete(root, true);
+        try
+        {
+            Directory.Delete(root, true);
+        }
+        catch (DirectoryNotFoundException)
+        {
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+        catch (SecurityException)
+        {
+        }
     }
 }
