@@ -17,6 +17,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly ConfigStorage configStorage;
     private readonly IConfigFileDialog fileDialog;
     private readonly IApiKeyStatus apiKeyStatus;
+    private readonly IStartupRegistration startupRegistration;
     private SettingsSectionViewModel? selectedSection;
     private OnboardingViewModel? onboarding;
     private string searchText = "";
@@ -50,11 +51,22 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ConfigStorage configStorage,
         IConfigFileDialog fileDialog,
         IApiKeyStatus apiKeyStatus)
+        : this(ipcClient, configStorage, fileDialog, apiKeyStatus, new WindowsStartupRegistration())
+    {
+    }
+
+    public MainWindowViewModel(
+        IBackgroundIpcClient ipcClient,
+        ConfigStorage configStorage,
+        IConfigFileDialog fileDialog,
+        IApiKeyStatus apiKeyStatus,
+        IStartupRegistration startupRegistration)
     {
         this.ipcClient = ipcClient;
         this.configStorage = configStorage;
         this.fileDialog = fileDialog;
         this.apiKeyStatus = apiKeyStatus;
+        this.startupRegistration = startupRegistration;
         Sections = SettingsSkeleton.CreateSections();
         SubscribeToSettings();
         SelectedSection = Sections.FirstOrDefault();
