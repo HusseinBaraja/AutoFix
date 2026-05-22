@@ -41,6 +41,12 @@ public partial class MainWindow : Window
 
     private void HotkeyWell_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (e.OriginalSource is Button
+            || e.OriginalSource is DependencyObject source && FindAncestor<Button>(source) is not null)
+        {
+            return;
+        }
+
         if (sender is not FrameworkElement well)
         {
             return;
