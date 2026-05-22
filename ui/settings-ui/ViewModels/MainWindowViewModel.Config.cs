@@ -87,7 +87,6 @@ public sealed partial class MainWindowViewModel
         }
         catch (Exception error) when (IsConfigError(error))
         {
-            ConfigFormMapper.MarkValidationError(Sections, error.Message);
             StatusTitle = "Export failed.";
             StatusDetail = error.Message;
         }

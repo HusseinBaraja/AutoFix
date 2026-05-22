@@ -24,6 +24,29 @@ public sealed class MainWindowViewModelTests
         Assert.AreEqual("Settings saved automatically.", viewModel.StatusTitle);
     }
 
+    [TestMethod]
+    public async Task ExportFailureDoesNotMarkValidationErrors()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var exportPath = Path.Combine(fixture.Root, "export.toml");
+        var viewModel = new MainWindowViewModel(
+            new FakeBackgroundIpcClient(),
+            fixture.Storage,
+            new ExportConfigFileDialog(exportPath));
+        await viewModel.LoadSettingsAsync();
+
+        Card(viewModel, "api.timeout_manual_ms").TextValue = "invalid";
+        await WaitForAsync(() => viewModel.StatusTitle == "Settings not saved.");
+        ConfigFormMapper.ClearValidation(viewModel.Sections);
+
+        viewModel.ExportConfigCommand.Execute(null);
+
+        await WaitForAsync(() => viewModel.StatusTitle == "Export failed.");
+
+        Assert.IsFalse(viewModel.Sections.SelectMany(section => section.Settings).Any(setting => setting.HasValidationError));
+        Assert.IsTrue(viewModel.StatusDetail.Contains("api.timeout_manual_ms", StringComparison.Ordinal));
+    }
+
     private static SettingCardViewModel Card(MainWindowViewModel viewModel, string path) =>
         viewModel.Sections.SelectMany(section => section.Settings).Single(setting => setting.Path == path);
 
@@ -79,4 +102,10 @@ public sealed class MainWindowViewModelTests
         public string? PickExportPath() => null;
     }
 
+    private sealed class ExportConfigFileDialog(string exportPath) : IConfigFileDialog
+    {
+        public string? PickImportPath() => null;
+
+        public string? PickExportPath() => exportPath;
+    }
 }
