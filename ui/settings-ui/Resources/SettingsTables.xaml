@@ -9,6 +9,7 @@
     <SolidColorBrush x:Key="TableTextBrush" Color="#111827" />
     <SolidColorBrush x:Key="TableMutedTextBrush" Color="#5D6B82" />
     <SolidColorBrush x:Key="TableAccentSoftBrush" Color="#F0EDFF" />
+    <SolidColorBrush x:Key="TableFocusBorderBrush" Color="#6F54E8" />
 
     <Style x:Key="TableShell" TargetType="Border">
         <Setter Property="Background" Value="{StaticResource TableSurfaceBrush}" />
@@ -67,6 +68,11 @@
             </Trigger>
             <Trigger Property="IsSelected" Value="True">
                 <Setter Property="Background" Value="{StaticResource TableAccentSoftBrush}" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <Setter Property="Background" Value="{StaticResource TableAccentSoftBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource TableFocusBorderBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
             </Trigger>
         </Style.Triggers>
     </Style>

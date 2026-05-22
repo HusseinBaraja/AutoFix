@@ -175,6 +175,19 @@ public sealed class SettingsUiResourceTests
         AssertTriggerTargets(sidebarStyle, "IsKeyboardFocused", "Root", "BorderThickness");
     }
 
+    [TestMethod]
+    public void TableRowsExposeKeyboardFocusState()
+    {
+        var tables = LoadXaml("Resources", "SettingsTables.xaml");
+        var rowStyle = tables
+            .Descendants(Presentation + "Style")
+            .Single(style => (string?)style.Attribute("TargetType") == "DataGridRow");
+
+        AssertStyleTriggerSets(rowStyle, "IsKeyboardFocusWithin", "Background");
+        AssertStyleTriggerSets(rowStyle, "IsKeyboardFocusWithin", "BorderBrush");
+        AssertStyleTriggerSets(rowStyle, "IsKeyboardFocusWithin", "BorderThickness");
+    }
+
     private static void AssertTriggerTargets(
         XElement style,
         string property,
@@ -187,6 +200,18 @@ public sealed class SettingsUiResourceTests
             .Descendants(Presentation + "Setter")
             .Any(setter => (string?)setter.Attribute("TargetName") == targetName
                 && (string?)setter.Attribute("Property") == setterProperty));
+    }
+
+    private static void AssertStyleTriggerSets(
+        XElement style,
+        string property,
+        string setterProperty)
+    {
+        Assert.IsTrue(style
+            .Descendants(Presentation + "Trigger")
+            .Where(trigger => (string?)trigger.Attribute("Property") == property)
+            .Descendants(Presentation + "Setter")
+            .Any(setter => (string?)setter.Attribute("Property") == setterProperty));
     }
 
     private static XElement LoadXaml(params string[] pathParts)
