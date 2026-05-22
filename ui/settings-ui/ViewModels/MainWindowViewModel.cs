@@ -16,7 +16,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly IBackgroundIpcClient ipcClient;
     private readonly ConfigStorage configStorage;
     private readonly IConfigFileDialog fileDialog;
+    private readonly IApiKeyStatus apiKeyStatus;
     private SettingsSectionViewModel? selectedSection;
+    private OnboardingViewModel? onboarding;
     private string searchText = "";
     private string statusTitle = "Checking background process...";
     private string statusDetail = "Settings can be edited after AutoFix background mode is running.";
@@ -24,6 +26,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private bool isDirty;
     private bool isSavingSettings;
     private bool saveSettingsAgain;
+    private bool onboardingCompleted;
 
     public MainWindowViewModel() : this(new BackgroundIpcClient())
     {
@@ -38,10 +41,20 @@ public sealed partial class MainWindowViewModel : ObservableObject
         IBackgroundIpcClient ipcClient,
         ConfigStorage configStorage,
         IConfigFileDialog fileDialog)
+        : this(ipcClient, configStorage, fileDialog, new EnvironmentApiKeyStatus())
+    {
+    }
+
+    public MainWindowViewModel(
+        IBackgroundIpcClient ipcClient,
+        ConfigStorage configStorage,
+        IConfigFileDialog fileDialog,
+        IApiKeyStatus apiKeyStatus)
     {
         this.ipcClient = ipcClient;
         this.configStorage = configStorage;
         this.fileDialog = fileDialog;
+        this.apiKeyStatus = apiKeyStatus;
         Sections = SettingsSkeleton.CreateSections();
         SubscribeToSettings();
         SelectedSection = Sections.FirstOrDefault();
@@ -64,6 +77,20 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public ICommand ImportConfigCommand { get; }
     public ICommand ExportConfigCommand { get; }
     public ICommand CaptureHotkeyCommand { get; }
+
+    public OnboardingViewModel? Onboarding
+    {
+        get => onboarding;
+        set
+        {
+            if (SetProperty(ref onboarding, value))
+            {
+                OnPropertyChanged(nameof(IsOnboardingVisible));
+            }
+        }
+    }
+
+    public bool IsOnboardingVisible => Onboarding is not null;
 
     public SettingsSectionViewModel? SelectedSection
     {

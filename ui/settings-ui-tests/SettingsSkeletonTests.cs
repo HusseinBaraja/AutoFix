@@ -48,6 +48,7 @@ public sealed class SettingsSkeletonTests
                 "triggers.word_count",
                 "triggers.character_trigger_enabled",
                 "triggers.characters",
+                "correction.enabled",
                 "correction.mode",
                 "correction.engine",
                 "api.timeout_auto_ms",

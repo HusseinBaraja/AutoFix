@@ -19,6 +19,8 @@ fn default_config_has_requested_values() {
     assert_eq!(config.context.initial_context_boundary_chars, vec!["."]);
     assert_eq!(config.context.forward_movement_word_limit, 5);
     assert_eq!(config.context.informative_context_min_words, 25);
+    assert!(!config.onboarding.completed);
+    assert!(config.correction.enabled);
     assert_eq!(config.correction.mode, CorrectionMode::TyposOnly);
     assert_eq!(config.correction.engine, CorrectionEngine::Local);
     assert_eq!(
@@ -80,6 +82,7 @@ informative_context_min_words = 25
 executable_context_max_words = 80
 
 [correction]
+enabled = true
 mode = "typos_plus_grammar"
 engine = "api"
 high_confidence_behavior = "silent"
@@ -118,6 +121,7 @@ log_retention_days = 30
 
     assert_eq!(config.general.run_mode, RunMode::Allowlist);
     assert_eq!(config.triggers.word_count, 12);
+    assert!(config.correction.enabled);
     assert_eq!(config.correction.mode, CorrectionMode::TyposPlusGrammar);
     assert_eq!(
         config.correction.enabled_grammar_categories,

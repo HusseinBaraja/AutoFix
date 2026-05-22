@@ -57,10 +57,11 @@ public static class SettingsSkeleton
         ]),
         Section("Correction", "Mode and confidence behavior",
         [
+            Toggle("Correction enabled", "Allow AutoFix to apply corrections.", "correction.enabled", config.Correction.Enabled),
             Dropdown("Correction mode", "Choose typos only or grammar-aware correction.", "correction.mode", config.Correction.Mode, Modes()),
             Dropdown("High confidence behavior", "Behavior when correction confidence is high.", "correction.high_confidence_behavior", config.Correction.HighConfidenceBehavior, ConfidenceBehaviors()),
             Dropdown("Medium confidence behavior", "Behavior when correction confidence is medium.", "correction.medium_confidence_behavior", config.Correction.MediumConfidenceBehavior, ConfidenceBehaviors()),
-            Dropdown("Low confidence behavior", "Must remain do nothing for safety.", "correction.low_confidence_behavior", config.Correction.LowConfidenceBehavior, ConfidenceBehaviors()),
+            Dropdown("Low confidence behavior", "Recommended: do nothing for safety.", "correction.low_confidence_behavior", config.Correction.LowConfidenceBehavior, ConfidenceBehaviors()),
         ]),
         Section("Engines", "Local and API correction providers",
         [

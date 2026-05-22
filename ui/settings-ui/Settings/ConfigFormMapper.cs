@@ -72,6 +72,7 @@ public static class ConfigFormMapper
 
     private static void ApplyCorrection(AppConfig config, IReadOnlyDictionary<string, SettingCardViewModel> values)
     {
+        config.Correction.Enabled = Toggle(values, "correction.enabled");
         config.Correction.Mode = Dropdown(values, "correction.mode");
         config.Correction.Engine = Dropdown(values, "correction.engine");
         config.Correction.HighConfidenceBehavior = Dropdown(values, "correction.high_confidence_behavior");
