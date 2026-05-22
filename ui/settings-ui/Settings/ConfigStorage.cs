@@ -68,6 +68,12 @@ public sealed class ConfigStorage
     public void Export(string destinationPath, AppConfig config)
     {
         ConfigValidator.Validate(config);
+        var directory = Path.GetDirectoryName(destinationPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
         File.WriteAllText(destinationPath, ToToml(config), Encoding.UTF8);
     }
 

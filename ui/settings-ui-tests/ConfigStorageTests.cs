@@ -88,6 +88,17 @@ public sealed class ConfigStorageTests
         Assert.AreEqual(12, config.Triggers.WordCount);
     }
 
+    [TestMethod]
+    public void ExportCreatesDestinationDirectory()
+    {
+        using var fixture = TempConfig.Create();
+        var destinationPath = System.IO.Path.Combine(fixture.Root, "exports", "settings.toml");
+
+        fixture.Storage.Export(destinationPath, AppConfig.Default());
+
+        Assert.IsTrue(File.Exists(destinationPath));
+    }
+
     private sealed class TempConfig : IDisposable
     {
         private readonly string root;
@@ -99,6 +110,7 @@ public sealed class ConfigStorageTests
             Storage = new ConfigStorage(Path);
         }
 
+        public string Root => root;
         public string Path { get; }
         public ConfigStorage Storage { get; }
 
