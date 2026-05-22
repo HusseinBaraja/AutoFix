@@ -185,7 +185,8 @@ public sealed class SettingsUiResourceTests
 
         AssertStyleTriggerSets(rowStyle, "IsKeyboardFocusWithin", "Background");
         AssertStyleTriggerSets(rowStyle, "IsKeyboardFocusWithin", "BorderBrush");
-        AssertStyleTriggerSets(rowStyle, "IsKeyboardFocusWithin", "BorderThickness");
+        AssertStyleSetter(rowStyle, "BorderThickness", "1");
+        AssertStyleTriggerDoesNotSet(rowStyle, "IsKeyboardFocusWithin", "BorderThickness");
     }
 
     private static void AssertTriggerTargets(
@@ -212,6 +213,29 @@ public sealed class SettingsUiResourceTests
             .Where(trigger => (string?)trigger.Attribute("Property") == property)
             .Descendants(Presentation + "Setter")
             .Any(setter => (string?)setter.Attribute("Property") == setterProperty));
+    }
+
+    private static void AssertStyleTriggerDoesNotSet(
+        XElement style,
+        string property,
+        string setterProperty)
+    {
+        Assert.IsFalse(style
+            .Descendants(Presentation + "Trigger")
+            .Where(trigger => (string?)trigger.Attribute("Property") == property)
+            .Descendants(Presentation + "Setter")
+            .Any(setter => (string?)setter.Attribute("Property") == setterProperty));
+    }
+
+    private static void AssertStyleSetter(
+        XElement style,
+        string setterProperty,
+        string value)
+    {
+        Assert.IsTrue(style
+            .Elements(Presentation + "Setter")
+            .Any(setter => (string?)setter.Attribute("Property") == setterProperty
+                && (string?)setter.Attribute("Value") == value));
     }
 
     private static XElement LoadXaml(params string[] pathParts)
