@@ -13,6 +13,8 @@
                 <ControlTemplate TargetType="ListBoxItem">
                     <Border x:Name="Root"
                             Background="Transparent"
+                            BorderBrush="Transparent"
+                            BorderThickness="2"
                             CornerRadius="{StaticResource SettingsCornerRadius}"
                             Padding="{TemplateBinding Padding}">
                         <ContentPresenter />
@@ -24,6 +26,10 @@
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="Root" Property="Background" Value="#F1F3F8" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Root" Property="BorderBrush" Value="#4D2FBA" />
+                            <Setter TargetName="Root" Property="BorderThickness" Value="2" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

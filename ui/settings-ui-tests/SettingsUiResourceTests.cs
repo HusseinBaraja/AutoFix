@@ -163,6 +163,18 @@ public sealed class SettingsUiResourceTests
                 && (string?)setter.Attribute("Value") == "Hand"));
     }
 
+    [TestMethod]
+    public void SidebarItemExposesKeyboardFocusState()
+    {
+        var chrome = LoadXaml("Resources", "SettingsChrome.xaml");
+        var sidebarStyle = chrome
+            .Descendants(Presentation + "Style")
+            .Single(style => (string?)style.Attribute(Xaml + "Key") == "SidebarItem");
+
+        AssertTriggerTargets(sidebarStyle, "IsKeyboardFocused", "Root", "BorderBrush");
+        AssertTriggerTargets(sidebarStyle, "IsKeyboardFocused", "Root", "BorderThickness");
+    }
+
     private static void AssertTriggerTargets(
         XElement style,
         string property,
