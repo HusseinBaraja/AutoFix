@@ -4,6 +4,9 @@ namespace AutoFix.SettingsUi.Settings;
 
 public sealed class AppConfig
 {
+    [JsonPropertyName("onboarding")]
+    public OnboardingConfig Onboarding { get; set; } = new();
+
     [JsonPropertyName("general")]
     public GeneralConfig General { get; set; } = new();
 
@@ -29,6 +32,12 @@ public sealed class AppConfig
     public LoggingConfig Logging { get; set; } = new();
 
     public static AppConfig Default() => new();
+}
+
+public sealed class OnboardingConfig
+{
+    [JsonPropertyName("completed")]
+    public bool Completed { get; set; }
 }
 
 public sealed class GeneralConfig
@@ -87,6 +96,9 @@ public sealed class ContextConfig
 
 public sealed class CorrectionConfig
 {
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+
     [JsonPropertyName("mode")]
     public string Mode { get; set; } = "typos_only";
 

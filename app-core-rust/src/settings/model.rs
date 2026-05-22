@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub(crate) struct AppConfig {
+    #[serde(default)]
+    pub(crate) onboarding: OnboardingConfig,
     pub(crate) general: GeneralConfig,
     pub(crate) shortcuts: ShortcutsConfig,
     pub(crate) triggers: TriggersConfig,
@@ -10,6 +12,11 @@ pub(crate) struct AppConfig {
     pub(crate) api: ApiConfig,
     pub(crate) feedback: FeedbackConfig,
     pub(crate) logging: LoggingConfig,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct OnboardingConfig {
+    pub(crate) completed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -93,6 +100,8 @@ impl Default for ContextConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct CorrectionConfig {
+    #[serde(default = "default_true")]
+    pub(crate) enabled: bool,
     pub(crate) mode: CorrectionMode,
     pub(crate) engine: CorrectionEngine,
     pub(crate) high_confidence_behavior: ConfidenceBehavior,
@@ -101,9 +110,14 @@ pub(crate) struct CorrectionConfig {
     pub(crate) enabled_grammar_categories: Vec<GrammarCategory>,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl Default for CorrectionConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             mode: CorrectionMode::TyposOnly,
             engine: CorrectionEngine::Local,
             high_confidence_behavior: ConfidenceBehavior::Silent,

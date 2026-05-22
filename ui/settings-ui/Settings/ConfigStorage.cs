@@ -25,6 +25,7 @@ public sealed class ConfigStorage
     }
 
     public string ConfigPath { get; }
+    public bool LastLoadCreatedConfig { get; private set; }
 
     public AppConfig LoadOrCreate()
     {
@@ -32,9 +33,11 @@ public sealed class ConfigStorage
         {
             var config = AppConfig.Default();
             Save(config);
+            LastLoadCreatedConfig = true;
             return config;
         }
 
+        LastLoadCreatedConfig = false;
         return Load(ConfigPath);
     }
 

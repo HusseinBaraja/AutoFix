@@ -81,6 +81,70 @@ public sealed class MainWindowViewModelTests
         Assert.AreEqual(0, ipcClient.StatusCheckCount);
     }
 
+    [TestMethod]
+    public async Task NewConfigShowsProgressiveOnboardingWithSafeDefaults()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var viewModel = new MainWindowViewModel(
+            new FakeBackgroundIpcClient(),
+            fixture.Storage,
+            new NullConfigFileDialog(),
+            new FakeApiKeyStatus(false));
+
+        await viewModel.LoadSettingsAsync();
+
+        Assert.IsTrue(viewModel.IsOnboardingVisible);
+        Assert.IsNotNull(viewModel.Onboarding);
+        Assert.AreEqual("Ctrl+Alt+Space", viewModel.Onboarding.Shortcut);
+        Assert.AreEqual("typos_only", viewModel.Onboarding.Mode);
+        Assert.AreEqual("local", viewModel.Onboarding.Engine);
+        Assert.AreEqual(OnboardingViewModel.UseLocalForNow, viewModel.Onboarding.ApiWithoutKeyChoice);
+        Assert.IsTrue(viewModel.Onboarding.StartWithWindows);
+    }
+
+    [TestMethod]
+    public async Task ApiWithoutKeyUsesLocalEngineForNowByDefault()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var viewModel = new MainWindowViewModel(
+            new FakeBackgroundIpcClient(),
+            fixture.Storage,
+            new NullConfigFileDialog(),
+            new FakeApiKeyStatus(false));
+        await viewModel.LoadSettingsAsync();
+        viewModel.Onboarding!.Engine = "api";
+
+        viewModel.Onboarding.FinishCommand.Execute(null);
+
+        var saved = fixture.Storage.Load(fixture.Path);
+        Assert.IsFalse(viewModel.IsOnboardingVisible);
+        Assert.IsTrue(saved.Onboarding.Completed);
+        Assert.IsTrue(saved.Correction.Enabled);
+        Assert.AreEqual("local", saved.Correction.Engine);
+        Assert.IsTrue(saved.General.StartWithWindows);
+    }
+
+    [TestMethod]
+    public async Task ApiWithoutKeyCanFinishWithCorrectionDisabled()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var viewModel = new MainWindowViewModel(
+            new FakeBackgroundIpcClient(),
+            fixture.Storage,
+            new NullConfigFileDialog(),
+            new FakeApiKeyStatus(false));
+        await viewModel.LoadSettingsAsync();
+        viewModel.Onboarding!.Engine = "api";
+        viewModel.Onboarding.ApiWithoutKeyChoice = OnboardingViewModel.DisableUntilConfigured;
+
+        viewModel.Onboarding.FinishCommand.Execute(null);
+
+        var saved = fixture.Storage.Load(fixture.Path);
+        Assert.IsTrue(saved.Onboarding.Completed);
+        Assert.IsFalse(saved.Correction.Enabled);
+        Assert.AreEqual("api", saved.Correction.Engine);
+    }
+
     private static SettingCardViewModel Card(MainWindowViewModel viewModel, string path) =>
         viewModel.Sections.SelectMany(section => section.Settings).Single(setting => setting.Path == path);
 
@@ -145,5 +209,10 @@ public sealed class MainWindowViewModelTests
         public string? PickImportPath() => null;
 
         public string? PickExportPath() => exportPath;
+    }
+
+    private sealed class FakeApiKeyStatus(bool hasKey) : IApiKeyStatus
+    {
+        public bool HasConfiguredApiKey(AppConfig config) => hasKey;
     }
 }

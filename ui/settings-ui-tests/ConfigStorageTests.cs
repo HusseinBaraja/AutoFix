@@ -86,6 +86,8 @@ public sealed class ConfigStorageTests
         Assert.IsTrue(config.General.StartWithWindows);
         Assert.AreEqual("allowlist", config.General.RunMode);
         Assert.AreEqual(12, config.Triggers.WordCount);
+        Assert.IsFalse(config.Onboarding.Completed);
+        Assert.IsTrue(config.Correction.Enabled);
     }
 
     [TestMethod]

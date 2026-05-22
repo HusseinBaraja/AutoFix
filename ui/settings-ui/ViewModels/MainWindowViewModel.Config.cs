@@ -11,6 +11,7 @@ public sealed partial class MainWindowViewModel
         try
         {
             ApplyConfig(configStorage.LoadOrCreate(), false);
+            ShowOnboardingIfNeeded();
             StatusTitle = "Settings loaded.";
             StatusDetail = configStorage.ConfigPath;
         }
@@ -119,6 +120,7 @@ public sealed partial class MainWindowViewModel
         {
             ConfigFormMapper.ClearValidation(Sections);
             var config = ConfigFormMapper.BuildConfig(Sections);
+            config.Onboarding.Completed = onboardingCompleted;
             configStorage.Save(config);
             IsDirty = false;
             var reloadDetail = await NotifyReloadAsync();
@@ -135,6 +137,7 @@ public sealed partial class MainWindowViewModel
 
     private void ApplyConfig(AppConfig config, bool dirty)
     {
+        onboardingCompleted = config.Onboarding.Completed;
         UnsubscribeFromSettings();
         Sections.Clear();
         foreach (var section in SettingsSkeleton.CreateSections(config))
@@ -147,6 +150,47 @@ public sealed partial class MainWindowViewModel
         SectionView.Refresh();
         ConfigFormMapper.ClearValidation(Sections);
         IsDirty = dirty;
+    }
+
+    private void ShowOnboardingIfNeeded()
+    {
+        if (!configStorage.LastLoadCreatedConfig)
+        {
+            return;
+        }
+
+        var config = ConfigFormMapper.BuildConfig(Sections);
+        config.Onboarding.Completed = onboardingCompleted;
+        if (config.Onboarding.Completed)
+        {
+            return;
+        }
+
+        Onboarding = new OnboardingViewModel(
+            config,
+            apiKeyStatus.HasConfiguredApiKey(config),
+            () => ConfigFormMapper.BuildConfig(Sections),
+            CompleteOnboarding,
+            ShowApiKeySetup);
+    }
+
+    private void CompleteOnboarding(AppConfig config)
+    {
+        configStorage.Save(config);
+        onboardingCompleted = true;
+        ApplyConfig(config, false);
+        Onboarding = null;
+        StatusTitle = "Setup complete.";
+        StatusDetail = "Advanced settings are available for triggers, app rules, languages, privacy, and dictionary.";
+        _ = NotifyReloadAsync();
+    }
+
+    private void ShowApiKeySetup()
+    {
+        Onboarding = null;
+        SelectedSection = Sections.FirstOrDefault(section => section.Name == "Engines");
+        StatusTitle = "Add API key.";
+        StatusDetail = "Add an API key through the configured secret store, then choose API again.";
     }
 
     private void UnsubscribeFromSettings()
