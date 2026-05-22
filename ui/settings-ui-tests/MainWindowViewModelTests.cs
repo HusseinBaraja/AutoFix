@@ -25,6 +25,23 @@ public sealed class MainWindowViewModelTests
     }
 
     [TestMethod]
+    public async Task LoadSettingsDetachesOldSettingHandlers()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var ipcClient = new FakeBackgroundIpcClient();
+        var viewModel = new MainWindowViewModel(ipcClient, fixture.Storage, new NullConfigFileDialog());
+        var oldCard = Card(viewModel, "feedback.show_timeout_notice");
+
+        await viewModel.LoadSettingsAsync();
+
+        oldCard.IsEnabled = false;
+        await Task.Delay(100);
+
+        Assert.IsFalse(viewModel.IsDirty);
+        Assert.AreEqual(0, ipcClient.ReloadCount);
+    }
+
+    [TestMethod]
     public async Task ExportFailureDoesNotMarkValidationErrors()
     {
         using var fixture = TempConfigFixture.Create();

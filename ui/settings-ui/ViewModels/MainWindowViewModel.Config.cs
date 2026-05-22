@@ -135,6 +135,7 @@ public sealed partial class MainWindowViewModel
 
     private void ApplyConfig(AppConfig config, bool dirty)
     {
+        UnsubscribeFromSettings();
         Sections.Clear();
         foreach (var section in SettingsSkeleton.CreateSections(config))
         {
@@ -146,6 +147,14 @@ public sealed partial class MainWindowViewModel
         SectionView.Refresh();
         ConfigFormMapper.ClearValidation(Sections);
         IsDirty = dirty;
+    }
+
+    private void UnsubscribeFromSettings()
+    {
+        foreach (var setting in Sections.SelectMany(section => section.Settings))
+        {
+            setting.PropertyChanged -= SettingChanged;
+        }
     }
 
     private void SubscribeToSettings()
