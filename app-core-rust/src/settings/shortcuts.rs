@@ -122,3 +122,106 @@ fn parse_key(value: &str) -> Result<ShortcutKey, ShortcutParseError> {
 
     Err(ShortcutParseError::new("has an unsupported key"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shortcut(ctrl: bool, alt: bool, shift: bool, win: bool, key: ShortcutKey) -> Shortcut {
+        Shortcut {
+            modifiers: ShortcutModifiers {
+                ctrl,
+                alt,
+                shift,
+                win,
+            },
+            key,
+        }
+    }
+
+    #[test]
+    fn parse_accepts_supported_shortcuts() {
+        let cases = [
+            (
+                "Ctrl+A",
+                shortcut(true, false, false, false, ShortcutKey::Letter('A')),
+            ),
+            (
+                "Ctrl+Alt+Space",
+                shortcut(true, true, false, false, ShortcutKey::Space),
+            ),
+            (
+                "Win+Shift+F12",
+                shortcut(false, false, true, true, ShortcutKey::Function(12)),
+            ),
+            (
+                "Control+A",
+                shortcut(true, false, false, false, ShortcutKey::Letter('A')),
+            ),
+            (
+                "Windows+A",
+                shortcut(false, false, false, true, ShortcutKey::Letter('A')),
+            ),
+            (
+                "Meta+A",
+                shortcut(false, false, false, true, ShortcutKey::Letter('A')),
+            ),
+            (
+                "Ctrl+Z",
+                shortcut(true, false, false, false, ShortcutKey::Letter('Z')),
+            ),
+            (
+                "Ctrl+7",
+                shortcut(true, false, false, false, ShortcutKey::Digit('7')),
+            ),
+            (
+                "Ctrl+F24",
+                shortcut(true, false, false, false, ShortcutKey::Function(24)),
+            ),
+            (
+                "A+Ctrl",
+                shortcut(true, false, false, false, ShortcutKey::Letter('A')),
+            ),
+        ];
+
+        for (value, expected) in cases {
+            assert_eq!(Shortcut::parse(value), Ok(expected), "{value}");
+        }
+    }
+
+    #[test]
+    fn parse_rejects_invalid_shortcuts() {
+        let cases = [
+            ("Space", "must include a modifier and key"),
+            ("A", "must include a modifier and key"),
+            ("Ctrl+Ctrl+A", "must not repeat modifiers"),
+            ("Ctrl+A+B", "must contain only one key"),
+            ("Ctrl+Enter", "has an unsupported key"),
+            ("Ctrl+Tab", "has an unsupported key"),
+            ("", "must include a modifier and key"),
+            ("+", "must include a modifier and key"),
+            ("Ctrl+", "must include a modifier and key"),
+            ("+A", "must include a modifier and key"),
+            ("Ctrl+F0", "has an unsupported key"),
+            ("Ctrl+F25", "has an unsupported key"),
+        ];
+
+        for (value, message) in cases {
+            assert_eq!(
+                Shortcut::parse(value),
+                Err(ShortcutParseError::new(message)),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn conflicts_with_matches_equal_shortcuts_only() {
+        let correct = Shortcut::parse("Ctrl+Alt+Space").expect("valid shortcut");
+        let same = Shortcut::parse("Alt+Ctrl+Space").expect("valid shortcut");
+        let different = Shortcut::parse("Ctrl+Shift+Space").expect("valid shortcut");
+
+        assert!(correct.conflicts_with(&same));
+        assert!(!correct.conflicts_with(&different));
+    }
+}
