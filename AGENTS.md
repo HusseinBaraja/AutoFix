@@ -19,6 +19,7 @@ AutoFix runs quietly from the system tray, includes a Flow Launcher-style settin
 ## Testing Discipline
 
 - Follow test-driven development when making code changes: add or update tests as you go.
+- When fixing a focused small problem, determine if it actually needs a test or not before going straight to coding.
 - Keep tests focused on the behavior changed.
 - A task is not complete until the app compiles, runs, and has been verified with no warnings or errors.
 - Fix warnings and errors properly by addressing the underlying issue; do not silence, bypass, or hide them just to make output clean.
