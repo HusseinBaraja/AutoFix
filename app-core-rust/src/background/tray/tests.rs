@@ -60,7 +60,7 @@ fn pause_status_exists_as_placeholder_only() {
 fn command_targets_open_settings_app_and_runtime_folder() {
     let root = std::env::temp_dir().join("autofix-tray-targets");
     let paths = RuntimePaths::new(
-        root.join("config.toml"),
+        root.join("settings.toml"),
         root.join("autofix.sqlite"),
         root.join("logs"),
     );

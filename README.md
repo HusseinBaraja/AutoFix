@@ -33,7 +33,7 @@ cargo build -p background-engine
 The app creates its settings file at:
 
 ```text
-%LOCALAPPDATA%\AutoFix\config.toml
+%LOCALAPPDATA%\AutoFix\settings.toml
 ```
 
 ## Repository Structure

@@ -7,34 +7,51 @@ using System.Windows.Input;
 using AutoFix.SettingsUi.Commands;
 using AutoFix.SettingsUi.Ipc;
 using AutoFix.SettingsUi.Models;
+using AutoFix.SettingsUi.Settings;
 
 namespace AutoFix.SettingsUi.ViewModels;
 
-public sealed class MainWindowViewModel : ObservableObject
+public sealed partial class MainWindowViewModel : ObservableObject
 {
     private readonly BackgroundIpcClient ipcClient;
+    private readonly ConfigStorage configStorage;
+    private readonly IConfigFileDialog fileDialog;
     private SettingsSectionViewModel? selectedSection;
     private string searchText = "";
     private string statusTitle = "Checking background process...";
     private string statusDetail = "Settings can be edited after AutoFix background mode is running.";
     private bool isBackgroundRunning;
+    private bool isDirty;
 
     public MainWindowViewModel() : this(new BackgroundIpcClient())
     {
     }
 
     public MainWindowViewModel(BackgroundIpcClient ipcClient)
+        : this(ipcClient, new ConfigStorage(), new ConfigFileDialog())
+    {
+    }
+
+    public MainWindowViewModel(
+        BackgroundIpcClient ipcClient,
+        ConfigStorage configStorage,
+        IConfigFileDialog fileDialog)
     {
         this.ipcClient = ipcClient;
+        this.configStorage = configStorage;
+        this.fileDialog = fileDialog;
         Sections = SettingsSkeleton.CreateSections();
+        SubscribeToSettings();
         SelectedSection = Sections.FirstOrDefault();
         SectionView = CollectionViewSource.GetDefaultView(Sections);
         SectionView.Filter = FilterSection;
 
         RefreshStatusCommand = new AsyncRelayCommand(RefreshStatusAsync);
         LaunchBackgroundCommand = new RelayCommand(_ => ShowLaunchPlaceholder());
-        ImportConfigCommand = new RelayCommand(_ => ShowPlaceholder("Import config is not implemented yet."));
-        ExportConfigCommand = new RelayCommand(_ => ShowPlaceholder("Export config is not implemented yet."));
+        LoadSettingsCommand = new AsyncRelayCommand(LoadSettingsAsync);
+        SaveSettingsCommand = new AsyncRelayCommand(SaveSettingsAsync);
+        ImportConfigCommand = new AsyncRelayCommand(ImportConfigAsync);
+        ExportConfigCommand = new AsyncRelayCommand(ExportConfigAsync);
         CaptureHotkeyCommand = new RelayCommand(p => ShowPlaceholder($"Capture {p ?? "unspecified"} hotkey later."));
     }
 
@@ -44,6 +61,8 @@ public sealed class MainWindowViewModel : ObservableObject
     public ObservableCollection<OptionItem> Engines { get; } = SettingsSkeleton.Engines();
     public ICommand RefreshStatusCommand { get; }
     public ICommand LaunchBackgroundCommand { get; }
+    public ICommand LoadSettingsCommand { get; }
+    public ICommand SaveSettingsCommand { get; }
     public ICommand ImportConfigCommand { get; }
     public ICommand ExportConfigCommand { get; }
     public ICommand CaptureHotkeyCommand { get; }
@@ -82,6 +101,12 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         get => isBackgroundRunning;
         set => SetProperty(ref isBackgroundRunning, value);
+    }
+
+    public bool IsDirty
+    {
+        get => isDirty;
+        set => SetProperty(ref isDirty, value);
     }
 
     public async Task RefreshStatusAsync()

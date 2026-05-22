@@ -93,14 +93,31 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <StackPanel>
-                <TextBlock Text="{Binding SelectedSection.Name}"
-                           FontSize="28"
-                           FontWeight="SemiBold" />
-                <TextBlock Text="{Binding SelectedSection.Description}"
-                           Margin="0,5,0,0"
-                           Foreground="#667085" />
-            </StackPanel>
+            <DockPanel LastChildFill="True">
+                <StackPanel Orientation="Horizontal"
+                            DockPanel.Dock="Right"
+                            HorizontalAlignment="Right">
+                    <Button Content="Reload"
+                            Command="{Binding LoadSettingsCommand}"
+                            Margin="0,0,8,0" />
+                    <Button Content="Save"
+                            Command="{Binding SaveSettingsCommand}" />
+                </StackPanel>
+                <StackPanel Margin="0,0,16,0">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{Binding SelectedSection.Name}"
+                                   FontSize="28"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Text="Unsaved"
+                                   Margin="14,7,0,0"
+                                   Foreground="#B42318"
+                                   Visibility="{Binding IsDirty, Converter={StaticResource BoolToVisibility}}" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding SelectedSection.Description}"
+                               Margin="0,5,0,0"
+                               Foreground="#667085" />
+                </StackPanel>
+            </DockPanel>
 
             <ScrollViewer x:Name="SettingsScrollViewer"
                           Grid.Row="2"
@@ -142,15 +159,20 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="280" />
                                             </Grid.ColumnDefinitions>
-                                            <StackPanel>
-                                                <TextBlock Text="{Binding Title}"
-                                                           FontWeight="SemiBold"
-                                                           FontSize="15" />
-                                                <TextBlock Style="{StaticResource BodyText}"
-                                                           Text="{Binding Description}"
-                                                           Margin="0,4,0,0"
-                                                           TextWrapping="Wrap" />
-                                            </StackPanel>
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Title}"
+                                                               FontWeight="SemiBold"
+                                                               FontSize="15" />
+                                                    <TextBlock Style="{StaticResource BodyText}"
+                                                               Text="{Binding Description}"
+                                                               Margin="0,4,0,0"
+                                                               TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding ValidationError}"
+                                                               Margin="0,6,0,0"
+                                                               Foreground="#B42318"
+                                                               TextWrapping="Wrap"
+                                                               Visibility="{Binding HasValidationError, Converter={StaticResource BoolToVisibility}}" />
+                                                </StackPanel>
                                             <Grid Grid.Column="1" HorizontalAlignment="Stretch">
                                                 <CheckBox Style="{StaticResource ToggleSwitch}"
                                                           HorizontalAlignment="Right"

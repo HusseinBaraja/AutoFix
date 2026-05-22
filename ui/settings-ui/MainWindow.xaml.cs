@@ -17,7 +17,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            await viewModel.RefreshStatusAsync();
+            await viewModel.LoadSettingsAsync();
         }
         catch (Exception exception)
         {

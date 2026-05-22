@@ -21,7 +21,7 @@ impl RuntimePaths {
             .join("AutoFix");
 
         Ok(Self::new(
-            root.join("config.toml"),
+            root.join("settings.toml"),
             root.join("autofix.sqlite"),
             root.join("logs"),
         ))

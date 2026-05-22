@@ -9,6 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Tomlyn" Version="2.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Resource Include="..\..\assets\brand\autofix-logo.ico" />
   </ItemGroup>
 </Project>

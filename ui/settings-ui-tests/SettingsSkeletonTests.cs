@@ -20,10 +20,7 @@ public sealed class SettingsSkeletonTests
                 "Triggers",
                 "Correction",
                 "Engines",
-                "App Rules",
-                "Languages",
-                "Dictionary",
-                "Privacy & Security",
+                "Context",
                 "Feedback",
                 "Logs / Debug",
                 "Advanced",
@@ -32,15 +29,30 @@ public sealed class SettingsSkeletonTests
     }
 
     [TestMethod]
-    public void CreateSectionsIncludesTablesForRulesAndDictionary()
+    public void CreateSectionsIncludesRequestedConfigControls()
     {
         var sections = SettingsSkeleton.CreateSections();
 
-        var appRules = sections.Single(section => section.Name == "App Rules");
-        var dictionary = sections.Single(section => section.Name == "Dictionary");
+        var paths = sections.SelectMany(section => section.Settings).Select(setting => setting.Path).ToArray();
 
-        Assert.IsTrue(appRules.HasAppRules);
-        Assert.IsTrue(dictionary.HasDictionary);
+        CollectionAssert.IsSubsetOf(
+            new[]
+            {
+                "general.start_with_windows",
+                "general.run_mode",
+                "shortcuts.correct",
+                "shortcuts.undo",
+                "triggers.word_count_enabled",
+                "triggers.word_count",
+                "triggers.character_trigger_enabled",
+                "triggers.characters",
+                "correction.mode",
+                "correction.engine",
+                "api.timeout_auto_ms",
+                "api.fallback_to_local",
+                "logging.debug_mode_enabled",
+            },
+            paths);
     }
 
     [TestMethod]
