@@ -89,7 +89,8 @@ public sealed class MainWindowViewModelTests
             new FakeBackgroundIpcClient(),
             fixture.Storage,
             new NullConfigFileDialog(),
-            new FakeApiKeyStatus(false));
+            new FakeApiKeyStatus(false),
+            new FakeStartupRegistration());
 
         await viewModel.LoadSettingsAsync();
 
@@ -110,7 +111,8 @@ public sealed class MainWindowViewModelTests
             new FakeBackgroundIpcClient(),
             fixture.Storage,
             new NullConfigFileDialog(),
-            new FakeApiKeyStatus(false));
+            new FakeApiKeyStatus(false),
+            new FakeStartupRegistration());
         await viewModel.LoadSettingsAsync();
         viewModel.Onboarding!.Engine = "api";
 
@@ -125,6 +127,48 @@ public sealed class MainWindowViewModelTests
     }
 
     [TestMethod]
+    public async Task CompletingOnboardingRegistersCurrentUserStartup()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var startupRegistration = new FakeStartupRegistration();
+        var viewModel = new MainWindowViewModel(
+            new FakeBackgroundIpcClient(),
+            fixture.Storage,
+            new NullConfigFileDialog(),
+            new FakeApiKeyStatus(false),
+            startupRegistration);
+        await viewModel.LoadSettingsAsync();
+
+        viewModel.Onboarding!.FinishCommand.Execute(null);
+
+        Assert.AreEqual(1, startupRegistration.ApplyCount);
+        Assert.IsTrue(startupRegistration.StartWithWindows);
+    }
+
+    [TestMethod]
+    public async Task SettingChangeUpdatesCurrentUserStartup()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var config = AppConfig.Default();
+        config.Onboarding.Completed = true;
+        config.General.StartWithWindows = true;
+        fixture.Storage.Save(config);
+        var startupRegistration = new FakeStartupRegistration();
+        var viewModel = new MainWindowViewModel(
+            new FakeBackgroundIpcClient(),
+            fixture.Storage,
+            new NullConfigFileDialog(),
+            new FakeApiKeyStatus(false),
+            startupRegistration);
+        await viewModel.LoadSettingsAsync();
+
+        Card(viewModel, "general.start_with_windows").IsEnabled = false;
+
+        await WaitForAsync(() => startupRegistration.ApplyCount > 0);
+        Assert.IsFalse(startupRegistration.StartWithWindows);
+    }
+
+    [TestMethod]
     public async Task ApiWithoutKeyCanFinishWithCorrectionDisabled()
     {
         using var fixture = TempConfigFixture.Create();
@@ -132,7 +176,8 @@ public sealed class MainWindowViewModelTests
             new FakeBackgroundIpcClient(),
             fixture.Storage,
             new NullConfigFileDialog(),
-            new FakeApiKeyStatus(false));
+            new FakeApiKeyStatus(false),
+            new FakeStartupRegistration());
         await viewModel.LoadSettingsAsync();
         viewModel.Onboarding!.Engine = "api";
         viewModel.Onboarding.ApiWithoutKeyChoice = OnboardingViewModel.DisableUntilConfigured;
@@ -214,5 +259,17 @@ public sealed class MainWindowViewModelTests
     private sealed class FakeApiKeyStatus(bool hasKey) : IApiKeyStatus
     {
         public bool HasConfiguredApiKey(AppConfig config) => hasKey;
+    }
+
+    private sealed class FakeStartupRegistration : IStartupRegistration
+    {
+        public int ApplyCount { get; private set; }
+        public bool StartWithWindows { get; private set; }
+
+        public void Apply(bool startWithWindows)
+        {
+            ApplyCount++;
+            StartWithWindows = startWithWindows;
+        }
     }
 }

@@ -60,7 +60,9 @@ public sealed partial class MainWindowViewModel
         try
         {
             configStorage.Import(path);
-            ApplyConfig(configStorage.LoadOrCreate(), false);
+            var config = configStorage.LoadOrCreate();
+            ApplyStartupRegistration(config);
+            ApplyConfig(config, false);
             var reloadDetail = await NotifyReloadAsync();
             StatusTitle = "Settings imported.";
             StatusDetail = $"{path} | {reloadDetail}";
@@ -122,6 +124,7 @@ public sealed partial class MainWindowViewModel
             var config = ConfigFormMapper.BuildConfig(Sections);
             config.Onboarding.Completed = onboardingCompleted;
             configStorage.Save(config);
+            ApplyStartupRegistration(config);
             IsDirty = false;
             var reloadDetail = await NotifyReloadAsync();
             StatusTitle = "Settings saved automatically.";
@@ -177,6 +180,7 @@ public sealed partial class MainWindowViewModel
     private void CompleteOnboarding(AppConfig config)
     {
         configStorage.Save(config);
+        ApplyStartupRegistration(config);
         onboardingCompleted = true;
         ApplyConfig(config, false);
         Onboarding = null;
@@ -191,6 +195,11 @@ public sealed partial class MainWindowViewModel
         SelectedSection = Sections.FirstOrDefault(section => section.Name == "Engines");
         StatusTitle = "Add API key.";
         StatusDetail = "Add an API key through the configured secret store, then choose API again.";
+    }
+
+    private void ApplyStartupRegistration(AppConfig config)
+    {
+        startupRegistration.Apply(config.General.StartWithWindows);
     }
 
     private void UnsubscribeFromSettings()
