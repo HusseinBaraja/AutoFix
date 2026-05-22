@@ -16,6 +16,7 @@
                 <ResourceDictionary Source="Resources/SettingsChrome.xaml" />
                 <ResourceDictionary Source="Resources/SettingsControls.xaml" />
                 <ResourceDictionary Source="Resources/SettingsTables.xaml" />
+                <ResourceDictionary Source="Resources/HotkeyRecorder.xaml" />
             </ResourceDictionary.MergedDictionaries>
             <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
         </ResourceDictionary>
@@ -148,7 +149,7 @@
                                         <Grid Visibility="{Binding IsRegularSetting, Converter={StaticResource BoolToVisibility}}">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="280" />
+                                                <ColumnDefinition Width="320" />
                                             </Grid.ColumnDefinitions>
                                                 <StackPanel>
                                                     <TextBlock Text="{Binding Title}"
@@ -169,17 +170,17 @@
                                                           HorizontalAlignment="Right"
                                                           IsChecked="{Binding IsEnabled}"
                                                           Visibility="{Binding IsToggle, Converter={StaticResource BoolToVisibility}}" />
-                                                <ComboBox Width="280"
+                                                <ComboBox Width="320"
                                                           ItemsSource="{Binding Options}"
                                                           DisplayMemberPath="Label"
                                                           SelectedValuePath="Value"
                                                           SelectedValue="{Binding SelectedValue}"
                                                           Visibility="{Binding IsDropdown, Converter={StaticResource BoolToVisibility}}" />
                                                 <Border Style="{StaticResource InputShell}"
-                                                        Width="280"
+                                                        Width="320"
                                                         Visibility="{Binding IsText, Converter={StaticResource BoolToVisibility}}">
                                                     <Grid>
-                                                        <TextBox Width="280"
+                                                        <TextBox Width="320"
                                                                  Text="{Binding TextValue, UpdateSourceTrigger=PropertyChanged}" />
                                                         <TextBlock Text="{Binding Description}"
                                                                    Margin="13,0"
@@ -199,16 +200,103 @@
                                                         </TextBlock>
                                                     </Grid>
                                                 </Border>
-                                                <Border Style="{StaticResource InputShell}"
-                                                        Width="280"
-                                                        Visibility="{Binding IsHotkey, Converter={StaticResource BoolToVisibility}}">
-                                                    <TextBox Width="280"
-                                                             Text="{Binding Hotkey, UpdateSourceTrigger=PropertyChanged}"
-                                                             IsReadOnly="True"
-                                                             Cursor="Hand"
-                                                             GotKeyboardFocus="HotkeyBox_GotKeyboardFocus"
-                                                             PreviewKeyDown="HotkeyBox_PreviewKeyDown" />
-                                                </Border>
+
+                                                <!-- Premium hotkey recorder -->
+                                                <StackPanel Visibility="{Binding IsHotkey, Converter={StaticResource BoolToVisibility}}"
+                                                            Width="320">
+                                                    <!-- Recorder well: click to record -->
+                                                    <Border Style="{StaticResource HotkeyRecorderWell}"
+                                                            Cursor="Hand"
+                                                            MouseLeftButtonDown="HotkeyWell_MouseLeftButtonDown">
+                                                        <Grid>
+                                                            <!-- Hidden TextBox for keyboard capture -->
+                                                            <TextBox x:Name="HotkeyCapture"
+                                                                     Opacity="0"
+                                                                     Width="0"
+                                                                     Height="0"
+                                                                     IsReadOnly="True"
+                                                                     Focusable="True"
+                                                                     GotKeyboardFocus="HotkeyBox_GotKeyboardFocus"
+                                                                     LostKeyboardFocus="HotkeyBox_LostKeyboardFocus"
+                                                                     PreviewKeyDown="HotkeyBox_PreviewKeyDown" />
+
+                                                            <!-- Idle state: keycap pills -->
+                                                            <DockPanel LastChildFill="True">
+                                                                <DockPanel.Style>
+                                                                    <Style TargetType="DockPanel">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsRecording}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </DockPanel.Style>
+
+                                                                <!-- Action buttons on the right -->
+                                                                <StackPanel Orientation="Horizontal"
+                                                                            DockPanel.Dock="Right"
+                                                                            VerticalAlignment="Center">
+                                                                    <Button Style="{StaticResource HotkeyClearButton}"
+                                                                            Click="HotkeyClear_Click" />
+                                                                    <Button Style="{StaticResource HotkeyDefaultLink}"
+                                                                            Click="HotkeyResetDefault_Click" />
+                                                                </StackPanel>
+
+                                                                <!-- Keycap pills -->
+                                                                <ItemsControl Tag="{Binding Hotkey}"
+                                                                              Loaded="HotkeyPills_Loaded"
+                                                                              VerticalAlignment="Center">
+                                                                    <ItemsControl.ItemsPanel>
+                                                                        <ItemsPanelTemplate>
+                                                                            <WrapPanel Orientation="Horizontal" />
+                                                                        </ItemsPanelTemplate>
+                                                                    </ItemsControl.ItemsPanel>
+                                                                </ItemsControl>
+                                                            </DockPanel>
+
+                                                            <!-- Recording state overlay -->
+                                                            <Border x:Name="RecordingBorder"
+                                                                    Background="{StaticResource RecordingBackgroundBrush}"
+                                                                    BorderBrush="{StaticResource RecordingPulseBrush}"
+                                                                    BorderThickness="2"
+                                                                    CornerRadius="6"
+                                                                    Padding="10,4"
+                                                                    Margin="-10,-8"
+                                                                    Visibility="{Binding IsRecording, Converter={StaticResource BoolToVisibility}}">
+                                                                <StackPanel Orientation="Horizontal"
+                                                                            VerticalAlignment="Center">
+                                                                    <Ellipse Width="8"
+                                                                             Height="8"
+                                                                             Fill="{StaticResource RecordingPulseBrush}"
+                                                                             Margin="0,0,8,0"
+                                                                             VerticalAlignment="Center" />
+                                                                    <TextBlock Text="Recording... press a key combo or Esc to cancel"
+                                                                               Foreground="{StaticResource RecordingTextBrush}"
+                                                                               FontSize="13"
+                                                                               VerticalAlignment="Center" />
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </Grid>
+                                                    </Border>
+
+                                                    <!-- Conflict warning -->
+                                                    <Border Style="{StaticResource HotkeyConflictWarning}"
+                                                            Visibility="{Binding HasHotkeyConflict, Converter={StaticResource BoolToVisibility}}">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="⚠"
+                                                                       FontSize="13"
+                                                                       Margin="0,0,6,0"
+                                                                       VerticalAlignment="Center" />
+                                                            <TextBlock Text="{Binding HotkeyConflictMessage}"
+                                                                       Foreground="{StaticResource HotkeyConflictBrush}"
+                                                                       FontSize="12"
+                                                                       FontWeight="Medium"
+                                                                       VerticalAlignment="Center" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </StackPanel>
+
                                                 <StackPanel Orientation="Horizontal"
                                                             HorizontalAlignment="Right"
                                                             Visibility="{Binding IsConfigTransfer, Converter={StaticResource BoolToVisibility}}">

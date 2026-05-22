@@ -54,7 +54,3 @@ AutoFix runs quietly from the system tray, includes a Flow Launcher-style settin
 
 - Long-term maintainability is a core requirement.
 - Do not hesitate to refactor existing code when that produces a cleaner system.
-
-## Modularity Guardrails
-
-- Keep code modular and do not let core logic files exceed `240` LOC; Each file performs one and only one task, avoid coupling at all cost.

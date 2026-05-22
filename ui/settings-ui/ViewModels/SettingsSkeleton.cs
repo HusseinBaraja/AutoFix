@@ -7,6 +7,7 @@ namespace AutoFix.SettingsUi.ViewModels;
 
 public static class SettingsSkeleton
 {
+    private static readonly ShortcutsConfig DefaultShortcuts = new();
     public static ObservableCollection<OptionItem> RunModes() =>
     [
         new("Blocklist", "blocklist"),
@@ -45,8 +46,8 @@ public static class SettingsSkeleton
         ]),
         Section("Shortcuts", "Hotkeys for correction and undo",
         [
-            Hotkey("Correction shortcut", "Manual correction shortcut.", "shortcuts.correct", config.Shortcuts.Correct),
-            Hotkey("Undo shortcut", "App-level undo shortcut.", "shortcuts.undo", config.Shortcuts.Undo),
+            Hotkey("Correction shortcut", "Manual correction shortcut.", "shortcuts.correct", config.Shortcuts.Correct, DefaultShortcuts.Correct),
+            Hotkey("Undo shortcut", "App-level undo shortcut.", "shortcuts.undo", config.Shortcuts.Undo, DefaultShortcuts.Undo),
         ]),
         Section("Triggers", "Word-count and character-triggered correction",
         [
@@ -132,8 +133,8 @@ public static class SettingsSkeleton
         ObservableCollection<OptionItem> options) =>
         new() { Title = title, Description = description, Kind = "Dropdown", Path = path, SelectedValue = value, Options = options };
 
-    private static SettingCardViewModel Hotkey(string title, string description, string path, string hotkey) =>
-        new() { Title = title, Description = description, Kind = "Hotkey", Path = path, Hotkey = hotkey };
+    private static SettingCardViewModel Hotkey(string title, string description, string path, string hotkey, string defaultHotkey) =>
+        new() { Title = title, Description = description, Kind = "Hotkey", Path = path, Hotkey = hotkey, DefaultHotkey = defaultHotkey };
 
     private static SettingCardViewModel Text(string title, string description, string path, string value) =>
         new() { Title = title, Description = description, Kind = "Text", Path = path, TextValue = value };

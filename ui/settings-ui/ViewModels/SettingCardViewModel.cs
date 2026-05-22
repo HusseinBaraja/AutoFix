@@ -10,11 +10,14 @@ public sealed class SettingCardViewModel : ObservableObject
     private string hotkey = "";
     private string textValue = "";
     private string validationError = "";
+    private bool isRecording;
+    private string hotkeyConflictMessage = "";
 
     public string Title { get; init; } = "";
     public string Description { get; init; } = "";
     public string Kind { get; init; } = "";
     public string Path { get; init; } = "";
+    public string DefaultHotkey { get; init; } = "";
     public ObservableCollection<OptionItem> Options { get; init; } = [];
 
     public bool IsEnabled
@@ -53,6 +56,25 @@ public sealed class SettingCardViewModel : ObservableObject
         }
     }
 
+    public bool IsRecording
+    {
+        get => isRecording;
+        set => SetProperty(ref isRecording, value);
+    }
+
+    public string HotkeyConflictMessage
+    {
+        get => hotkeyConflictMessage;
+        set
+        {
+            if (SetProperty(ref hotkeyConflictMessage, value))
+            {
+                OnPropertyChanged(nameof(HasHotkeyConflict));
+            }
+        }
+    }
+
+    public bool HasHotkeyConflict => !string.IsNullOrWhiteSpace(HotkeyConflictMessage);
     public bool HasValidationError => !string.IsNullOrWhiteSpace(ValidationError);
     public bool IsToggle => Kind == "Toggle";
     public bool IsDropdown => Kind == "Dropdown";
