@@ -51,6 +51,7 @@ public sealed class ConfigFormMapperTests
     public void BuildConfigRejectsConflictingHotkeys()
     {
         var sections = SettingsSkeleton.CreateSections();
+        Card(sections, "shortcuts.correct").Hotkey = "Ctrl+Alt+Space";
         Card(sections, "shortcuts.undo").Hotkey = "Ctrl+Alt+Space";
 
         var error = Assert.ThrowsException<InvalidDataException>(() => ConfigFormMapper.BuildConfig(sections));
