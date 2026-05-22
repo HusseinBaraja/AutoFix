@@ -57,6 +57,7 @@ public static class HotkeyFormatter
         }
 
         var modifiers = ModifierKeys.None;
+        var seen = ModifierKeys.None;
         string? key = null;
         foreach (var part in parts)
         {
@@ -64,17 +65,37 @@ public static class HotkeyFormatter
             {
                 case "ctrl":
                 case "control":
+                    if ((seen & ModifierKeys.Control) != 0)
+                    {
+                        return false;
+                    }
+                    seen |= ModifierKeys.Control;
                     modifiers |= ModifierKeys.Control;
                     break;
                 case "alt":
+                    if ((seen & ModifierKeys.Alt) != 0)
+                    {
+                        return false;
+                    }
+                    seen |= ModifierKeys.Alt;
                     modifiers |= ModifierKeys.Alt;
                     break;
                 case "shift":
+                    if ((seen & ModifierKeys.Shift) != 0)
+                    {
+                        return false;
+                    }
+                    seen |= ModifierKeys.Shift;
                     modifiers |= ModifierKeys.Shift;
                     break;
                 case "win":
                 case "windows":
                 case "meta":
+                    if ((seen & ModifierKeys.Windows) != 0)
+                    {
+                        return false;
+                    }
+                    seen |= ModifierKeys.Windows;
                     modifiers |= ModifierKeys.Windows;
                     break;
                 default:
