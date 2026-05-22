@@ -35,7 +35,7 @@ public sealed class MainWindowViewModel : ObservableObject
         LaunchBackgroundCommand = new RelayCommand(_ => ShowLaunchPlaceholder());
         ImportConfigCommand = new RelayCommand(_ => ShowPlaceholder("Import config is not implemented yet."));
         ExportConfigCommand = new RelayCommand(_ => ShowPlaceholder("Export config is not implemented yet."));
-        CaptureHotkeyCommand = new RelayCommand(p => ShowPlaceholder($"Capture {p} hotkey later."));
+        CaptureHotkeyCommand = new RelayCommand(p => ShowPlaceholder($"Capture {p ?? "unspecified"} hotkey later."));
     }
 
     public ObservableCollection<SettingsSectionViewModel> Sections { get; }
