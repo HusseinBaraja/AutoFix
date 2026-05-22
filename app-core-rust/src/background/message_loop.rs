@@ -10,6 +10,7 @@ mod native {
 
     pub(crate) enum MessageLoopEvent {
         Hotkey(usize),
+        Poll,
         Tick,
     }
 
@@ -45,6 +46,9 @@ mod native {
 
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
+                if process_event(MessageLoopEvent::Poll) {
+                    PostQuitMessage(0);
+                }
             }
             if timer_created {
                 KillTimer(std::ptr::null_mut(), timer_id);
@@ -56,6 +60,7 @@ mod native {
 #[cfg(not(windows))]
 mod native {
     pub(crate) enum MessageLoopEvent {
+        Poll,
         Hotkey(usize),
         Tick,
     }

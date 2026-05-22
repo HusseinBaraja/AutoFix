@@ -141,6 +141,7 @@ impl RuntimeComponents {
         message_loop::run_until_exit(|event| {
             match event {
                 message_loop::MessageLoopEvent::Hotkey(id) => self.process_shortcut(id),
+                message_loop::MessageLoopEvent::Poll => {}
                 message_loop::MessageLoopEvent::Tick => self.reload_shortcuts_if_config_changed(),
             }
 
