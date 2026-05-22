@@ -15,7 +15,14 @@ mod native {
 
     pub(crate) fn run_until_exit(mut process_event: impl FnMut(MessageLoopEvent) -> bool) {
         unsafe {
-            SetTimer(std::ptr::null_mut(), RELOAD_TIMER_ID, RELOAD_TIMER_MS, None);
+            let timer_id = SetTimer(std::ptr::null_mut(), RELOAD_TIMER_ID, RELOAD_TIMER_MS, None);
+            let timer_created = timer_id != 0;
+            if !timer_created {
+                tracing::error!(
+                    "failed to create shortcut reload timer; config reload ticks disabled"
+                );
+            }
+
             let mut message = std::mem::zeroed::<MSG>();
             loop {
                 let result = GetMessageW(&mut message, std::ptr::null_mut(), 0, 0);
@@ -39,7 +46,9 @@ mod native {
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
-            KillTimer(std::ptr::null_mut(), RELOAD_TIMER_ID);
+            if timer_created {
+                KillTimer(std::ptr::null_mut(), RELOAD_TIMER_ID);
+            }
         }
     }
 }
