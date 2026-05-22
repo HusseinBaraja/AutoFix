@@ -1,3 +1,4 @@
+using AutoFix.SettingsUi.Models;
 using AutoFix.SettingsUi.ViewModels;
 
 namespace AutoFix.SettingsUi.Tests;
@@ -40,6 +41,36 @@ public sealed class SettingsSkeletonTests
 
         Assert.IsTrue(appRules.HasAppRules);
         Assert.IsTrue(dictionary.HasDictionary);
+    }
+
+    [TestMethod]
+    public void AppRulesChangesNotifyHasAppRules()
+    {
+        var section = new SettingsSectionViewModel();
+        var changedProperties = new List<string?>();
+        section.PropertyChanged += (_, args) => changedProperties.Add(args.PropertyName);
+
+        section.AppRules.Add(new AppRuleItem { App = "Notepad", Scope = "Blocked", Notes = "Test rule" });
+        section.AppRules.Clear();
+
+        CollectionAssert.AreEqual(
+            new[] { nameof(SettingsSectionViewModel.HasAppRules), nameof(SettingsSectionViewModel.HasAppRules) },
+            changedProperties);
+    }
+
+    [TestMethod]
+    public void DictionaryChangesNotifyHasDictionary()
+    {
+        var section = new SettingsSectionViewModel();
+        var changedProperties = new List<string?>();
+        section.PropertyChanged += (_, args) => changedProperties.Add(args.PropertyName);
+
+        section.Dictionary.Add(new DictionaryItem { Word = "teh", Language = "English", Source = "Custom" });
+        section.Dictionary.Clear();
+
+        CollectionAssert.AreEqual(
+            new[] { nameof(SettingsSectionViewModel.HasDictionary), nameof(SettingsSectionViewModel.HasDictionary) },
+            changedProperties);
     }
 
     [TestMethod]

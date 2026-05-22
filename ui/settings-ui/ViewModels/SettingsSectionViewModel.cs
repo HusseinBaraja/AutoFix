@@ -1,10 +1,17 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using AutoFix.SettingsUi.Models;
 
 namespace AutoFix.SettingsUi.ViewModels;
 
 public sealed class SettingsSectionViewModel : ObservableObject
 {
+    public SettingsSectionViewModel()
+    {
+        AppRules.CollectionChanged += OnAppRulesChanged;
+        Dictionary.CollectionChanged += OnDictionaryChanged;
+    }
+
     public string Name { get; init; } = "";
     public string Description { get; init; } = "";
     public ObservableCollection<SettingCardViewModel> Settings { get; } = [];
@@ -13,4 +20,14 @@ public sealed class SettingsSectionViewModel : ObservableObject
 
     public bool HasAppRules => AppRules.Count > 0;
     public bool HasDictionary => Dictionary.Count > 0;
+
+    private void OnAppRulesChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        OnPropertyChanged(nameof(HasAppRules));
+    }
+
+    private void OnDictionaryChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        OnPropertyChanged(nameof(HasDictionary));
+    }
 }
