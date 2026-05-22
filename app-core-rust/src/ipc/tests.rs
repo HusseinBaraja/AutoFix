@@ -127,7 +127,7 @@ impl IpcFixture {
     fn start() -> Self {
         let root = unique_temp_dir();
         fs::create_dir_all(&root).unwrap();
-        let config_path = root.join("config.toml");
+        let config_path = root.join("settings.toml");
         save_config(&config_path, &AppConfig::default()).unwrap();
         let pipe_path = format!("{}-{}", pipe_path_for_process(PIPE_NAME), unique_suffix());
         let state =

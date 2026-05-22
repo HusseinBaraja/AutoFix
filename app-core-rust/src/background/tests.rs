@@ -10,7 +10,7 @@ use super::{load_or_create_config, BackgroundRuntime};
 #[test]
 fn creates_default_config_when_missing() {
     let root = unique_temp_dir();
-    let config_path = root.join("config.toml");
+    let config_path = root.join("settings.toml");
 
     let config = load_or_create_config(&config_path).unwrap();
 
@@ -22,7 +22,7 @@ fn creates_default_config_when_missing() {
 #[test]
 fn starts_background_runtime_with_user_config_and_database() {
     let root = unique_temp_dir();
-    let config_path = root.join("config.toml");
+    let config_path = root.join("settings.toml");
     let database_path = root.join("autofix.sqlite");
     let paths = RuntimePaths::new(
         config_path.clone(),

@@ -146,6 +146,26 @@ public sealed class SettingsUiResourceTests
     }
 
     [TestMethod]
+    public void HeaderDoesNotExposeManualSaveOrReloadButtons()
+    {
+        var window = LoadXaml("MainWindow.xaml");
+
+        Assert.IsFalse(window
+            .Descendants(Presentation + "Button")
+            .Any(button => (string?)button.Attribute("Content") is "Save" or "Reload"));
+    }
+
+    [TestMethod]
+    public void SettingTextBoxesUpdateOnEveryChange()
+    {
+        var window = LoadXaml("MainWindow.xaml");
+
+        Assert.IsTrue(window
+            .Descendants(Presentation + "TextBox")
+            .Any(textBox => (string?)textBox.Attribute("Text") == "{Binding TextValue, UpdateSourceTrigger=PropertyChanged}"));
+    }
+
+    [TestMethod]
     public void ToggleSwitchExposesFocusAndDisabledStates()
     {
         var chrome = LoadXaml("Resources", "SettingsChrome.xaml");

@@ -9,10 +9,12 @@ public sealed class SettingCardViewModel : ObservableObject
     private string selectedValue = "";
     private string hotkey = "";
     private string textValue = "";
+    private string validationError = "";
 
     public string Title { get; init; } = "";
     public string Description { get; init; } = "";
     public string Kind { get; init; } = "";
+    public string Path { get; init; } = "";
     public ObservableCollection<OptionItem> Options { get; init; } = [];
 
     public bool IsEnabled
@@ -39,6 +41,19 @@ public sealed class SettingCardViewModel : ObservableObject
         set => SetProperty(ref textValue, value);
     }
 
+    public string ValidationError
+    {
+        get => validationError;
+        set
+        {
+            if (SetProperty(ref validationError, value))
+            {
+                OnPropertyChanged(nameof(HasValidationError));
+            }
+        }
+    }
+
+    public bool HasValidationError => !string.IsNullOrWhiteSpace(ValidationError);
     public bool IsToggle => Kind == "Toggle";
     public bool IsDropdown => Kind == "Dropdown";
     public bool IsHotkey => Kind == "Hotkey";

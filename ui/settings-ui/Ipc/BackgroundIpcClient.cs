@@ -6,7 +6,7 @@ using System.Text.Json.Serialization;
 
 namespace AutoFix.SettingsUi.Ipc;
 
-public sealed class BackgroundIpcClient
+public sealed class BackgroundIpcClient : IBackgroundIpcClient
 {
     private const string PipeName = @"Local\AutoFix.Background.Ipc";
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromMilliseconds(400);
