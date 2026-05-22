@@ -145,6 +145,38 @@ public sealed class SettingsUiResourceTests
                 && (string?)checkBox.Attribute("HorizontalAlignment") == "Right"));
     }
 
+    [TestMethod]
+    public void ToggleSwitchExposesFocusAndDisabledStates()
+    {
+        var chrome = LoadXaml("Resources", "SettingsChrome.xaml");
+        var toggleStyle = chrome
+            .Descendants(Presentation + "Style")
+            .Single(style => (string?)style.Attribute(Xaml + "Key") == "ToggleSwitch");
+
+        AssertTriggerTargets(toggleStyle, "IsKeyboardFocused", "Track", "BorderBrush");
+        AssertTriggerTargets(toggleStyle, "IsKeyboardFocused", "Track", "BorderThickness");
+        AssertTriggerTargets(toggleStyle, "IsEnabled", "Track", "Opacity");
+        AssertTriggerTargets(toggleStyle, "IsEnabled", "Thumb", "Opacity");
+        Assert.IsTrue(toggleStyle
+            .Descendants(Presentation + "Setter")
+            .Any(setter => (string?)setter.Attribute("Property") == "Cursor"
+                && (string?)setter.Attribute("Value") == "Hand"));
+    }
+
+    private static void AssertTriggerTargets(
+        XElement style,
+        string property,
+        string targetName,
+        string setterProperty)
+    {
+        Assert.IsTrue(style
+            .Descendants(Presentation + "Trigger")
+            .Where(trigger => (string?)trigger.Attribute("Property") == property)
+            .Descendants(Presentation + "Setter")
+            .Any(setter => (string?)setter.Attribute("TargetName") == targetName
+                && (string?)setter.Attribute("Property") == setterProperty));
+    }
+
     private static XElement LoadXaml(params string[] pathParts)
     {
         var repoRoot = FindRepoRoot(new DirectoryInfo(AppContext.BaseDirectory));
