@@ -37,6 +37,28 @@ public sealed class ConfigFormMapperTests
     }
 
     [TestMethod]
+    public void BuildConfigRejectsInvalidHotkey()
+    {
+        var sections = SettingsSkeleton.CreateSections();
+        Card(sections, "shortcuts.correct").Hotkey = "Space";
+
+        var error = Assert.ThrowsException<InvalidDataException>(() => ConfigFormMapper.BuildConfig(sections));
+
+        Assert.AreEqual("shortcuts.correct: must include a modifier and supported key", error.Message);
+    }
+
+    [TestMethod]
+    public void BuildConfigRejectsConflictingHotkeys()
+    {
+        var sections = SettingsSkeleton.CreateSections();
+        Card(sections, "shortcuts.undo").Hotkey = "Ctrl+Alt+Space";
+
+        var error = Assert.ThrowsException<InvalidDataException>(() => ConfigFormMapper.BuildConfig(sections));
+
+        Assert.AreEqual("shortcuts.undo: must not match correction shortcut", error.Message);
+    }
+
+    [TestMethod]
     public void BuildConfigRejectsDuplicatePaths()
     {
         var sections = SettingsSkeleton.CreateSections();

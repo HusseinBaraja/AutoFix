@@ -77,7 +77,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         LaunchBackgroundCommand = new RelayCommand(_ => ShowLaunchPlaceholder());
         ImportConfigCommand = new AsyncRelayCommand(ImportConfigAsync);
         ExportConfigCommand = new AsyncRelayCommand(ExportConfigAsync);
-        CaptureHotkeyCommand = new RelayCommand(p => ShowPlaceholder($"Capture {p ?? "unspecified"} hotkey later."));
     }
 
     public ObservableCollection<SettingsSectionViewModel> Sections { get; }
@@ -88,7 +87,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public ICommand LaunchBackgroundCommand { get; }
     public ICommand ImportConfigCommand { get; }
     public ICommand ExportConfigCommand { get; }
-    public ICommand CaptureHotkeyCommand { get; }
 
     public OnboardingViewModel? Onboarding
     {

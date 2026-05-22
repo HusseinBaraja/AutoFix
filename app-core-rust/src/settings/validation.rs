@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use super::{
     model::{ConfidenceBehavior, CorrectionEngine, CorrectionMode, GrammarCategory, RunMode},
-    AppConfig,
+    AppConfig, Shortcut,
 };
 
 pub(crate) trait ValidateConfig {
@@ -38,6 +38,7 @@ impl ValidateConfig for AppConfig {
     fn validate(&self) -> Result<(), ConfigValidationError> {
         validate_shortcut("shortcuts.correct", &self.shortcuts.correct)?;
         validate_shortcut("shortcuts.undo", &self.shortcuts.undo)?;
+        validate_shortcuts_do_not_conflict(self)?;
         validate_positive("triggers.word_count", self.triggers.word_count)?;
         validate_non_empty_list("triggers.characters", &self.triggers.characters)?;
         validate_non_empty_list(
@@ -73,8 +74,21 @@ impl ValidateConfig for AppConfig {
 }
 
 fn validate_shortcut(field: &'static str, value: &str) -> Result<(), ConfigValidationError> {
-    if value.trim().is_empty() {
-        return Err(ConfigValidationError::new(field, "must not be empty"));
+    Shortcut::parse(value).map_err(|error| ConfigValidationError::new(field, error.message()))?;
+
+    Ok(())
+}
+
+fn validate_shortcuts_do_not_conflict(config: &AppConfig) -> Result<(), ConfigValidationError> {
+    let correct = Shortcut::parse(&config.shortcuts.correct)
+        .map_err(|error| ConfigValidationError::new("shortcuts.correct", error.message()))?;
+    let undo = Shortcut::parse(&config.shortcuts.undo)
+        .map_err(|error| ConfigValidationError::new("shortcuts.undo", error.message()))?;
+    if correct.conflicts_with(&undo) {
+        return Err(ConfigValidationError::new(
+            "shortcuts.undo",
+            "must not match correction shortcut",
+        ));
     }
 
     Ok(())

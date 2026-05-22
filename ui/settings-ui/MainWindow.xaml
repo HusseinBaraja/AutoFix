@@ -199,11 +199,16 @@
                                                         </TextBlock>
                                                     </Grid>
                                                 </Border>
-                                                <Button Width="280"
-                                                        Content="{Binding Hotkey}"
-                                                        Command="{Binding DataContext.CaptureHotkeyCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                        CommandParameter="{Binding Title}"
-                                                        Visibility="{Binding IsHotkey, Converter={StaticResource BoolToVisibility}}" />
+                                                <Border Style="{StaticResource InputShell}"
+                                                        Width="280"
+                                                        Visibility="{Binding IsHotkey, Converter={StaticResource BoolToVisibility}}">
+                                                    <TextBox Width="280"
+                                                             Text="{Binding Hotkey, UpdateSourceTrigger=PropertyChanged}"
+                                                             IsReadOnly="True"
+                                                             Cursor="Hand"
+                                                             GotKeyboardFocus="HotkeyBox_GotKeyboardFocus"
+                                                             PreviewKeyDown="HotkeyBox_PreviewKeyDown" />
+                                                </Border>
                                                 <StackPanel Orientation="Horizontal"
                                                             HorizontalAlignment="Right"
                                                             Visibility="{Binding IsConfigTransfer, Converter={StaticResource BoolToVisibility}}">

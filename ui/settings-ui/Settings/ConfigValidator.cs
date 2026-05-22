@@ -12,8 +12,12 @@ public static class ConfigValidator
     public static void Validate(AppConfig config)
     {
         RequireChoice("general.run_mode", config.General.RunMode, RunModes);
-        RequireText("shortcuts.correct", config.Shortcuts.Correct);
-        RequireText("shortcuts.undo", config.Shortcuts.Undo);
+        RequireHotkey("shortcuts.correct", config.Shortcuts.Correct);
+        RequireHotkey("shortcuts.undo", config.Shortcuts.Undo);
+        if (HotkeyFormatter.Conflicts(config.Shortcuts.Correct, config.Shortcuts.Undo))
+        {
+            throw Invalid("shortcuts.undo", "must not match correction shortcut");
+        }
         RequirePositive("triggers.word_count", config.Triggers.WordCount);
         RequireList("triggers.characters", config.Triggers.Characters);
         RequirePositive("context.initial_context_words", config.Context.InitialContextWords);
@@ -99,6 +103,14 @@ public static class ConfigValidator
         if (string.IsNullOrWhiteSpace(value))
         {
             throw Invalid(field, "must not be empty");
+        }
+    }
+
+    private static void RequireHotkey(string field, string value)
+    {
+        if (!HotkeyFormatter.IsValid(value))
+        {
+            throw Invalid(field, "must include a modifier and supported key");
         }
     }
 

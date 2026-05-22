@@ -1,4 +1,6 @@
 using System.Windows;
+using System.Windows.Input;
+using AutoFix.SettingsUi.Settings;
 using AutoFix.SettingsUi.ViewModels;
 
 namespace AutoFix.SettingsUi;
@@ -32,5 +34,31 @@ public partial class MainWindow : Window
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
         }
+    }
+
+    private void HotkeyBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.TextBox textBox)
+        {
+            textBox.SelectAll();
+        }
+    }
+
+    private void HotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.TextBox textBox)
+        {
+            return;
+        }
+
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        var hotkey = HotkeyFormatter.Format(key, Keyboard.Modifiers);
+        if (!string.IsNullOrWhiteSpace(hotkey))
+        {
+            textBox.Text = hotkey;
+            textBox.GetBindingExpression(System.Windows.Controls.TextBox.TextProperty)?.UpdateSource();
+        }
+
+        e.Handled = true;
     }
 }
