@@ -47,7 +47,7 @@ mod native {
                 DispatchMessageW(&message);
             }
             if timer_created {
-                KillTimer(std::ptr::null_mut(), RELOAD_TIMER_ID);
+                KillTimer(std::ptr::null_mut(), timer_id);
             }
         }
     }
