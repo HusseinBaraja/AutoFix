@@ -264,6 +264,23 @@ public sealed class SettingsUiResourceTests
         Assert.AreEqual("{Binding Hotkey}", (string?)hotkeyPills.Attribute("Tag"));
     }
 
+    [TestMethod]
+    public void HotkeyPillsLetRecorderWellReceiveClicks()
+    {
+        var window = LoadXaml("MainWindow.xaml");
+        var hotkeyPills = window
+            .Descendants(Presentation + "ItemsControl")
+            .Single(control => (string?)control.Attribute("Loaded") == "HotkeyPills_Loaded");
+        var hotkeyButtons = window
+            .Descendants(Presentation + "Button")
+            .Where(button => (string?)button.Attribute("Style") is "{StaticResource HotkeyClearButton}" or "{StaticResource HotkeyDefaultLink}")
+            .ToList();
+
+        Assert.AreEqual("False", (string?)hotkeyPills.Attribute("IsHitTestVisible"));
+        Assert.IsTrue(hotkeyButtons.Count > 0);
+        Assert.IsTrue(hotkeyButtons.All(button => button.Attribute("IsHitTestVisible") is null));
+    }
+
     private static void AssertTriggerTargets(
         XElement style,
         string property,

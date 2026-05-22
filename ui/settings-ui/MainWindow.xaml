@@ -247,6 +247,7 @@
                                                                 <!-- Keycap pills -->
                                                                 <ItemsControl Tag="{Binding Hotkey}"
                                                                               Loaded="HotkeyPills_Loaded"
+                                                                              IsHitTestVisible="False"
                                                                               VerticalAlignment="Center">
                                                                     <ItemsControl.ItemsPanel>
                                                                         <ItemsPanelTemplate>
