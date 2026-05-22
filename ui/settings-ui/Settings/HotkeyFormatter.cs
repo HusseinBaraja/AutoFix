@@ -6,7 +6,6 @@ public static class HotkeyFormatter
 {
     public static string Format(Key key, ModifierKeys modifiers)
     {
-        key = NormalizeKey(key);
         if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
             or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin
             or Key.System or Key.None)
@@ -116,8 +115,6 @@ public static class HotkeyFormatter
             yield return "Win";
         }
     }
-
-    private static Key NormalizeKey(Key key) => key == Key.System ? Keyboard.PrimaryDevice.ActiveSource is null ? key : key : key;
 
     private static string KeyName(Key key) => key switch
     {
