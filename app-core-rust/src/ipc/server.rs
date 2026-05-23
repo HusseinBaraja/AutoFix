@@ -63,8 +63,10 @@ impl NamedPipeIpcServer {
         if let Err(error) =
             super::client::send_request(&self.pipe_path, &IpcRequest::IsBackgroundRunning)
         {
-            tracing::warn!("failed to wake IPC server through request path: {}", error);
-            wake_connect_named_pipe(&self.pipe_path);
+            tracing::debug!("IPC server request wake skipped: {}", error);
+            if let Err(error) = wake_connect_named_pipe(&self.pipe_path) {
+                tracing::debug!("IPC server fallback wake skipped: {}", error);
+            }
         }
         if let Some(worker) = self.worker.take() {
             join_worker(worker);

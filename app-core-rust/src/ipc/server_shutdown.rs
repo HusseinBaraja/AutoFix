@@ -33,7 +33,7 @@ pub(super) fn join_worker(worker: JoinHandle<()>) {
     }
 }
 
-pub(super) fn wake_connect_named_pipe(pipe_path: &str) {
+pub(super) fn wake_connect_named_pipe(pipe_path: &str) -> std::io::Result<()> {
     let path = wide(pipe_path);
     let pipe = unsafe {
         CreateFileW(
@@ -51,11 +51,9 @@ pub(super) fn wake_connect_named_pipe(pipe_path: &str) {
         unsafe {
             CloseHandle(pipe);
         }
+        Ok(())
     } else {
-        tracing::warn!(
-            "fallback IPC wake could not connect to pipe: {}",
-            std::io::Error::last_os_error()
-        );
+        Err(std::io::Error::last_os_error())
     }
 }
 
