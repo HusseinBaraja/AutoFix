@@ -290,8 +290,11 @@ public sealed class MainWindowViewModelTests
             return Task.FromResult(IpcResult<AppRuleDeletedResponse>.Ok(new(true)));
         }
 
-        public Task<IpcResult<AppRulesResponse>> ResetAppRulesAsync() =>
-            Task.FromResult(IpcResult<AppRulesResponse>.Ok(new(AppRules)));
+        public Task<IpcResult<AppRulesResponse>> ResetAppRulesAsync()
+        {
+            AppRules.Clear();
+            return Task.FromResult(IpcResult<AppRulesResponse>.Ok(new(AppRules)));
+        }
 
         public Task<IpcResult<LogsResponse>> OpenLogsAsync() =>
             Task.FromResult(IpcResult<LogsResponse>.Ok(new("", true)));
