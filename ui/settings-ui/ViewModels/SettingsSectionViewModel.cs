@@ -8,7 +8,6 @@ public sealed class SettingsSectionViewModel : ObservableObject
 {
     public SettingsSectionViewModel()
     {
-        AppRules.CollectionChanged += OnAppRulesChanged;
         Dictionary.CollectionChanged += OnDictionaryChanged;
     }
 
@@ -21,11 +20,6 @@ public sealed class SettingsSectionViewModel : ObservableObject
 
     public bool HasAppRules => ShowsAppRules;
     public bool HasDictionary => Dictionary.Count > 0;
-
-    private void OnAppRulesChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
-        OnPropertyChanged(nameof(HasAppRules));
-    }
 
     private void OnDictionaryChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {

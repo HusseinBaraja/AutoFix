@@ -60,7 +60,7 @@ public sealed class SettingsSkeletonTests
     }
 
     [TestMethod]
-    public void AppRulesChangesNotifyHasAppRules()
+    public void AppRulesChangesDoNotNotifyHasAppRules()
     {
         var section = new SettingsSectionViewModel();
         var changedProperties = new List<string?>();
@@ -69,9 +69,7 @@ public sealed class SettingsSkeletonTests
         section.AppRules.Add(new AppRuleItem { ProcessName = "notepad.exe", ListBehavior = "blocklist" });
         section.AppRules.Clear();
 
-        CollectionAssert.AreEqual(
-            new[] { nameof(SettingsSectionViewModel.HasAppRules), nameof(SettingsSectionViewModel.HasAppRules) },
-            changedProperties);
+        Assert.AreEqual(0, changedProperties.Count);
     }
 
     [TestMethod]
