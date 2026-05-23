@@ -1,6 +1,6 @@
 use rusqlite::{Connection, Result};
 
-pub(super) const CURRENT_SCHEMA_VERSION: i64 = 3;
+pub(super) const CURRENT_SCHEMA_VERSION: i64 = 4;
 
 pub(super) struct DefaultAppRule {
     pub(super) process_name: &'static str,
@@ -123,6 +123,10 @@ pub(super) fn migrate(connection: &Connection) -> Result<()> {
         seed_default_app_rules(connection)?;
         connection.execute("insert into schema_migrations (version) values (3)", [])?;
     }
+    if version < 4 {
+        migrate_to_v4(connection)?;
+        connection.execute("insert into schema_migrations (version) values (4)", [])?;
+    }
 
     Ok(())
 }
@@ -141,7 +145,7 @@ pub(super) fn seed_default_app_rules(connection: &Connection) -> Result<()> {
     for rule in DEFAULT_APP_RULES {
         statement.execute((
             rule.process_name,
-            rule.window_title_pattern,
+            rule.window_title_pattern.unwrap_or(""),
             rule.list_behavior,
             rule.manual_shortcut_allowed,
             rule.word_count_trigger_allowed,
@@ -168,7 +172,7 @@ fn migrate_to_v1(connection: &Connection) -> Result<()> {
         create table app_rules (
             id integer primary key,
             process_name text not null,
-            window_title_pattern text,
+            window_title_pattern text not null default '',
             list_behavior text not null check (list_behavior in ('allowlist', 'blocklist')),
             manual_shortcut_allowed integer not null check (manual_shortcut_allowed in (0, 1)),
             word_count_trigger_allowed integer not null check (word_count_trigger_allowed in (0, 1)),
@@ -280,6 +284,25 @@ fn migrate_to_v2(connection: &Connection) -> Result<()> {
         drop table debug_events;
         alter table debug_events_v2 rename to debug_events;
         create index idx_debug_events_session on debug_events(session_id, occurred_at);
+        ",
+    )
+}
+
+fn migrate_to_v4(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "
+        delete from app_rules
+        where window_title_pattern is null
+          and id not in (
+              select max(id)
+              from app_rules
+              where window_title_pattern is null
+              group by lower(process_name)
+          );
+
+        update app_rules
+        set window_title_pattern = ''
+        where window_title_pattern is null;
         ",
     )
 }

@@ -87,7 +87,7 @@ public sealed class AppRuleStorage
               and (window_title_pattern is $window_title_pattern or window_title_pattern = $window_title_pattern)
             """;
         command.Parameters.AddWithValue("$process_name", processName);
-        command.Parameters.AddWithValue("$window_title_pattern", NullWhenEmpty(windowTitlePattern));
+        command.Parameters.AddWithValue("$window_title_pattern", EmptyWhenBlank(windowTitlePattern));
         return command.ExecuteNonQuery() > 0;
     }
 
@@ -173,7 +173,7 @@ public sealed class AppRuleStorage
             create table if not exists app_rules (
                 id integer primary key,
                 process_name text not null,
-                window_title_pattern text,
+                window_title_pattern text not null default '',
                 list_behavior text not null check (list_behavior in ('allowlist', 'blocklist')),
                 manual_shortcut_allowed integer not null check (manual_shortcut_allowed in (0, 1)),
                 word_count_trigger_allowed integer not null check (word_count_trigger_allowed in (0, 1)),
@@ -186,13 +186,14 @@ public sealed class AppRuleStorage
             );
             """;
         command.ExecuteNonQuery();
+        NormalizeProcessOnlyRules(connection);
         return connection;
     }
 
     private static void BindRule(SqliteCommand command, AppRuleItem rule)
     {
         command.Parameters.AddWithValue("$process_name", rule.ProcessName.Trim());
-        command.Parameters.AddWithValue("$window_title_pattern", NullWhenEmpty(rule.WindowTitlePattern));
+        command.Parameters.AddWithValue("$window_title_pattern", EmptyWhenBlank(rule.WindowTitlePattern));
         command.Parameters.AddWithValue("$list_behavior", rule.ListBehavior);
         command.Parameters.AddWithValue("$manual", rule.ManualShortcutAllowed);
         command.Parameters.AddWithValue("$word_count", rule.WordCountTriggerAllowed);
@@ -201,8 +202,29 @@ public sealed class AppRuleStorage
         command.Parameters.AddWithValue("$api", rule.ApiEngineAllowed);
     }
 
-    private static object NullWhenEmpty(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? DBNull.Value : value.Trim();
+    private static string EmptyWhenBlank(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "" : value.Trim();
+
+    private static void NormalizeProcessOnlyRules(SqliteConnection connection)
+    {
+        using var deleteDuplicates = connection.CreateCommand();
+        deleteDuplicates.CommandText =
+            """
+            delete from app_rules
+            where window_title_pattern is null
+              and id not in (
+                  select max(id)
+                  from app_rules
+                  where window_title_pattern is null
+                  group by lower(process_name)
+              )
+            """;
+        deleteDuplicates.ExecuteNonQuery();
+
+        using var normalizeNulls = connection.CreateCommand();
+        normalizeNulls.CommandText = "update app_rules set window_title_pattern = '' where window_title_pattern is null";
+        normalizeNulls.ExecuteNonQuery();
+    }
 
     private static string DefaultDatabasePath()
     {

@@ -54,6 +54,92 @@ fn stores_and_lists_app_rules() {
 }
 
 #[test]
+fn upserts_process_only_app_rules_into_one_row() {
+    let database = Database::open_memory().unwrap();
+    let mut rule = AppRule {
+        process_name: "notepad.exe".to_owned(),
+        window_title_pattern: None,
+        list_behavior: "allowlist".to_owned(),
+        manual_shortcut_allowed: true,
+        word_count_trigger_allowed: false,
+        character_trigger_allowed: false,
+        local_engine_allowed: true,
+        api_engine_allowed: true,
+    };
+    database.app_rules().upsert(&rule).unwrap();
+
+    rule.list_behavior = "blocklist".to_owned();
+    rule.manual_shortcut_allowed = false;
+    rule.local_engine_allowed = false;
+    rule.api_engine_allowed = false;
+    database.app_rules().upsert(&rule).unwrap();
+
+    let listed: Vec<_> = database
+        .app_rules()
+        .list()
+        .unwrap()
+        .into_iter()
+        .filter(|item| item.process_name == "notepad.exe")
+        .collect();
+    assert_eq!(listed, vec![rule]);
+}
+
+#[test]
+fn v4_migration_normalizes_legacy_null_process_only_rules() {
+    let connection = Connection::open_in_memory().unwrap();
+    connection
+        .execute_batch(
+            "
+            create table schema_migrations (
+                version integer primary key,
+                applied_at text not null default current_timestamp
+            );
+            insert into schema_migrations (version) values (1), (2), (3);
+
+            create table app_rules (
+                id integer primary key,
+                process_name text not null,
+                window_title_pattern text,
+                list_behavior text not null check (list_behavior in ('allowlist', 'blocklist')),
+                manual_shortcut_allowed integer not null check (manual_shortcut_allowed in (0, 1)),
+                word_count_trigger_allowed integer not null check (word_count_trigger_allowed in (0, 1)),
+                character_trigger_allowed integer not null check (character_trigger_allowed in (0, 1)),
+                local_engine_allowed integer not null check (local_engine_allowed in (0, 1)),
+                api_engine_allowed integer not null check (api_engine_allowed in (0, 1)),
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp,
+                unique (process_name, window_title_pattern)
+            );
+
+            insert into app_rules (
+                process_name, window_title_pattern, list_behavior, manual_shortcut_allowed,
+                word_count_trigger_allowed, character_trigger_allowed, local_engine_allowed,
+                api_engine_allowed
+            ) values
+                ('notepad.exe', null, 'allowlist', 1, 0, 0, 1, 1),
+                ('notepad.exe', null, 'blocklist', 0, 0, 0, 0, 0);
+            ",
+        )
+        .unwrap();
+
+    migrations::migrate(&connection).unwrap();
+
+    assert_eq!(
+        row_count_where(
+            &connection,
+            "app_rules",
+            "process_name = 'notepad.exe' and window_title_pattern = ''"
+        ),
+        1
+    );
+    assert_eq!(
+        row_count_where(&connection, "app_rules", "window_title_pattern is null"),
+        0
+    );
+    assert_eq!(schema_version(&connection), CURRENT_SCHEMA_VERSION);
+}
+
+#[test]
 fn seeds_default_app_rules() {
     let database = Database::open_memory().unwrap();
     let rules = database.app_rules().list().unwrap();
@@ -430,6 +516,24 @@ fn table_columns(connection: &Connection, table_name: &str) -> Vec<String> {
 fn row_count(connection: &Connection, table_name: &str) -> i64 {
     connection
         .query_row(&format!("select count(*) from {table_name}"), [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+}
+
+fn row_count_where(connection: &Connection, table_name: &str, predicate: &str) -> i64 {
+    connection
+        .query_row(
+            &format!("select count(*) from {table_name} where {predicate}"),
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+fn schema_version(connection: &Connection) -> i64 {
+    connection
+        .query_row("select max(version) from schema_migrations", [], |row| {
             row.get(0)
         })
         .unwrap()
