@@ -16,10 +16,9 @@ use repositories::{
     AppRuleRepository, CustomDictionaryRepository, LanguageOverrideRepository,
     LearnedRuleRepository,
 };
+pub(crate) use types::AppRule;
 #[cfg(test)]
-use types::{
-    AppRule, CorrectionMetadata, CustomDictionaryEntry, LanguageOverride, LearnedCorrectionRule,
-};
+use types::{CorrectionMetadata, CustomDictionaryEntry, LanguageOverride, LearnedCorrectionRule};
 
 pub(crate) struct Database {
     connection: Connection,

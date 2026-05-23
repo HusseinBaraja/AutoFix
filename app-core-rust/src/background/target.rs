@@ -14,9 +14,15 @@ use windows::Win32::{
 use windows_sys::Win32::{
     Foundation::{CloseHandle, GetLastError, ERROR_ACCESS_DENIED, HWND},
     Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY},
-    System::Threading::{
-        OpenProcess, OpenProcessToken, QueryFullProcessImageNameW,
-        PROCESS_QUERY_LIMITED_INFORMATION,
+    System::{
+        StationsAndDesktops::{
+            CloseDesktop, GetThreadDesktop, GetUserObjectInformationW, OpenInputDesktop,
+            DESKTOP_SWITCHDESKTOP, UOI_NAME,
+        },
+        Threading::{
+            GetCurrentThreadId, OpenProcess, OpenProcessToken, QueryFullProcessImageNameW,
+            PROCESS_QUERY_LIMITED_INFORMATION,
+        },
     },
     UI::WindowsAndMessaging::{
         GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
@@ -32,6 +38,11 @@ pub(crate) struct FocusedTarget {
     pub(crate) focused_element_id: Option<FocusedElementId>,
     pub(crate) is_elevated: bool,
     pub(crate) is_password_or_protected: bool,
+    pub(crate) is_hidden_or_unavailable: bool,
+    pub(crate) field_safety_known: bool,
+    pub(crate) is_secure_desktop: bool,
+    pub(crate) is_lock_screen: bool,
+    pub(crate) is_credential_dialog: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +67,10 @@ pub(crate) enum CorrectionEligibility {
     Allowed,
     BlockedElevated,
     BlockedProtectedField,
+    BlockedHiddenOrUnavailable,
+    BlockedSecureDesktop,
+    BlockedLockScreen,
+    BlockedCredentialDialog,
     Unsupported,
 }
 
@@ -76,21 +91,22 @@ impl FocusedTarget {
     }
 
     pub(crate) fn correction_eligibility(&self) -> CorrectionEligibility {
-        if self.is_elevated {
+        if self.is_secure_desktop {
+            CorrectionEligibility::BlockedSecureDesktop
+        } else if self.is_lock_screen {
+            CorrectionEligibility::BlockedLockScreen
+        } else if self.is_credential_dialog {
+            CorrectionEligibility::BlockedCredentialDialog
+        } else if self.is_elevated {
             CorrectionEligibility::BlockedElevated
         } else if self.is_password_or_protected {
             CorrectionEligibility::BlockedProtectedField
+        } else if self.is_hidden_or_unavailable {
+            CorrectionEligibility::BlockedHiddenOrUnavailable
+        } else if !self.field_safety_known {
+            CorrectionEligibility::Unsupported
         } else {
             CorrectionEligibility::Allowed
-        }
-    }
-}
-
-impl TargetDetection {
-    pub(crate) fn correction_eligibility(&self) -> CorrectionEligibility {
-        match self {
-            Self::Available(target) => target.correction_eligibility(),
-            Self::Unsupported => CorrectionEligibility::Unsupported,
         }
     }
 }
@@ -107,9 +123,25 @@ pub(crate) fn detect_focused_target() -> TargetDetection {
     let process_name = process_name(process_id).unwrap_or_else(|| "Unknown app".to_owned());
     let window_title = window_title(window).unwrap_or_default();
     let is_elevated = process_is_elevated_or_blocked(process_id);
-    let (focused_element_id, is_password_or_protected) = focused_element_context()
-        .map(|element| (element.focused_element_id, element.is_password_or_protected))
-        .unwrap_or((None, false));
+    let desktop_state = desktop_state();
+    let element = focused_element_context();
+    let (
+        focused_element_id,
+        is_password_or_protected,
+        is_hidden_or_unavailable,
+        field_safety_known,
+    ) = element
+        .map(|element| {
+            (
+                element.focused_element_id,
+                element.is_password_or_protected,
+                element.is_hidden_or_unavailable,
+                true,
+            )
+        })
+        .unwrap_or((None, false, false, false));
+    let normalized_process = normalize_process_name(&process_name);
+    let normalized_title = window_title.to_ascii_lowercase();
 
     TargetDetection::Available(FocusedTarget {
         process_id,
@@ -119,6 +151,11 @@ pub(crate) fn detect_focused_target() -> TargetDetection {
         focused_element_id,
         is_elevated,
         is_password_or_protected,
+        is_hidden_or_unavailable,
+        field_safety_known,
+        is_secure_desktop: desktop_state.is_secure,
+        is_lock_screen: is_lock_screen_process(&normalized_process),
+        is_credential_dialog: is_credential_context(&normalized_process, &normalized_title),
     })
 }
 
@@ -160,6 +197,11 @@ impl FocusedElementId {
 struct FocusedElementContext {
     focused_element_id: Option<FocusedElementId>,
     is_password_or_protected: bool,
+    is_hidden_or_unavailable: bool,
+}
+
+struct DesktopState {
+    is_secure: bool,
 }
 
 fn active_window_handle() -> Option<HWND> {
@@ -274,10 +316,19 @@ fn focused_element_context() -> Option<FocusedElementContext> {
                 .CurrentIsPassword()
                 .map(|is_password| is_password.as_bool())
                 .unwrap_or(false);
+            let is_offscreen = element
+                .CurrentIsOffscreen()
+                .map(|is_offscreen| is_offscreen.as_bool())
+                .unwrap_or(true);
+            let is_enabled = element
+                .CurrentIsEnabled()
+                .map(|is_enabled| is_enabled.as_bool())
+                .unwrap_or(false);
 
             Some(FocusedElementContext {
                 focused_element_id,
                 is_password_or_protected,
+                is_hidden_or_unavailable: is_offscreen || !is_enabled,
             })
         })();
 
@@ -287,6 +338,83 @@ fn focused_element_context() -> Option<FocusedElementContext> {
 
         context
     }
+}
+
+fn desktop_state() -> DesktopState {
+    unsafe {
+        let input_desktop = OpenInputDesktop(0, 0, DESKTOP_SWITCHDESKTOP);
+        if input_desktop.is_null() {
+            return DesktopState { is_secure: true };
+        }
+
+        let current_desktop = GetThreadDesktop(GetCurrentThreadId());
+        let is_secure = match (
+            desktop_name(current_desktop),
+            desktop_name(input_desktop as *mut _),
+        ) {
+            (Some(current), Some(input)) => current != input,
+            _ => true,
+        };
+        CloseDesktop(input_desktop);
+
+        DesktopState { is_secure }
+    }
+}
+
+fn desktop_name(desktop: *mut std::ffi::c_void) -> Option<String> {
+    if desktop.is_null() {
+        return None;
+    }
+
+    unsafe {
+        let mut needed = 0;
+        let _ = GetUserObjectInformationW(desktop, UOI_NAME, std::ptr::null_mut(), 0, &mut needed);
+        if needed == 0 {
+            return None;
+        }
+
+        let mut buffer = vec![0_u16; needed as usize / std::mem::size_of::<u16>()];
+        if GetUserObjectInformationW(
+            desktop,
+            UOI_NAME,
+            buffer.as_mut_ptr() as *mut _,
+            needed,
+            &mut needed,
+        ) == 0
+        {
+            return None;
+        }
+
+        let length = buffer
+            .iter()
+            .position(|value| *value == 0)
+            .unwrap_or(buffer.len());
+        Some(String::from_utf16_lossy(&buffer[..length]))
+    }
+}
+
+fn normalize_process_name(process_name: &str) -> String {
+    process_name.trim().to_ascii_lowercase()
+}
+
+fn is_lock_screen_process(process_name: &str) -> bool {
+    matches!(
+        process_name,
+        "logonui.exe" | "lockapp.exe" | "winlogon.exe" | "logonui"
+    )
+}
+
+fn is_credential_context(process_name: &str, window_title: &str) -> bool {
+    let process_name = normalize_process_name(process_name);
+    let window_title = window_title.to_ascii_lowercase();
+    matches!(
+        process_name.as_str(),
+        "credentialui.exe" | "credwiz.exe" | "consent.exe" | "lsass.exe"
+    ) || window_title.contains("credential")
+        || window_title.contains("credentials")
+        || window_title.contains("windows security")
+        || window_title.contains("user account control")
+        || window_title.contains("uac")
 }
 
 fn accept_com_initialization(initialization_result: windows::core::HRESULT) -> bool {
@@ -366,6 +494,11 @@ mod tests {
             focused_element_id: None,
             is_elevated: false,
             is_password_or_protected: false,
+            is_hidden_or_unavailable: false,
+            field_safety_known: true,
+            is_secure_desktop: false,
+            is_lock_screen: false,
+            is_credential_dialog: false,
         }
     }
 
@@ -429,18 +562,65 @@ mod tests {
     }
 
     #[test]
-    fn normal_target_allows_correction() {
+    fn hidden_or_unavailable_target_blocks_correction() {
+        let mut target = normal_target();
+        target.is_hidden_or_unavailable = true;
+
         assert_eq!(
-            normal_target().correction_eligibility(),
-            CorrectionEligibility::Allowed
+            target.correction_eligibility(),
+            CorrectionEligibility::BlockedHiddenOrUnavailable
         );
     }
 
     #[test]
-    fn unavailable_foreground_target_is_unsupported() {
+    fn unknown_field_safety_blocks_as_unsupported() {
+        let mut target = normal_target();
+        target.field_safety_known = false;
+
         assert_eq!(
-            TargetDetection::Unsupported.correction_eligibility(),
+            target.correction_eligibility(),
             CorrectionEligibility::Unsupported
+        );
+    }
+
+    #[test]
+    fn secure_desktop_blocks_correction() {
+        let mut target = normal_target();
+        target.is_secure_desktop = true;
+
+        assert_eq!(
+            target.correction_eligibility(),
+            CorrectionEligibility::BlockedSecureDesktop
+        );
+    }
+
+    #[test]
+    fn lock_screen_blocks_correction() {
+        let mut target = normal_target();
+        target.is_lock_screen = true;
+
+        assert_eq!(
+            target.correction_eligibility(),
+            CorrectionEligibility::BlockedLockScreen
+        );
+    }
+
+    #[test]
+    fn credential_dialog_blocks_correction() {
+        let mut target = normal_target();
+        target.is_credential_dialog = true;
+
+        assert_eq!(
+            target.correction_eligibility(),
+            CorrectionEligibility::BlockedCredentialDialog
+        );
+    }
+
+    #[test]
+    fn normal_target_allows_correction() {
+        assert_eq!(
+            normal_target().correction_eligibility(),
+            CorrectionEligibility::Allowed
         );
     }
 
@@ -474,5 +654,19 @@ mod tests {
     #[test]
     fn com_initialization_rejects_unexpected_success_result() {
         assert!(!accept_com_initialization(HRESULT(2)));
+    }
+
+    #[test]
+    fn detects_known_lock_screen_processes() {
+        assert!(is_lock_screen_process("lockapp.exe"));
+        assert!(is_lock_screen_process("logonui.exe"));
+        assert!(!is_lock_screen_process("notepad.exe"));
+    }
+
+    #[test]
+    fn detects_credential_context_from_process_or_title() {
+        assert!(is_credential_context("consent.exe", ""));
+        assert!(is_credential_context("notepad.exe", "Windows Security"));
+        assert!(!is_credential_context("notepad.exe", "Notes"));
     }
 }

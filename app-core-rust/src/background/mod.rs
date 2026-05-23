@@ -2,6 +2,7 @@ mod admin;
 mod components;
 mod message_loop;
 mod paths;
+mod security;
 mod shortcuts;
 mod target;
 #[cfg(test)]
@@ -24,6 +25,7 @@ use self::{
     admin::reject_elevated_process,
     components::{CorrectionEngineRouter, NamedPipeIpcServer, ReplacementEngine, SessionManager},
     paths::RuntimePaths,
+    security::{SecurityDecision, SecurityGate, TriggerKind},
     shortcuts::{GlobalShortcutListener, ShortcutAction},
     tray::TrayIcon,
 };
@@ -36,6 +38,7 @@ pub(crate) struct BackgroundRuntime {
 struct RuntimeComponents {
     config_path: PathBuf,
     config_modified_at: Option<SystemTime>,
+    config: AppConfig,
     tray_icon: TrayIcon,
     ipc_server: NamedPipeIpcServer,
     global_shortcut: GlobalShortcutListener,
@@ -111,7 +114,7 @@ impl BackgroundRuntime {
     }
 
     fn run_until_exit(&mut self) {
-        self.components.run_until_exit();
+        self.components.run_until_exit(&self.database);
     }
 }
 
@@ -121,6 +124,7 @@ impl RuntimeComponents {
             tray_icon: TrayIcon::initialize(config, paths),
             config_path: paths.config_path().to_path_buf(),
             config_modified_at: modified_at(paths.config_path()),
+            config: config.clone(),
             ipc_server: NamedPipeIpcServer::initialize(config, paths)?,
             global_shortcut: GlobalShortcutListener::initialize(config),
             session_manager: SessionManager::initialize(),
@@ -138,10 +142,10 @@ impl RuntimeComponents {
         self.tray_icon.shutdown();
     }
 
-    fn run_until_exit(&mut self) {
+    fn run_until_exit(&mut self, database: &Database) {
         message_loop::run_until_exit(|event| {
             match event {
-                message_loop::MessageLoopEvent::Hotkey(id) => self.process_shortcut(id),
+                message_loop::MessageLoopEvent::Hotkey(id) => self.process_shortcut(id, database),
                 message_loop::MessageLoopEvent::Poll => {}
                 message_loop::MessageLoopEvent::Tick => self.reload_shortcuts_if_config_changed(),
             }
@@ -150,83 +154,79 @@ impl RuntimeComponents {
         });
     }
 
-    fn process_shortcut(&mut self, id: usize) {
+    fn process_shortcut(&mut self, id: usize, database: &Database) {
         match GlobalShortcutListener::action_for_id(id) {
             Some(ShortcutAction::Correct) => {
-                if self.correction_shortcut_enabled() {
+                if self.security_allows(TriggerKind::ManualShortcut, database) {
                     tracing::info!("correction pipeline placeholder triggered by shortcut");
                 } else {
                     tracing::info!("correction shortcut ignored because context is blocked");
                 }
             }
             Some(ShortcutAction::Undo) => {
-                tracing::info!("undo pipeline placeholder triggered by shortcut");
+                if self.security_allows(TriggerKind::Undo, database) {
+                    tracing::info!("undo pipeline placeholder triggered by shortcut");
+                } else {
+                    tracing::info!("undo shortcut ignored because context is blocked");
+                }
             }
             None => {}
         }
     }
 
-    fn correction_shortcut_enabled(&self) -> bool {
-        if self.is_app_blocked_by_rules() {
-            return false;
-        }
-
-        let detection = target::detect_focused_target();
-        match (&detection, detection.correction_eligibility()) {
-            (
-                target::TargetDetection::Available(focused_target),
-                target::CorrectionEligibility::Allowed,
-            ) => {
-                let session_key = focused_target.session_key();
+    fn security_allows(&self, trigger: TriggerKind, database: &Database) -> bool {
+        match SecurityGate::check(trigger, &self.current_config(), database) {
+            SecurityDecision::Allowed { target } => {
+                let session_key = target.session_key();
                 tracing::debug!(
-                    process_name = %focused_target.process_name,
-                    process_id = focused_target.process_id,
+                    process_name = %target.process_name,
+                    process_id = target.process_id,
+                    trigger = trigger.as_str(),
                     session_key_kind = session_key_kind(&session_key),
-                    "correction target allowed"
+                    "security gate allowed target"
                 );
                 true
             }
-            (
-                target::TargetDetection::Available(focused_target),
-                target::CorrectionEligibility::BlockedElevated,
-            ) => {
-                let session_key = focused_target.session_key();
-                tracing::info!(
-                    process_name = %focused_target.process_name,
-                    process_id = focused_target.process_id,
-                    session_key_kind = session_key_kind(&session_key),
-                    block_reason = "elevated_target",
-                    "correction target blocked"
-                );
-                false
-            }
-            (
-                target::TargetDetection::Available(focused_target),
-                target::CorrectionEligibility::BlockedProtectedField,
-            ) => {
-                let session_key = focused_target.session_key();
-                tracing::info!(
-                    process_name = %focused_target.process_name,
-                    process_id = focused_target.process_id,
-                    session_key_kind = session_key_kind(&session_key),
-                    block_reason = "protected_field",
-                    "correction target blocked"
-                );
-                false
-            }
-            (target::TargetDetection::Unsupported, _)
-            | (_, target::CorrectionEligibility::Unsupported) => {
-                tracing::info!(
-                    block_reason = "unsupported_target",
-                    "correction target blocked"
-                );
+            SecurityDecision::Blocked { reason, target } => {
+                if let Some(target) = target {
+                    let session_key = target.session_key();
+                    tracing::info!(
+                        process_name = %target.process_name,
+                        process_id = target.process_id,
+                        trigger = trigger.as_str(),
+                        session_key_kind = session_key_kind(&session_key),
+                        block_reason = reason.as_str(),
+                        "security gate blocked target"
+                    );
+                } else {
+                    tracing::info!(
+                        trigger = trigger.as_str(),
+                        block_reason = reason.as_str(),
+                        "security gate blocked target"
+                    );
+                }
                 false
             }
         }
     }
 
-    fn is_app_blocked_by_rules(&self) -> bool {
-        false
+    fn current_config(&self) -> AppConfig {
+        self.config.clone()
+    }
+
+    #[allow(dead_code)]
+    fn word_count_trigger_allowed(&self, database: &Database) -> bool {
+        self.security_allows(TriggerKind::WordCount, database)
+    }
+
+    #[allow(dead_code)]
+    fn character_trigger_allowed(&self, database: &Database) -> bool {
+        self.security_allows(TriggerKind::Character, database)
+    }
+
+    #[allow(dead_code)]
+    fn final_fix_before_reanchor_allowed(&self, database: &Database) -> bool {
+        self.security_allows(TriggerKind::FinalFixBeforeReanchor, database)
     }
 
     fn reload_shortcuts_if_config_changed(&mut self) {
@@ -241,6 +241,7 @@ impl RuntimeComponents {
                 if shortcuts::detect_conflict(&config) {
                     tracing::warn!("shortcut conflict detected while reloading config");
                 }
+                self.config = config.clone();
                 self.global_shortcut.reload(&config);
             }
             Err(error) => tracing::warn!("failed to reload shortcuts from config: {}", error),
