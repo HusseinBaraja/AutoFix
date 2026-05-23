@@ -24,6 +24,7 @@ public sealed class SettingsSkeletonTests
                 "Engines",
                 "Context",
                 "Feedback",
+                "App Rules",
                 "Logs / Debug",
                 "Advanced",
             },
@@ -65,7 +66,7 @@ public sealed class SettingsSkeletonTests
         var changedProperties = new List<string?>();
         section.PropertyChanged += (_, args) => changedProperties.Add(args.PropertyName);
 
-        section.AppRules.Add(new AppRuleItem { App = "Notepad", Scope = "Blocked", Notes = "Test rule" });
+        section.AppRules.Add(new AppRuleItem { ProcessName = "notepad.exe", ListBehavior = "blocklist" });
         section.AppRules.Clear();
 
         CollectionAssert.AreEqual(

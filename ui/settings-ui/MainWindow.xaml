@@ -1,6 +1,7 @@
 <Window x:Class="AutoFix.SettingsUi.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:sys="clr-namespace:System;assembly=mscorlib"
         Title="AutoFix Settings"
         Icon="{DynamicResource AutoFixLogoImage}"
         Width="1080"
@@ -319,19 +320,47 @@
                     <Border Style="{StaticResource TableShell}"
                             Margin="0,0,0,10"
                             Visibility="{Binding SelectedSection.HasAppRules, Converter={StaticResource BoolToVisibility}}">
-                        <DataGrid ItemsSource="{Binding SelectedSection.AppRules}"
-                                  AutomationProperties.Name="App Rules"
-                                  AutoGenerateColumns="False"
-                                  CanUserAddRows="False"
-                                  HeadersVisibility="Column">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="App" Binding="{Binding App}" Width="*" />
-                                <DataGridTextColumn Header="Scope" Binding="{Binding Scope}" Width="110" />
-                                <DataGridTextColumn Header="Mode" Binding="{Binding Mode}" Width="140" />
-                                <DataGridTextColumn Header="Engine" Binding="{Binding Engine}" Width="120" />
-                                <DataGridTextColumn Header="Notes" Binding="{Binding Notes}" Width="*" />
-                            </DataGrid.Columns>
-                        </DataGrid>
+                        <DockPanel LastChildFill="True">
+                            <StackPanel DockPanel.Dock="Top"
+                                        Orientation="Horizontal"
+                                        HorizontalAlignment="Right"
+                                        Margin="0,0,0,10">
+                                <Button Content="Add"
+                                        Command="{Binding AddAppRuleCommand}"
+                                        Margin="0,0,8,0" />
+                                <Button Content="Delete"
+                                        Command="{Binding DeleteAppRuleCommand}"
+                                        Margin="0,0,8,0" />
+                                <Button Content="Reset defaults"
+                                        Command="{Binding ResetAppRulesCommand}" />
+                            </StackPanel>
+                            <DataGrid ItemsSource="{Binding SelectedSection.AppRules}"
+                                      SelectedItem="{Binding SelectedAppRule}"
+                                      AutomationProperties.Name="App Rules"
+                                      AutoGenerateColumns="False"
+                                      CanUserAddRows="False"
+                                      HeadersVisibility="Column">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Process" Binding="{Binding ProcessName, UpdateSourceTrigger=PropertyChanged}" Width="170" />
+                                    <DataGridTextColumn Header="Window title" Binding="{Binding WindowTitlePattern, UpdateSourceTrigger=PropertyChanged}" Width="170" />
+                                    <DataGridComboBoxColumn Header="Mode"
+                                                            SelectedValueBinding="{Binding ListBehavior, UpdateSourceTrigger=PropertyChanged}"
+                                                            Width="110">
+                                        <DataGridComboBoxColumn.ItemsSource>
+                                            <x:Array Type="{x:Type sys:String}">
+                                                <sys:String>allowlist</sys:String>
+                                                <sys:String>blocklist</sys:String>
+                                            </x:Array>
+                                        </DataGridComboBoxColumn.ItemsSource>
+                                    </DataGridComboBoxColumn>
+                                    <DataGridCheckBoxColumn Header="Local" Binding="{Binding LocalEngineAllowed, UpdateSourceTrigger=PropertyChanged}" Width="70" />
+                                    <DataGridCheckBoxColumn Header="API" Binding="{Binding ApiEngineAllowed, UpdateSourceTrigger=PropertyChanged}" Width="70" />
+                                    <DataGridCheckBoxColumn Header="Manual" Binding="{Binding ManualShortcutAllowed, UpdateSourceTrigger=PropertyChanged}" Width="80" />
+                                    <DataGridCheckBoxColumn Header="Words" Binding="{Binding WordCountTriggerAllowed, UpdateSourceTrigger=PropertyChanged}" Width="80" />
+                                    <DataGridCheckBoxColumn Header="Chars" Binding="{Binding CharacterTriggerAllowed, UpdateSourceTrigger=PropertyChanged}" Width="80" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
                     </Border>
 
                     <Border Style="{StaticResource TableShell}"

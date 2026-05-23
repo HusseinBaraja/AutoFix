@@ -15,10 +15,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
 {
     private readonly IBackgroundIpcClient ipcClient;
     private readonly ConfigStorage configStorage;
+    private readonly AppRuleStorage appRuleStorage;
     private readonly IConfigFileDialog fileDialog;
     private readonly IApiKeyStatus apiKeyStatus;
     private readonly IStartupRegistration startupRegistration;
     private SettingsSectionViewModel? selectedSection;
+    private AppRuleItem? selectedAppRule;
     private OnboardingViewModel? onboarding;
     private string searchText = "";
     private string statusTitle = "Checking background process...";
@@ -61,9 +63,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
         IConfigFileDialog fileDialog,
         IApiKeyStatus apiKeyStatus,
         IStartupRegistration startupRegistration)
+        : this(ipcClient, configStorage, new AppRuleStorage(), fileDialog, apiKeyStatus, startupRegistration)
+    {
+    }
+
+    public MainWindowViewModel(
+        IBackgroundIpcClient ipcClient,
+        ConfigStorage configStorage,
+        AppRuleStorage appRuleStorage,
+        IConfigFileDialog fileDialog,
+        IApiKeyStatus apiKeyStatus,
+        IStartupRegistration startupRegistration)
     {
         this.ipcClient = ipcClient;
         this.configStorage = configStorage;
+        this.appRuleStorage = appRuleStorage;
         this.fileDialog = fileDialog;
         this.apiKeyStatus = apiKeyStatus;
         this.startupRegistration = startupRegistration;
@@ -77,6 +91,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         LaunchBackgroundCommand = new RelayCommand(_ => ShowLaunchPlaceholder());
         ImportConfigCommand = new AsyncRelayCommand(ImportConfigAsync);
         ExportConfigCommand = new AsyncRelayCommand(ExportConfigAsync);
+        AddAppRuleCommand = new AsyncRelayCommand(AddAppRuleAsync);
+        DeleteAppRuleCommand = new AsyncRelayCommand(DeleteSelectedAppRuleAsync);
+        ResetAppRulesCommand = new AsyncRelayCommand(ResetAppRulesAsync);
     }
 
     public ObservableCollection<SettingsSectionViewModel> Sections { get; }
@@ -87,6 +104,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public ICommand LaunchBackgroundCommand { get; }
     public ICommand ImportConfigCommand { get; }
     public ICommand ExportConfigCommand { get; }
+    public ICommand AddAppRuleCommand { get; }
+    public ICommand DeleteAppRuleCommand { get; }
+    public ICommand ResetAppRulesCommand { get; }
 
     public OnboardingViewModel? Onboarding
     {
@@ -106,6 +126,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         get => selectedSection;
         set => SetProperty(ref selectedSection, value);
+    }
+
+    public AppRuleItem? SelectedAppRule
+    {
+        get => selectedAppRule;
+        set => SetProperty(ref selectedAppRule, value);
     }
 
     public string SearchText

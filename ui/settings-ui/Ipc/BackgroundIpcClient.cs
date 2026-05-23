@@ -47,6 +47,34 @@ public sealed class BackgroundIpcClient : IBackgroundIpcClient
         return response.ReadPayload<SettingUpdatedResponse>("setting_updated");
     }
 
+    public async Task<IpcResult<AppRulesResponse>> ListAppRulesAsync()
+    {
+        var response = await SendAsync(new IpcEnvelope("list_app_rules")).ConfigureAwait(false);
+        return response.ReadPayload<AppRulesResponse>("app_rules");
+    }
+
+    public async Task<IpcResult<AppRuleUpdatedResponse>> UpsertAppRuleAsync(AppRuleDto rule)
+    {
+        var payload = JsonSerializer.SerializeToElement(rule, JsonOptions);
+        var response = await SendAsync(new IpcEnvelope("upsert_app_rule", payload)).ConfigureAwait(false);
+        return response.ReadPayload<AppRuleUpdatedResponse>("app_rule_updated");
+    }
+
+    public async Task<IpcResult<AppRuleDeletedResponse>> DeleteAppRuleAsync(string processName, string? windowTitlePattern)
+    {
+        var payload = JsonSerializer.SerializeToElement(
+            new { process_name = processName, window_title_pattern = windowTitlePattern },
+            JsonOptions);
+        var response = await SendAsync(new IpcEnvelope("delete_app_rule", payload)).ConfigureAwait(false);
+        return response.ReadPayload<AppRuleDeletedResponse>("app_rule_deleted");
+    }
+
+    public async Task<IpcResult<AppRulesResponse>> ResetAppRulesAsync()
+    {
+        var response = await SendAsync(new IpcEnvelope("reset_app_rules")).ConfigureAwait(false);
+        return response.ReadPayload<AppRulesResponse>("app_rules_reset");
+    }
+
     public async Task<IpcResult<LogsResponse>> OpenLogsAsync()
     {
         var response = await SendAsync(new IpcEnvelope("open_logs")).ConfigureAwait(false);
