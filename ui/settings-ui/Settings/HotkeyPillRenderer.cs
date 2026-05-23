@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 
@@ -51,6 +52,7 @@ public static class HotkeyPillRenderer
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(10, 5, 10, 5),
             Margin = new Thickness(0, 0, 2, 0),
+            Cursor = Cursors.Hand,
             Effect = new DropShadowEffect
             {
                 BlurRadius = 2,

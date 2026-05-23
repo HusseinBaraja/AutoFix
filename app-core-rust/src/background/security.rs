@@ -304,68 +304,6 @@ fn normalize(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
-pub(crate) fn looks_code_like_or_command_like(text: &str) -> bool {
-    let trimmed = text.trim();
-    let lower = trimmed.to_ascii_lowercase();
-    if trimmed.is_empty() {
-        return false;
-    }
-
-    if lower.contains("://")
-        || lower.starts_with("www.")
-        || lower.contains("\\")
-        || lower.contains("~/")
-        || lower.contains("./")
-        || lower.contains("../")
-    {
-        return true;
-    }
-
-    let tokens = trimmed.split_whitespace().collect::<Vec<_>>();
-    if tokens.iter().any(|token| {
-        token.starts_with("--")
-            || (token.starts_with('-') && token.len() > 1)
-            || token.starts_with('/')
-            || token.contains("::")
-            || token.contains("=>")
-            || token.contains("->")
-    }) {
-        return true;
-    }
-
-    if [
-        "git ",
-        "cargo ",
-        "dotnet ",
-        "npm ",
-        "pnpm ",
-        "yarn ",
-        "python ",
-        "pip ",
-        "ssh ",
-        "cd ",
-        "dir ",
-        "ls ",
-        "mkdir ",
-        "rm ",
-        "del ",
-        "copy ",
-        "xcopy ",
-        "robocopy ",
-    ]
-    .iter()
-    .any(|prefix| lower.starts_with(prefix))
-    {
-        return true;
-    }
-
-    let code_markers = [
-        "{", "}", ";", "==", "!=", "<=", ">=", "&&", "||", "fn ", "let ", "var ", "const ",
-        "public ", "private ", "class ", "using ",
-    ];
-    code_markers.iter().any(|marker| lower.contains(marker))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -699,14 +637,4 @@ mod tests {
         assert!(matching_rule(&[rule], &target).is_some());
     }
 
-    #[test]
-    fn code_like_heuristic_detects_commands_paths_urls_and_syntax() {
-        assert!(looks_code_like_or_command_like("git commit -m fix"));
-        assert!(looks_code_like_or_command_like(r"C:\Users\me\file.txt"));
-        assert!(looks_code_like_or_command_like("https://example.test/path"));
-        assert!(looks_code_like_or_command_like("let value = foo::bar();"));
-        assert!(!looks_code_like_or_command_like(
-            "Please correct this sentence."
-        ));
-    }
 }
