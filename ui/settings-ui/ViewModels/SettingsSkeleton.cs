@@ -94,6 +94,7 @@ public static class SettingsSkeleton
             Toggle("Show blocked-app notice", "Notify when current app is blocked.", "feedback.show_blocked_app_notice", config.Feedback.ShowBlockedAppNotice),
             Toggle("Show timeout notice", "Notify when correction times out.", "feedback.show_timeout_notice", config.Feedback.ShowTimeoutNotice),
         ]),
+        AppRulesSection(),
         Section("Logs / Debug", "Diagnostics and troubleshooting",
         [
             Toggle("Metadata-only logs enabled", "Keep logs free of typed content.", "logging.metadata_only_logs_enabled", config.Logging.MetadataOnlyLogsEnabled),
@@ -144,4 +145,12 @@ public static class SettingsSkeleton
 
     private static SettingCardViewModel BackgroundStatus() =>
         new() { Title = "Background process status", Kind = "BackgroundStatus" };
+
+    private static SettingsSectionViewModel AppRulesSection() =>
+        new()
+        {
+            Name = "App Rules",
+            Description = "Per-app correction scope, triggers, and engine permissions",
+            ShowsAppRules = true,
+        };
 }

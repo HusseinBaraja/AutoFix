@@ -11,7 +11,9 @@ mod tests;
 pub(crate) use client::{send_request, IpcClientError};
 pub(crate) use protocol::IpcResponse;
 #[cfg(test)]
-pub(crate) use protocol::{IpcRequest, UpdateSettingRequest};
+pub(crate) use protocol::{
+    AppRuleDeletedResponse, AppRuleRequest, DeleteAppRuleRequest, IpcRequest, UpdateSettingRequest,
+};
 #[cfg(test)]
 pub(crate) use server::pipe_path_for_process;
 pub(crate) use server::NamedPipeIpcServer;

@@ -1,6 +1,9 @@
 use rusqlite::{params, Connection, Result};
 
-use super::types::{AppRule, CustomDictionaryEntry, LanguageOverride, LearnedCorrectionRule};
+use super::{
+    migrations,
+    types::{AppRule, CustomDictionaryEntry, LanguageOverride, LearnedCorrectionRule},
+};
 
 pub(crate) struct AppRuleRepository<'a> {
     connection: &'a Connection,
@@ -30,7 +33,7 @@ impl<'a> AppRuleRepository<'a> {
             ",
             params![
                 rule.process_name,
-                rule.window_title_pattern,
+                rule.window_title_pattern.as_deref().unwrap_or(""),
                 rule.list_behavior,
                 rule.manual_shortcut_allowed,
                 rule.word_count_trigger_allowed,
@@ -55,7 +58,7 @@ impl<'a> AppRuleRepository<'a> {
         let rows = statement.query_map([], |row| {
             Ok(AppRule {
                 process_name: row.get(0)?,
-                window_title_pattern: row.get(1)?,
+                window_title_pattern: stored_window_title_pattern(row.get(1)?),
                 list_behavior: row.get(2)?,
                 manual_shortcut_allowed: row.get(3)?,
                 word_count_trigger_allowed: row.get(4)?,
@@ -65,6 +68,38 @@ impl<'a> AppRuleRepository<'a> {
             })
         })?;
         rows.collect()
+    }
+
+    pub(crate) fn delete(
+        &self,
+        process_name: &str,
+        window_title_pattern: Option<&str>,
+    ) -> Result<bool> {
+        let affected = self.connection.execute(
+            "
+            delete from app_rules
+            where lower(process_name) = lower(?1)
+              and (
+                  window_title_pattern is ?2
+                  or window_title_pattern = ?2
+              )
+            ",
+            params![process_name, window_title_pattern.unwrap_or("")],
+        )?;
+        Ok(affected > 0)
+    }
+
+    pub(crate) fn reset_to_defaults(&self) -> Result<()> {
+        self.connection.execute("delete from app_rules", [])?;
+        migrations::seed_default_app_rules(self.connection)
+    }
+}
+
+fn stored_window_title_pattern(value: String) -> Option<String> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
     }
 }
 

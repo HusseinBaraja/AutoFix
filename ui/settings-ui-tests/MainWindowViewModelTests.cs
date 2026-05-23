@@ -169,6 +169,52 @@ public sealed class MainWindowViewModelTests
     }
 
     [TestMethod]
+    public async Task LoadSettingsLoadsAppRules()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var ipcClient = new FakeBackgroundIpcClient();
+        ipcClient.AppRules.Add(new("code.exe", null, "allowlist", true, false, false, true, true));
+        var viewModel = new MainWindowViewModel(ipcClient, fixture.Storage, new NullConfigFileDialog());
+
+        await viewModel.LoadSettingsAsync();
+
+        var section = viewModel.Sections.Single(section => section.ShowsAppRules);
+        Assert.AreEqual(1, section.AppRules.Count);
+        Assert.AreEqual("code.exe", section.AppRules[0].ProcessName);
+    }
+
+    [TestMethod]
+    public async Task AddAppRulePersistsThroughIpc()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var ipcClient = new FakeBackgroundIpcClient();
+        var viewModel = new MainWindowViewModel(ipcClient, fixture.Storage, new NullConfigFileDialog());
+        await viewModel.LoadSettingsAsync();
+
+        viewModel.AddAppRuleCommand.Execute(null);
+
+        await WaitForAsync(() => ipcClient.UpsertedRules.Count > 0);
+        Assert.AreEqual("app.exe", ipcClient.UpsertedRules[0].ProcessName);
+    }
+
+    [TestMethod]
+    public async Task DeleteAppRulePersistsThroughIpc()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var ipcClient = new FakeBackgroundIpcClient();
+        ipcClient.AppRules.Add(new("word.exe", "*admin*", "blocklist", false, false, false, false, false));
+        var viewModel = new MainWindowViewModel(ipcClient, fixture.Storage, new NullConfigFileDialog());
+        await viewModel.LoadSettingsAsync();
+        viewModel.SelectedAppRule = viewModel.Sections.Single(section => section.ShowsAppRules).AppRules[0];
+
+        viewModel.DeleteAppRuleCommand.Execute(null);
+
+        await WaitForAsync(() => ipcClient.DeletedRules.Count > 0);
+        Assert.AreEqual("word.exe", ipcClient.DeletedRules[0].ProcessName);
+        Assert.AreEqual("*admin*", ipcClient.DeletedRules[0].WindowTitlePattern);
+    }
+
+    [TestMethod]
     public async Task ApiWithoutKeyCanFinishWithCorrectionDisabled()
     {
         using var fixture = TempConfigFixture.Create();
@@ -207,6 +253,9 @@ public sealed class MainWindowViewModelTests
     {
         public int ReloadCount { get; private set; }
         public int StatusCheckCount { get; private set; }
+        public List<AppRuleDto> AppRules { get; } = [];
+        public List<AppRuleDto> UpsertedRules { get; } = [];
+        public List<(string ProcessName, string? WindowTitlePattern)> DeletedRules { get; } = [];
 
         public Task<IpcResult<AppStatusResponse>> GetStatusAsync() =>
             Task.FromResult(IpcResult<AppStatusResponse>.Ok(new(true, "typos_only", "local")));
@@ -225,6 +274,27 @@ public sealed class MainWindowViewModelTests
 
         public Task<IpcResult<SettingUpdatedResponse>> UpdateSettingAsync(string path, string value) =>
             Task.FromResult(IpcResult<SettingUpdatedResponse>.Ok(new(path)));
+
+        public Task<IpcResult<AppRulesResponse>> ListAppRulesAsync() =>
+            Task.FromResult(IpcResult<AppRulesResponse>.Ok(new(AppRules)));
+
+        public Task<IpcResult<AppRuleUpdatedResponse>> UpsertAppRuleAsync(AppRuleDto rule)
+        {
+            UpsertedRules.Add(rule);
+            return Task.FromResult(IpcResult<AppRuleUpdatedResponse>.Ok(new(rule.ProcessName, rule.WindowTitlePattern)));
+        }
+
+        public Task<IpcResult<AppRuleDeletedResponse>> DeleteAppRuleAsync(string processName, string? windowTitlePattern)
+        {
+            DeletedRules.Add((processName, windowTitlePattern));
+            return Task.FromResult(IpcResult<AppRuleDeletedResponse>.Ok(new(true)));
+        }
+
+        public Task<IpcResult<AppRulesResponse>> ResetAppRulesAsync()
+        {
+            AppRules.Clear();
+            return Task.FromResult(IpcResult<AppRulesResponse>.Ok(new(AppRules)));
+        }
 
         public Task<IpcResult<LogsResponse>> OpenLogsAsync() =>
             Task.FromResult(IpcResult<LogsResponse>.Ok(new("", true)));

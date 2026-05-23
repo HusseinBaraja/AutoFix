@@ -24,6 +24,7 @@ public sealed class SettingsSkeletonTests
                 "Engines",
                 "Context",
                 "Feedback",
+                "App Rules",
                 "Logs / Debug",
                 "Advanced",
             },
@@ -59,18 +60,16 @@ public sealed class SettingsSkeletonTests
     }
 
     [TestMethod]
-    public void AppRulesChangesNotifyHasAppRules()
+    public void AppRulesChangesDoNotNotifyHasAppRules()
     {
         var section = new SettingsSectionViewModel();
         var changedProperties = new List<string?>();
         section.PropertyChanged += (_, args) => changedProperties.Add(args.PropertyName);
 
-        section.AppRules.Add(new AppRuleItem { App = "Notepad", Scope = "Blocked", Notes = "Test rule" });
+        section.AppRules.Add(new AppRuleItem { ProcessName = "notepad.exe", ListBehavior = "blocklist" });
         section.AppRules.Clear();
 
-        CollectionAssert.AreEqual(
-            new[] { nameof(SettingsSectionViewModel.HasAppRules), nameof(SettingsSectionViewModel.HasAppRules) },
-            changedProperties);
+        Assert.AreEqual(0, changedProperties.Count);
     }
 
     [TestMethod]

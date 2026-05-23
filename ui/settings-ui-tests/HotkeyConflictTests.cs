@@ -119,6 +119,18 @@ public sealed class HotkeyConflictTests
         public Task<IpcResult<SettingUpdatedResponse>> UpdateSettingAsync(string path, string value) =>
             Task.FromResult(IpcResult<SettingUpdatedResponse>.Ok(new(path)));
 
+        public Task<IpcResult<AppRulesResponse>> ListAppRulesAsync() =>
+            Task.FromResult(IpcResult<AppRulesResponse>.Ok(new(new List<AppRuleDto>())));
+
+        public Task<IpcResult<AppRuleUpdatedResponse>> UpsertAppRuleAsync(AppRuleDto rule) =>
+            Task.FromResult(IpcResult<AppRuleUpdatedResponse>.Ok(new(rule.ProcessName, rule.WindowTitlePattern)));
+
+        public Task<IpcResult<AppRuleDeletedResponse>> DeleteAppRuleAsync(string processName, string? windowTitlePattern) =>
+            Task.FromResult(IpcResult<AppRuleDeletedResponse>.Ok(new(true)));
+
+        public Task<IpcResult<AppRulesResponse>> ResetAppRulesAsync() =>
+            Task.FromResult(IpcResult<AppRulesResponse>.Ok(new(new List<AppRuleDto>())));
+
         public Task<IpcResult<LogsResponse>> OpenLogsAsync() =>
             Task.FromResult(IpcResult<LogsResponse>.Ok(new("", true)));
 
