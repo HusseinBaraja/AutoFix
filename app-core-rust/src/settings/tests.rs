@@ -1,9 +1,11 @@
 use std::{fs, time::SystemTime};
 
 use super::{
-    default_config_toml, load_config,
+    load_config,
     model::{ConfidenceBehavior, CorrectionEngine, CorrectionMode, GrammarCategory, RunMode},
-    save_config, AppConfig, ValidateConfig,
+    save_config,
+    toml_io::config_to_toml,
+    AppConfig, ValidateConfig,
 };
 
 #[test]
@@ -47,7 +49,7 @@ fn default_config_has_requested_values() {
 
 #[test]
 fn generated_toml_has_comments_and_no_api_key_field() {
-    let output = default_config_toml().unwrap();
+    let output = config_to_toml(&AppConfig::default()).unwrap();
 
     assert!(output.contains("# AutoFix user configuration."));
     assert!(output.contains("[general]"));

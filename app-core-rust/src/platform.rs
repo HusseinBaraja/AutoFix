@@ -10,18 +10,6 @@ use windows_sys::Win32::{
     },
 };
 
-#[cfg(test)]
-pub(crate) fn active_window_title_len() -> i32 {
-    unsafe {
-        let window = GetForegroundWindow();
-        if window.is_null() {
-            return 0;
-        }
-
-        GetWindowTextLengthW(window)
-    }
-}
-
 pub(crate) fn active_app_name() -> String {
     active_process_name()
         .or_else(active_window_title)
@@ -88,11 +76,6 @@ fn active_window_title() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn active_window_title_len_is_non_negative() {
-        assert!(active_window_title_len() >= 0);
-    }
 
     #[test]
     fn active_app_name_returns_fallback_when_title_is_unavailable() {

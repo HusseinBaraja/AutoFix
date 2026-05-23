@@ -106,8 +106,8 @@ fn connect(pipe_path: &str) -> Result<HANDLE, IpcClientError> {
 }
 
 fn set_message_read_mode(pipe: HANDLE) -> Result<(), IpcClientError> {
-    let mut mode = PIPE_READMODE_MESSAGE;
-    let mode_ok = unsafe { SetNamedPipeHandleState(pipe, &mut mode, null_mut(), null_mut()) };
+    let mode = PIPE_READMODE_MESSAGE;
+    let mode_ok = unsafe { SetNamedPipeHandleState(pipe, &mode, null_mut(), null_mut()) };
     if mode_ok != 0 {
         return Ok(());
     }
