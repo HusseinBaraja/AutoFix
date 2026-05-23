@@ -1,4 +1,5 @@
 using AutoFix.SettingsUi.Settings;
+using System.Windows.Input;
 
 namespace AutoFix.SettingsUi.Tests;
 
@@ -21,5 +22,11 @@ public sealed class HotkeyFormatterTests
     public void IsValidAllowsDistinctModifiers()
     {
         Assert.IsTrue(HotkeyFormatter.IsValid("Ctrl+Alt+Shift+Win+A"));
+    }
+
+    [TestMethod]
+    public void FormatReturnsEmptyForUnsupportedKey()
+    {
+        Assert.AreEqual("", HotkeyFormatter.Format(Key.OemPlus, ModifierKeys.Control));
     }
 }

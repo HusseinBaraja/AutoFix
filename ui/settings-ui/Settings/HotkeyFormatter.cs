@@ -35,7 +35,13 @@ public static class HotkeyFormatter
             return "";
         }
 
-        parts.Add(KeyName(key));
+        var keyName = KeyName(key);
+        if (keyName.Length == 0)
+        {
+            return "";
+        }
+
+        parts.Add(keyName);
         return string.Join("+", parts);
     }
 
