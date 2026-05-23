@@ -1,8 +1,12 @@
 use std::path::PathBuf;
 
-use crate::settings::{save_config, AppConfig, CorrectionEngine, CorrectionMode, ValidateConfig};
+use crate::{
+    settings::{save_config, AppConfig, CorrectionEngine, CorrectionMode, ValidateConfig},
+    storage::{AppRule, Database},
+};
 
 use super::protocol::{
+    AppRuleDeletedResponse, AppRuleRequest, AppRuleUpdatedResponse, AppRulesResponse,
     AppStatusResponse, BackgroundRunningResponse, CorrectionEngineResponse, CorrectionModeResponse,
     IpcCorrectionEngine, IpcCorrectionMode, IpcRequest, IpcResponse, LogsResponse,
     SettingUpdatedResponse, TestCorrectionEngineResponse, UndoResponse,
@@ -10,14 +14,21 @@ use super::protocol::{
 
 pub(crate) struct IpcServerState {
     config_path: PathBuf,
+    database_path: PathBuf,
     log_directory: PathBuf,
     config: AppConfig,
 }
 
 impl IpcServerState {
-    pub(crate) fn new(config_path: PathBuf, log_directory: PathBuf, config: AppConfig) -> Self {
+    pub(crate) fn new(
+        config_path: PathBuf,
+        database_path: PathBuf,
+        log_directory: PathBuf,
+        config: AppConfig,
+    ) -> Self {
         Self {
             config_path,
+            database_path,
             log_directory,
             config,
         }
@@ -34,6 +45,10 @@ impl IpcServerState {
             }),
             IpcRequest::ReloadConfig => self.reload_config(),
             IpcRequest::UpdateSetting(update) => self.update_setting(update.path, update.value),
+            IpcRequest::ListAppRules => self.list_app_rules(),
+            IpcRequest::UpsertAppRule(rule) => self.upsert_app_rule(rule),
+            IpcRequest::DeleteAppRule(rule) => self.delete_app_rule(rule),
+            IpcRequest::ResetAppRules => self.reset_app_rules(),
             IpcRequest::OpenLogs => IpcResponse::Logs(LogsResponse {
                 log_directory: self.log_directory.display().to_string(),
                 opened: false,
@@ -51,6 +66,73 @@ impl IpcServerState {
             IpcRequest::IsBackgroundRunning => {
                 IpcResponse::BackgroundRunning(BackgroundRunningResponse { running: true })
             }
+        }
+    }
+
+    fn list_app_rules(&self) -> IpcResponse {
+        self.with_database(|database| {
+            database
+                .app_rules()
+                .list()
+                .map(|rules| {
+                    IpcResponse::AppRules(AppRulesResponse {
+                        rules: rules.into_iter().map(AppRuleRequest::from).collect(),
+                    })
+                })
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    fn upsert_app_rule(&self, rule: AppRuleRequest) -> IpcResponse {
+        if let Err(error) = validate_app_rule_request(&rule) {
+            return IpcResponse::error(error);
+        }
+
+        let response = AppRuleUpdatedResponse {
+            process_name: rule.process_name.clone(),
+            window_title_pattern: rule.window_title_pattern.clone(),
+        };
+        self.with_database(|database| {
+            database
+                .app_rules()
+                .upsert(&rule.into())
+                .map(|_| IpcResponse::AppRuleUpdated(response))
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    fn delete_app_rule(&self, rule: super::protocol::DeleteAppRuleRequest) -> IpcResponse {
+        self.with_database(|database| {
+            database
+                .app_rules()
+                .delete(&rule.process_name, rule.window_title_pattern.as_deref())
+                .map(|deleted| IpcResponse::AppRuleDeleted(AppRuleDeletedResponse { deleted }))
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    fn reset_app_rules(&self) -> IpcResponse {
+        self.with_database(|database| {
+            database
+                .app_rules()
+                .reset_to_defaults()
+                .and_then(|_| database.app_rules().list())
+                .map(|rules| {
+                    IpcResponse::AppRulesReset(AppRulesResponse {
+                        rules: rules.into_iter().map(AppRuleRequest::from).collect(),
+                    })
+                })
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    fn with_database(
+        &self,
+        action: impl FnOnce(&Database) -> Result<IpcResponse, String>,
+    ) -> IpcResponse {
+        match Database::open(&self.database_path).map_err(|error| error.to_string()) {
+            Ok(database) => action(&database).unwrap_or_else(IpcResponse::error),
+            Err(error) => IpcResponse::error(error),
         }
     }
 
@@ -84,6 +166,48 @@ impl IpcServerState {
                 IpcResponse::SettingUpdated(SettingUpdatedResponse { path })
             }
             Err(error) => IpcResponse::error(error),
+        }
+    }
+}
+
+fn validate_app_rule_request(rule: &AppRuleRequest) -> Result<(), String> {
+    if rule.process_name.trim().is_empty() {
+        return Err("process_name must not be empty".to_owned());
+    }
+    if !matches!(rule.list_behavior.as_str(), "allowlist" | "blocklist") {
+        return Err("list_behavior must be allowlist or blocklist".to_owned());
+    }
+    Ok(())
+}
+
+impl From<AppRule> for AppRuleRequest {
+    fn from(value: AppRule) -> Self {
+        Self {
+            process_name: value.process_name,
+            window_title_pattern: value.window_title_pattern,
+            list_behavior: value.list_behavior,
+            manual_shortcut_allowed: value.manual_shortcut_allowed,
+            word_count_trigger_allowed: value.word_count_trigger_allowed,
+            character_trigger_allowed: value.character_trigger_allowed,
+            local_engine_allowed: value.local_engine_allowed,
+            api_engine_allowed: value.api_engine_allowed,
+        }
+    }
+}
+
+impl From<AppRuleRequest> for AppRule {
+    fn from(value: AppRuleRequest) -> Self {
+        Self {
+            process_name: value.process_name.trim().to_owned(),
+            window_title_pattern: value.window_title_pattern.and_then(|pattern| {
+                (!pattern.trim().is_empty()).then(|| pattern.trim().to_owned())
+            }),
+            list_behavior: value.list_behavior,
+            manual_shortcut_allowed: value.manual_shortcut_allowed,
+            word_count_trigger_allowed: value.word_count_trigger_allowed,
+            character_trigger_allowed: value.character_trigger_allowed,
+            local_engine_allowed: value.local_engine_allowed,
+            api_engine_allowed: value.api_engine_allowed,
         }
     }
 }

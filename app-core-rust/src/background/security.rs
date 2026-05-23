@@ -1,5 +1,5 @@
 use crate::{
-    settings::{AppConfig, RunMode},
+    settings::{AppConfig, CorrectionEngine, RunMode},
     storage::{AppRule, Database},
 };
 
@@ -35,6 +35,7 @@ pub(crate) enum BlockReason {
     ElevatedTarget,
     SensitiveAppDefault,
     AppRuleBlocked,
+    EngineBlocked,
     AllowlistRequired,
     UnsupportedTarget,
 }
@@ -90,8 +91,19 @@ pub(crate) fn check_detection(
             target: Some(target),
         };
     }
+    if let Some(rule) =
+        matching_rule.filter(|rule| !engine_allowed(rule, &config.correction.engine))
+    {
+        let _ = rule;
+        return SecurityDecision::Blocked {
+            reason: BlockReason::EngineBlocked,
+            target: Some(target),
+        };
+    }
 
-    let has_allow_rule = matching_rule.is_some_and(|rule| trigger_allowed(rule, trigger));
+    let has_allow_rule = matching_rule.is_some_and(|rule| {
+        trigger_allowed(rule, trigger) && engine_allowed(rule, &config.correction.engine)
+    });
     if matches!(config.general.run_mode, RunMode::Allowlist) && !has_allow_rule {
         return SecurityDecision::Blocked {
             reason: BlockReason::AllowlistRequired,
@@ -132,9 +144,21 @@ impl BlockReason {
             Self::ElevatedTarget => "elevated_target",
             Self::SensitiveAppDefault => "sensitive_app_default",
             Self::AppRuleBlocked => "app_rule_blocked",
+            Self::EngineBlocked => "engine_blocked",
             Self::AllowlistRequired => "allowlist_required",
             Self::UnsupportedTarget => "unsupported_target",
         }
+    }
+}
+
+fn engine_allowed(rule: &AppRule, engine: &CorrectionEngine) -> bool {
+    if rule.list_behavior == "blocklist" {
+        return false;
+    }
+
+    match engine {
+        CorrectionEngine::Local => rule.local_engine_allowed,
+        CorrectionEngine::Api => rule.api_engine_allowed,
     }
 }
 
@@ -280,6 +304,68 @@ fn normalize(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+pub(crate) fn looks_code_like_or_command_like(text: &str) -> bool {
+    let trimmed = text.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    if lower.contains("://")
+        || lower.starts_with("www.")
+        || lower.contains("\\")
+        || lower.contains("~/")
+        || lower.contains("./")
+        || lower.contains("../")
+    {
+        return true;
+    }
+
+    let tokens = trimmed.split_whitespace().collect::<Vec<_>>();
+    if tokens.iter().any(|token| {
+        token.starts_with("--")
+            || (token.starts_with('-') && token.len() > 1)
+            || token.starts_with('/')
+            || token.contains("::")
+            || token.contains("=>")
+            || token.contains("->")
+    }) {
+        return true;
+    }
+
+    if [
+        "git ",
+        "cargo ",
+        "dotnet ",
+        "npm ",
+        "pnpm ",
+        "yarn ",
+        "python ",
+        "pip ",
+        "ssh ",
+        "cd ",
+        "dir ",
+        "ls ",
+        "mkdir ",
+        "rm ",
+        "del ",
+        "copy ",
+        "xcopy ",
+        "robocopy ",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+    {
+        return true;
+    }
+
+    let code_markers = [
+        "{", "}", ";", "==", "!=", "<=", ">=", "&&", "||", "fn ", "let ", "var ", "const ",
+        "public ", "private ", "class ", "using ",
+    ];
+    code_markers.iter().any(|marker| lower.contains(marker))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,6 +410,19 @@ mod tests {
             local_engine_allowed: false,
             api_engine_allowed: false,
             ..allow_rule(process_name)
+        }
+    }
+
+    fn terminal_default_rule(process_name: &str) -> AppRule {
+        AppRule {
+            process_name: process_name.to_owned(),
+            window_title_pattern: None,
+            list_behavior: "allowlist".to_owned(),
+            manual_shortcut_allowed: false,
+            word_count_trigger_allowed: false,
+            character_trigger_allowed: false,
+            local_engine_allowed: true,
+            api_engine_allowed: true,
         }
     }
 
@@ -479,6 +578,78 @@ mod tests {
     }
 
     #[test]
+    fn engine_blocked_when_matching_rule_disallows_selected_engine() {
+        let mut config = AppConfig::default();
+        config.correction.engine = CorrectionEngine::Api;
+        let mut rule = allow_rule("notepad.exe");
+        rule.api_engine_allowed = false;
+
+        assert!(matches!(
+            check(&config, &[rule], target("notepad.exe")),
+            SecurityDecision::Blocked {
+                reason: BlockReason::EngineBlocked,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn allowlist_mode_requires_engine_allowed() {
+        let mut config = AppConfig::default();
+        config.general.run_mode = RunMode::Allowlist;
+        config.correction.engine = CorrectionEngine::Api;
+        let mut rule = allow_rule("notepad.exe");
+        rule.api_engine_allowed = false;
+
+        assert!(matches!(
+            check(&config, &[rule], target("notepad.exe")),
+            SecurityDecision::Blocked {
+                reason: BlockReason::EngineBlocked,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn terminal_default_rule_blocks_manual_and_automatic_triggers() {
+        let rule = terminal_default_rule("cmd.exe");
+        for trigger in [
+            TriggerKind::ManualShortcut,
+            TriggerKind::WordCount,
+            TriggerKind::Character,
+        ] {
+            assert!(matches!(
+                check_detection(
+                    trigger,
+                    &AppConfig::default(),
+                    std::slice::from_ref(&rule),
+                    TargetDetection::Available(target("cmd.exe"))
+                ),
+                SecurityDecision::Blocked {
+                    reason: BlockReason::AppRuleBlocked,
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn explicit_terminal_rule_can_enable_manual_shortcut() {
+        let mut rule = terminal_default_rule("cmd.exe");
+        rule.manual_shortcut_allowed = true;
+
+        assert!(matches!(
+            check_detection(
+                TriggerKind::ManualShortcut,
+                &AppConfig::default(),
+                &[rule],
+                TargetDetection::Available(target("cmd.exe"))
+            ),
+            SecurityDecision::Allowed { .. }
+        ));
+    }
+
+    #[test]
     fn every_trigger_uses_same_policy_entrypoint() {
         for trigger in [
             TriggerKind::ManualShortcut,
@@ -526,5 +697,16 @@ mod tests {
         rule.window_title_pattern = Some("admin".to_owned());
 
         assert!(matching_rule(&[rule], &target).is_some());
+    }
+
+    #[test]
+    fn code_like_heuristic_detects_commands_paths_urls_and_syntax() {
+        assert!(looks_code_like_or_command_like("git commit -m fix"));
+        assert!(looks_code_like_or_command_like(r"C:\Users\me\file.txt"));
+        assert!(looks_code_like_or_command_like("https://example.test/path"));
+        assert!(looks_code_like_or_command_like("let value = foo::bar();"));
+        assert!(!looks_code_like_or_command_like(
+            "Please correct this sentence."
+        ));
     }
 }

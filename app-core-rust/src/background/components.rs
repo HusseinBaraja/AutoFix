@@ -25,6 +25,7 @@ impl NamedPipeIpcServer {
 
         let state = IpcServerState::new(
             paths.config_path().to_path_buf(),
+            paths.database_path().to_path_buf(),
             paths.log_directory().to_path_buf(),
             config.clone(),
         );

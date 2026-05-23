@@ -9,8 +9,8 @@ use serde_json::json;
 
 use crate::{
     ipc::{
-        send_request, IpcClientError, IpcRequest, IpcResponse, IpcServerState, NamedPipeIpcServer,
-        UpdateSettingRequest, PIPE_NAME,
+        send_request, AppRuleRequest, DeleteAppRuleRequest, IpcClientError, IpcRequest,
+        IpcResponse, IpcServerState, NamedPipeIpcServer, UpdateSettingRequest, PIPE_NAME,
     },
     settings::{save_config, AppConfig, CorrectionEngine, CorrectionMode},
 };
@@ -108,6 +108,61 @@ fn reloads_config_from_disk() {
 }
 
 #[test]
+fn lists_upserts_and_deletes_app_rules() {
+    let fixture = IpcFixture::start();
+    let rule = AppRuleRequest {
+        process_name: "word.exe".to_owned(),
+        window_title_pattern: Some("*admin*".to_owned()),
+        list_behavior: "blocklist".to_owned(),
+        manual_shortcut_allowed: false,
+        word_count_trigger_allowed: false,
+        character_trigger_allowed: false,
+        local_engine_allowed: false,
+        api_engine_allowed: false,
+    };
+
+    let upserted =
+        send_request(&fixture.pipe_path, &IpcRequest::UpsertAppRule(rule.clone())).unwrap();
+    assert!(matches!(upserted, IpcResponse::AppRuleUpdated(_)));
+
+    let listed = send_request(&fixture.pipe_path, &IpcRequest::ListAppRules).unwrap();
+    match listed {
+        IpcResponse::AppRules(response) => assert!(response.rules.contains(&rule)),
+        other => panic!("unexpected response: {other:?}"),
+    }
+
+    let deleted = send_request(
+        &fixture.pipe_path,
+        &IpcRequest::DeleteAppRule(DeleteAppRuleRequest {
+            process_name: "word.exe".to_owned(),
+            window_title_pattern: Some("*admin*".to_owned()),
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        deleted,
+        IpcResponse::AppRuleDeleted(crate::ipc::AppRuleDeletedResponse { deleted: true })
+    );
+}
+
+#[test]
+fn resets_app_rules_to_seed_defaults() {
+    let fixture = IpcFixture::start();
+
+    let response = send_request(&fixture.pipe_path, &IpcRequest::ResetAppRules).unwrap();
+
+    match response {
+        IpcResponse::AppRulesReset(response) => {
+            assert!(response
+                .rules
+                .iter()
+                .any(|rule| rule.process_name == "cmd.exe"));
+        }
+        other => panic!("unexpected response: {other:?}"),
+    }
+}
+
+#[test]
 fn unavailable_pipe_returns_background_unavailable() {
     let missing_pipe = format!("{}-missing", pipe_path_for_process(PIPE_NAME));
 
@@ -128,10 +183,15 @@ impl IpcFixture {
         let root = unique_temp_dir();
         fs::create_dir_all(&root).unwrap();
         let config_path = root.join("settings.toml");
+        let database_path = root.join("autofix.sqlite");
         save_config(&config_path, &AppConfig::default()).unwrap();
         let pipe_path = format!("{}-{}", pipe_path_for_process(PIPE_NAME), unique_suffix());
-        let state =
-            IpcServerState::new(config_path.clone(), root.join("logs"), AppConfig::default());
+        let state = IpcServerState::new(
+            config_path.clone(),
+            database_path.clone(),
+            root.join("logs"),
+            AppConfig::default(),
+        );
         let server = NamedPipeIpcServer::start_for_path(pipe_path.clone(), state);
 
         Self {

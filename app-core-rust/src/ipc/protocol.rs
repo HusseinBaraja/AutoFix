@@ -22,6 +22,10 @@ pub(crate) enum IpcRequest {
     GetCurrentEngine,
     ReloadConfig,
     UpdateSetting(UpdateSettingRequest),
+    ListAppRules,
+    UpsertAppRule(AppRuleRequest),
+    DeleteAppRule(DeleteAppRuleRequest),
+    ResetAppRules,
     OpenLogs,
     RequestUndoLastCorrection,
     TestCorrectionEngineLater,
@@ -34,6 +38,24 @@ pub(crate) struct UpdateSettingRequest {
     pub(crate) value: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct AppRuleRequest {
+    pub(crate) process_name: String,
+    pub(crate) window_title_pattern: Option<String>,
+    pub(crate) list_behavior: String,
+    pub(crate) manual_shortcut_allowed: bool,
+    pub(crate) word_count_trigger_allowed: bool,
+    pub(crate) character_trigger_allowed: bool,
+    pub(crate) local_engine_allowed: bool,
+    pub(crate) api_engine_allowed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct DeleteAppRuleRequest {
+    pub(crate) process_name: String,
+    pub(crate) window_title_pattern: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub(crate) enum IpcResponse {
@@ -42,6 +64,10 @@ pub(crate) enum IpcResponse {
     CurrentEngine(CorrectionEngineResponse),
     ConfigReloaded(AppStatusResponse),
     SettingUpdated(SettingUpdatedResponse),
+    AppRules(AppRulesResponse),
+    AppRuleUpdated(AppRuleUpdatedResponse),
+    AppRuleDeleted(AppRuleDeletedResponse),
+    AppRulesReset(AppRulesResponse),
     Logs(LogsResponse),
     UndoRequested(UndoResponse),
     TestCorrectionEngineQueued(TestCorrectionEngineResponse),
@@ -69,6 +95,22 @@ pub(crate) struct CorrectionEngineResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct SettingUpdatedResponse {
     pub(crate) path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct AppRulesResponse {
+    pub(crate) rules: Vec<AppRuleRequest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct AppRuleUpdatedResponse {
+    pub(crate) process_name: String,
+    pub(crate) window_title_pattern: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct AppRuleDeletedResponse {
+    pub(crate) deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
