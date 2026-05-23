@@ -1,11 +1,18 @@
 mod admin;
 mod components;
+mod message_loop;
 mod paths;
+mod shortcuts;
 #[cfg(test)]
 mod tests;
 mod tray;
 
-use std::{error::Error, fmt, fs, path::Path};
+use std::{
+    error::Error,
+    fmt, fs,
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
 use crate::{
     settings::{save_config, AppConfig},
@@ -14,11 +21,9 @@ use crate::{
 
 use self::{
     admin::reject_elevated_process,
-    components::{
-        CorrectionEngineRouter, GlobalShortcutListener, NamedPipeIpcServer, ReplacementEngine,
-        SessionManager,
-    },
+    components::{CorrectionEngineRouter, NamedPipeIpcServer, ReplacementEngine, SessionManager},
     paths::RuntimePaths,
+    shortcuts::{GlobalShortcutListener, ShortcutAction},
     tray::TrayIcon,
 };
 
@@ -28,6 +33,8 @@ pub(crate) struct BackgroundRuntime {
 }
 
 struct RuntimeComponents {
+    config_path: PathBuf,
+    config_modified_at: Option<SystemTime>,
     tray_icon: TrayIcon,
     ipc_server: NamedPipeIpcServer,
     global_shortcut: GlobalShortcutListener,
@@ -111,6 +118,8 @@ impl RuntimeComponents {
     fn start(config: &AppConfig, paths: &RuntimePaths) -> Result<Self, BackgroundError> {
         Ok(Self {
             tray_icon: TrayIcon::initialize(config, paths),
+            config_path: paths.config_path().to_path_buf(),
+            config_modified_at: modified_at(paths.config_path()),
             ipc_server: NamedPipeIpcServer::initialize(config, paths)?,
             global_shortcut: GlobalShortcutListener::initialize(config),
             session_manager: SessionManager::initialize(),
@@ -129,47 +138,72 @@ impl RuntimeComponents {
     }
 
     fn run_until_exit(&mut self) {
-        message_loop::run_until_exit(|| self.tray_icon.process_menu_events());
+        message_loop::run_until_exit(|event| {
+            match event {
+                message_loop::MessageLoopEvent::Hotkey(id) => self.process_shortcut(id),
+                message_loop::MessageLoopEvent::Poll => {}
+                message_loop::MessageLoopEvent::Tick => self.reload_shortcuts_if_config_changed(),
+            }
+
+            self.tray_icon.process_menu_events()
+        });
+    }
+
+    fn process_shortcut(&mut self, id: usize) {
+        match GlobalShortcutListener::action_for_id(id) {
+            Some(ShortcutAction::Correct) => {
+                if self.correction_shortcut_enabled() {
+                    tracing::info!("correction pipeline placeholder triggered by shortcut");
+                } else {
+                    tracing::info!("correction shortcut ignored because context is blocked");
+                }
+            }
+            Some(ShortcutAction::Undo) => {
+                tracing::info!("undo pipeline placeholder triggered by shortcut");
+            }
+            None => {}
+        }
+    }
+
+    fn correction_shortcut_enabled(&self) -> bool {
+        !self.is_app_blocked_by_rules()
+            && !self.is_secure_or_password_field_focused()
+            && !self.is_focused_context_unsupported()
+    }
+
+    fn is_app_blocked_by_rules(&self) -> bool {
+        false
+    }
+
+    fn is_secure_or_password_field_focused(&self) -> bool {
+        false
+    }
+
+    fn is_focused_context_unsupported(&self) -> bool {
+        false
+    }
+
+    fn reload_shortcuts_if_config_changed(&mut self) {
+        let modified_at = modified_at(&self.config_path);
+        if modified_at == self.config_modified_at {
+            return;
+        }
+
+        self.config_modified_at = modified_at;
+        match crate::settings::load_config(&self.config_path) {
+            Ok(config) => {
+                if shortcuts::detect_conflict(&config) {
+                    tracing::warn!("shortcut conflict detected while reloading config");
+                }
+                self.global_shortcut.reload(&config);
+            }
+            Err(error) => tracing::warn!("failed to reload shortcuts from config: {}", error),
+        }
     }
 }
 
 fn initialize_logging() {
     let _ = tracing_subscriber::fmt().with_target(false).try_init();
-}
-
-#[cfg(windows)]
-mod message_loop {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        DispatchMessageW, GetMessageW, PostQuitMessage, TranslateMessage, MSG,
-    };
-
-    pub(super) fn run_until_exit(mut should_exit: impl FnMut() -> bool) {
-        unsafe {
-            let mut message = std::mem::zeroed::<MSG>();
-            loop {
-                let result = GetMessageW(&mut message, std::ptr::null_mut(), 0, 0);
-                if result <= 0 {
-                    break;
-                }
-
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
-
-                if should_exit() {
-                    PostQuitMessage(0);
-                }
-            }
-        }
-    }
-}
-
-#[cfg(not(windows))]
-mod message_loop {
-    pub(super) fn run_until_exit(mut should_exit: impl FnMut() -> bool) {
-        while !should_exit() {
-            std::thread::sleep(std::time::Duration::from_millis(250));
-        }
-    }
 }
 
 fn ensure_parent_directory(path: &Path) -> Result<(), BackgroundError> {
@@ -191,4 +225,10 @@ fn load_or_create_config(path: &Path) -> Result<AppConfig, BackgroundError> {
     }
 
     crate::settings::load_config(path).map_err(BackgroundError::Config)
+}
+
+fn modified_at(path: &Path) -> Option<SystemTime> {
+    path.metadata()
+        .and_then(|metadata| metadata.modified())
+        .ok()
 }

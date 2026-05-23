@@ -225,8 +225,40 @@ public sealed partial class MainWindowViewModel
             or nameof(SettingCardViewModel.Hotkey)
             or nameof(SettingCardViewModel.TextValue))
         {
+            if (args.PropertyName == nameof(SettingCardViewModel.Hotkey))
+            {
+                ValidateHotkeyConflicts();
+            }
+
             IsDirty = true;
             _ = SaveSettingsAsync();
+        }
+    }
+
+    internal void ValidateHotkeyConflicts()
+    {
+        var hotkeys = Sections
+            .SelectMany(section => section.Settings)
+            .Where(setting => setting.IsHotkey)
+            .ToList();
+
+        foreach (var setting in hotkeys)
+        {
+            setting.HotkeyConflictMessage = "";
+        }
+
+        for (var i = 0; i < hotkeys.Count; i++)
+        {
+            for (var j = i + 1; j < hotkeys.Count; j++)
+            {
+                if (!HotkeyFormatter.Conflicts(hotkeys[i].Hotkey, hotkeys[j].Hotkey))
+                {
+                    continue;
+                }
+
+                hotkeys[i].HotkeyConflictMessage = $"Conflicts with: {hotkeys[j].Title}";
+                hotkeys[j].HotkeyConflictMessage = $"Conflicts with: {hotkeys[i].Title}";
+            }
         }
     }
 

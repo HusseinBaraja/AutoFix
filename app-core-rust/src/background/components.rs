@@ -7,7 +7,6 @@ use crate::{
 };
 
 pub(crate) struct NamedPipeIpcServer(crate::ipc::NamedPipeIpcServer);
-pub(crate) struct GlobalShortcutListener;
 pub(crate) struct SessionManager;
 pub(crate) struct CorrectionEngineRouter;
 pub(crate) struct ReplacementEngine;
@@ -36,17 +35,6 @@ impl NamedPipeIpcServer {
     pub(crate) fn shutdown(self) {
         self.0.shutdown();
         tracing::info!("named pipe IPC server shut down");
-    }
-}
-
-impl GlobalShortcutListener {
-    pub(crate) fn initialize(_config: &AppConfig) -> Self {
-        tracing::info!("global shortcut placeholder initialized");
-        Self
-    }
-
-    pub(crate) fn shutdown(self) {
-        tracing::info!("global shortcut placeholder shut down");
     }
 }
 

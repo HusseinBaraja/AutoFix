@@ -108,9 +108,9 @@ public sealed class SettingsUiResourceTests
         var columnWidth = window
             .Descendants(Presentation + "ColumnDefinition")
             .Select(column => (string?)column.Attribute("Width"))
-            .Single(width => width == "280");
+            .Single(width => width == "320");
 
-        Assert.AreEqual("280", columnWidth);
+        Assert.AreEqual("320", columnWidth);
         Assert.IsFalse(window
             .Descendants()
             .Any(element => ((string?)element.Attribute("Width")) == "250"));
@@ -207,6 +207,78 @@ public sealed class SettingsUiResourceTests
         AssertStyleTriggerSets(rowStyle, "IsKeyboardFocusWithin", "BorderBrush");
         AssertStyleSetter(rowStyle, "BorderThickness", "1");
         AssertStyleTriggerDoesNotSet(rowStyle, "IsKeyboardFocusWithin", "BorderThickness");
+    }
+
+    [TestMethod]
+    public void HotkeyRecorderResourcesExist()
+    {
+        var recorder = LoadXaml("Resources", "HotkeyRecorder.xaml");
+        var window = LoadXaml("MainWindow.xaml");
+
+        Assert.IsTrue(recorder
+            .Descendants(Presentation + "Style")
+            .Any(style => (string?)style.Attribute(Xaml + "Key") == "HotkeyRecorderWell"));
+        Assert.IsTrue(recorder
+            .Descendants(Presentation + "Style")
+            .Any(style => (string?)style.Attribute(Xaml + "Key") == "HotkeyConflictWarning"));
+        Assert.IsTrue(recorder
+            .Descendants(Presentation + "Style")
+            .Any(style => (string?)style.Attribute(Xaml + "Key") == "KeycapPill"));
+        Assert.IsTrue(recorder
+            .Descendants(Presentation + "Style")
+            .Any(style => (string?)style.Attribute(Xaml + "Key") == "HotkeyClearButton"));
+        Assert.IsTrue(recorder
+            .Descendants(Presentation + "Style")
+            .Any(style => (string?)style.Attribute(Xaml + "Key") == "HotkeyDefaultLink"));
+        Assert.IsTrue(window
+            .Descendants(Presentation + "ResourceDictionary")
+            .Any(dictionary => (string?)dictionary.Attribute("Source") == "Resources/HotkeyRecorder.xaml"));
+    }
+
+    [TestMethod]
+    public void HotkeyRecorderUIElementsExistInWindow()
+    {
+        var window = LoadXaml("MainWindow.xaml");
+
+        Assert.IsTrue(window
+            .Descendants(Presentation + "Border")
+            .Any(border => (string?)border.Attribute("Style") == "{StaticResource HotkeyRecorderWell}"));
+        Assert.IsTrue(window
+            .Descendants(Presentation + "Border")
+            .Any(border => (string?)border.Attribute("Style") == "{StaticResource HotkeyConflictWarning}"));
+        Assert.IsTrue(window
+            .Descendants(Presentation + "TextBlock")
+            .Any(text => ((string?)text.Attribute("Text"))?.Contains("Recording") == true));
+        Assert.AreEqual("Window_Deactivated", (string?)window.Attribute("Deactivated"));
+    }
+
+    [TestMethod]
+    public void HotkeyPillsDoNotBindItemsSource()
+    {
+        var window = LoadXaml("MainWindow.xaml");
+        var hotkeyPills = window
+            .Descendants(Presentation + "ItemsControl")
+            .Single(control => (string?)control.Attribute("Loaded") == "HotkeyPills_Loaded");
+
+        Assert.IsNull(hotkeyPills.Attribute("ItemsSource"));
+        Assert.AreEqual("{Binding Hotkey}", (string?)hotkeyPills.Attribute("Tag"));
+    }
+
+    [TestMethod]
+    public void HotkeyPillsLetRecorderWellReceiveClicks()
+    {
+        var window = LoadXaml("MainWindow.xaml");
+        var hotkeyPills = window
+            .Descendants(Presentation + "ItemsControl")
+            .Single(control => (string?)control.Attribute("Loaded") == "HotkeyPills_Loaded");
+        var hotkeyButtons = window
+            .Descendants(Presentation + "Button")
+            .Where(button => (string?)button.Attribute("Style") is "{StaticResource HotkeyClearButton}" or "{StaticResource HotkeyDefaultLink}")
+            .ToList();
+
+        Assert.AreEqual("False", (string?)hotkeyPills.Attribute("IsHitTestVisible"));
+        Assert.IsTrue(hotkeyButtons.Count > 0);
+        Assert.IsTrue(hotkeyButtons.All(button => button.Attribute("IsHitTestVisible") is null));
     }
 
     private static void AssertTriggerTargets(

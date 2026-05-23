@@ -173,4 +173,23 @@ public sealed class SettingsSkeletonTests
             .SelectMany(section => section.Settings)
             .Any(setting => setting.IsBackgroundStatus));
     }
+
+    [TestMethod]
+    public void HotkeySettingsCarryDefaultValue()
+    {
+        var sections = SettingsSkeleton.CreateSections();
+
+        var hotkeys = sections
+            .SelectMany(section => section.Settings)
+            .Where(setting => setting.IsHotkey)
+            .ToList();
+
+        Assert.IsTrue(hotkeys.Count > 0, "Expected at least one hotkey setting");
+        foreach (var hotkey in hotkeys)
+        {
+            Assert.IsFalse(
+                string.IsNullOrWhiteSpace(hotkey.DefaultHotkey),
+                $"{hotkey.Path} should have a non-empty DefaultHotkey");
+        }
+    }
 }

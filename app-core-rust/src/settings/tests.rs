@@ -141,6 +141,26 @@ fn rejects_invalid_confidence_behavior() {
 }
 
 #[test]
+fn rejects_invalid_shortcut() {
+    let mut config = AppConfig::default();
+    config.shortcuts.correct = "Space".to_owned();
+
+    let error = config.validate().unwrap_err();
+
+    assert_eq!(error.field(), "shortcuts.correct");
+}
+
+#[test]
+fn rejects_conflicting_shortcuts() {
+    let mut config = AppConfig::default();
+    config.shortcuts.undo = config.shortcuts.correct.clone();
+
+    let error = config.validate().unwrap_err();
+
+    assert_eq!(error.field(), "shortcuts.undo");
+}
+
+#[test]
 fn rejects_streaming_correction() {
     let mut config = AppConfig::default();
     config.api.streaming = true;
