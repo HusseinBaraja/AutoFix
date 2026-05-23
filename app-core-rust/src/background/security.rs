@@ -304,7 +304,8 @@ fn normalize(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
-pub(crate) fn looks_code_like_or_command_like(text: &str) -> bool {
+#[cfg(test)]
+fn looks_code_like_or_command_like(text: &str) -> bool {
     let trimmed = text.trim();
     let lower = trimmed.to_ascii_lowercase();
     if trimmed.is_empty() {
