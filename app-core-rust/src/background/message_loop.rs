@@ -38,7 +38,7 @@ mod native {
                     continue;
                 }
                 if message.message == WM_TIMER
-                    && message.wParam == RELOAD_TIMER_ID
+                    && message.wParam == timer_id
                     && process_event(MessageLoopEvent::Tick)
                 {
                     PostQuitMessage(0);
