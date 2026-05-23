@@ -3,6 +3,7 @@ mod components;
 mod message_loop;
 mod paths;
 mod shortcuts;
+mod target;
 #[cfg(test)]
 mod tests;
 mod tray;
@@ -166,20 +167,65 @@ impl RuntimeComponents {
     }
 
     fn correction_shortcut_enabled(&self) -> bool {
-        !self.is_app_blocked_by_rules()
-            && !self.is_secure_or_password_field_focused()
-            && !self.is_focused_context_unsupported()
+        if self.is_app_blocked_by_rules() {
+            return false;
+        }
+
+        let detection = target::detect_focused_target();
+        match (&detection, detection.correction_eligibility()) {
+            (
+                target::TargetDetection::Available(focused_target),
+                target::CorrectionEligibility::Allowed,
+            ) => {
+                let session_key = focused_target.session_key();
+                tracing::debug!(
+                    process_name = %focused_target.process_name,
+                    process_id = focused_target.process_id,
+                    session_key_kind = session_key_kind(&session_key),
+                    "correction target allowed"
+                );
+                true
+            }
+            (
+                target::TargetDetection::Available(focused_target),
+                target::CorrectionEligibility::BlockedElevated,
+            ) => {
+                let session_key = focused_target.session_key();
+                tracing::info!(
+                    process_name = %focused_target.process_name,
+                    process_id = focused_target.process_id,
+                    session_key_kind = session_key_kind(&session_key),
+                    block_reason = "elevated_target",
+                    "correction target blocked"
+                );
+                false
+            }
+            (
+                target::TargetDetection::Available(focused_target),
+                target::CorrectionEligibility::BlockedProtectedField,
+            ) => {
+                let session_key = focused_target.session_key();
+                tracing::info!(
+                    process_name = %focused_target.process_name,
+                    process_id = focused_target.process_id,
+                    session_key_kind = session_key_kind(&session_key),
+                    block_reason = "protected_field",
+                    "correction target blocked"
+                );
+                false
+            }
+            (target::TargetDetection::Unsupported, _)
+            | (_, target::CorrectionEligibility::Unsupported) => {
+                tracing::info!(
+                    block_reason = "unsupported_target",
+                    "correction target blocked"
+                );
+                false
+            }
+        }
     }
 
     fn is_app_blocked_by_rules(&self) -> bool {
-        false
-    }
-
-    fn is_secure_or_password_field_focused(&self) -> bool {
-        false
-    }
-
-    fn is_focused_context_unsupported(&self) -> bool {
         false
     }
 
@@ -231,4 +277,13 @@ fn modified_at(path: &Path) -> Option<SystemTime> {
     path.metadata()
         .and_then(|metadata| metadata.modified())
         .ok()
+}
+
+fn session_key_kind(session_key: &target::SessionKey) -> &'static str {
+    match session_key {
+        target::SessionKey::FocusedElement(_) => "focused_element",
+        target::SessionKey::WindowHandle(_) => "window_handle",
+        target::SessionKey::ProcessTitle { .. } => "process_title",
+        target::SessionKey::TemporaryActiveSession => "temporary_active_session",
+    }
 }

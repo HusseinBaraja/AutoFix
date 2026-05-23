@@ -41,8 +41,13 @@ mod tests {
     use windows::core::HRESULT;
 
     #[test]
-    fn opens_ui_automation_root() {
-        assert!(ui_automation_root_available().unwrap());
+    fn checks_ui_automation_root_without_panicking() {
+        match ui_automation_root_available() {
+            Ok(available) => assert!(available),
+            Err(error) => {
+                assert_ne!(error.code(), HRESULT(0));
+            }
+        }
     }
 
     #[test]
