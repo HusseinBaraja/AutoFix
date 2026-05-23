@@ -290,9 +290,7 @@ fn focused_element_context() -> Option<FocusedElementContext> {
 }
 
 fn accept_com_initialization(initialization_result: windows::core::HRESULT) -> bool {
-    initialization_result == S_OK
-        || initialization_result == S_FALSE
-        || initialization_result.is_ok()
+    initialization_result == S_OK || initialization_result == S_FALSE
 }
 
 fn runtime_id(element: &windows::Win32::UI::Accessibility::IUIAutomationElement) -> Option<String> {
@@ -357,6 +355,7 @@ fn safe_array_i32_values(safe_array: *mut SAFEARRAY) -> Option<Vec<i32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::core::HRESULT;
 
     fn normal_target() -> FocusedTarget {
         FocusedTarget {
@@ -464,5 +463,16 @@ mod tests {
             session_key_for(Some(&element_id), Some(123), Some(42), Some("Notes")),
             SessionKey::FocusedElement("automation:Editor".to_owned())
         );
+    }
+
+    #[test]
+    fn com_initialization_accepts_known_success_results() {
+        assert!(accept_com_initialization(S_OK));
+        assert!(accept_com_initialization(S_FALSE));
+    }
+
+    #[test]
+    fn com_initialization_rejects_unexpected_success_result() {
+        assert!(!accept_com_initialization(HRESULT(2)));
     }
 }
