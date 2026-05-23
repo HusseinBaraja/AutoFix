@@ -1,6 +1,9 @@
 use rusqlite::{params, Connection, Result};
 
-use super::types::{AppRule, CustomDictionaryEntry, LanguageOverride, LearnedCorrectionRule};
+use super::{
+    migrations,
+    types::{AppRule, CustomDictionaryEntry, LanguageOverride, LearnedCorrectionRule},
+};
 
 pub(crate) struct AppRuleRepository<'a> {
     connection: &'a Connection,
@@ -65,6 +68,30 @@ impl<'a> AppRuleRepository<'a> {
             })
         })?;
         rows.collect()
+    }
+
+    pub(crate) fn delete(
+        &self,
+        process_name: &str,
+        window_title_pattern: Option<&str>,
+    ) -> Result<bool> {
+        let affected = self.connection.execute(
+            "
+            delete from app_rules
+            where lower(process_name) = lower(?1)
+              and (
+                  window_title_pattern is ?2
+                  or window_title_pattern = ?2
+              )
+            ",
+            params![process_name, window_title_pattern],
+        )?;
+        Ok(affected > 0)
+    }
+
+    pub(crate) fn reset_to_defaults(&self) -> Result<()> {
+        self.connection.execute("delete from app_rules", [])?;
+        migrations::seed_default_app_rules(self.connection)
     }
 }
 

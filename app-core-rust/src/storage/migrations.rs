@@ -1,6 +1,103 @@
 use rusqlite::{Connection, Result};
 
-pub(super) const CURRENT_SCHEMA_VERSION: i64 = 2;
+pub(super) const CURRENT_SCHEMA_VERSION: i64 = 3;
+
+pub(super) struct DefaultAppRule {
+    pub(super) process_name: &'static str,
+    pub(super) window_title_pattern: Option<&'static str>,
+    pub(super) list_behavior: &'static str,
+    pub(super) manual_shortcut_allowed: bool,
+    pub(super) word_count_trigger_allowed: bool,
+    pub(super) character_trigger_allowed: bool,
+    pub(super) local_engine_allowed: bool,
+    pub(super) api_engine_allowed: bool,
+}
+
+pub(super) const DEFAULT_APP_RULES: &[DefaultAppRule] = &[
+    terminal_rule("cmd.exe"),
+    terminal_rule("powershell.exe"),
+    terminal_rule("pwsh.exe"),
+    terminal_rule("windowsterminal.exe"),
+    terminal_rule("wt.exe"),
+    terminal_rule("conhost.exe"),
+    editor_rule("code.exe"),
+    editor_rule("code-insiders.exe"),
+    editor_rule("devenv.exe"),
+    editor_rule("rider64.exe"),
+    editor_rule("idea64.exe"),
+    editor_rule("pycharm64.exe"),
+    editor_rule("webstorm64.exe"),
+    editor_rule("clion64.exe"),
+    editor_rule("notepad++.exe"),
+    editor_rule("sublime_text.exe"),
+    editor_rule("vim.exe"),
+    editor_rule("nvim.exe"),
+    block_all_rule("mstsc.exe"),
+    block_all_rule("vmconnect.exe"),
+    block_all_rule("vmware.exe"),
+    block_all_rule("vmware-vmx.exe"),
+    block_all_rule("VirtualBoxVM.exe"),
+    block_all_rule("TeamViewer.exe"),
+    block_all_rule("AnyDesk.exe"),
+    block_all_rule("steam.exe"),
+    block_all_rule("epicgameslauncher.exe"),
+    block_all_rule("battle.net.exe"),
+    block_all_rule("riotclientservices.exe"),
+    block_all_rule("1Password.exe"),
+    block_all_rule("Bitwarden.exe"),
+    block_all_rule("KeePass.exe"),
+    block_all_rule("KeePassXC.exe"),
+    block_all_rule("LastPass.exe"),
+    block_all_rule("Dashlane.exe"),
+    block_all_rule("NordPass.exe"),
+    block_all_rule("Proton Pass.exe"),
+    block_all_rule("regedit.exe"),
+    block_all_rule("regedt32.exe"),
+    block_all_rule("taskmgr.exe"),
+    block_all_rule("services.exe"),
+    block_all_rule("mmc.exe"),
+    block_all_rule("consent.exe"),
+    block_all_rule("CredentialUI.exe"),
+];
+
+const fn terminal_rule(process_name: &'static str) -> DefaultAppRule {
+    DefaultAppRule {
+        process_name,
+        window_title_pattern: None,
+        list_behavior: "allowlist",
+        manual_shortcut_allowed: false,
+        word_count_trigger_allowed: false,
+        character_trigger_allowed: false,
+        local_engine_allowed: true,
+        api_engine_allowed: true,
+    }
+}
+
+const fn editor_rule(process_name: &'static str) -> DefaultAppRule {
+    DefaultAppRule {
+        process_name,
+        window_title_pattern: None,
+        list_behavior: "allowlist",
+        manual_shortcut_allowed: true,
+        word_count_trigger_allowed: false,
+        character_trigger_allowed: false,
+        local_engine_allowed: true,
+        api_engine_allowed: true,
+    }
+}
+
+const fn block_all_rule(process_name: &'static str) -> DefaultAppRule {
+    DefaultAppRule {
+        process_name,
+        window_title_pattern: None,
+        list_behavior: "blocklist",
+        manual_shortcut_allowed: false,
+        word_count_trigger_allowed: false,
+        character_trigger_allowed: false,
+        local_engine_allowed: false,
+        api_engine_allowed: false,
+    }
+}
 
 pub(super) fn migrate(connection: &Connection) -> Result<()> {
     connection.pragma_update(None, "foreign_keys", "ON")?;
@@ -21,6 +118,37 @@ pub(super) fn migrate(connection: &Connection) -> Result<()> {
     if version < 2 {
         migrate_to_v2(connection)?;
         connection.execute("insert into schema_migrations (version) values (2)", [])?;
+    }
+    if version < 3 {
+        seed_default_app_rules(connection)?;
+        connection.execute("insert into schema_migrations (version) values (3)", [])?;
+    }
+
+    Ok(())
+}
+
+pub(super) fn seed_default_app_rules(connection: &Connection) -> Result<()> {
+    let mut statement = connection.prepare(
+        "
+        insert or ignore into app_rules (
+            process_name, window_title_pattern, list_behavior, manual_shortcut_allowed,
+            word_count_trigger_allowed, character_trigger_allowed, local_engine_allowed,
+            api_engine_allowed
+        ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ",
+    )?;
+
+    for rule in DEFAULT_APP_RULES {
+        statement.execute((
+            rule.process_name,
+            rule.window_title_pattern,
+            rule.list_behavior,
+            rule.manual_shortcut_allowed,
+            rule.word_count_trigger_allowed,
+            rule.character_trigger_allowed,
+            rule.local_engine_allowed,
+            rule.api_engine_allowed,
+        ))?;
     }
 
     Ok(())

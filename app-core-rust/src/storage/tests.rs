@@ -50,7 +50,62 @@ fn stores_and_lists_app_rules() {
 
     database.app_rules().upsert(&rule).unwrap();
 
-    assert_eq!(database.app_rules().list().unwrap(), vec![rule]);
+    assert!(database.app_rules().list().unwrap().contains(&rule));
+}
+
+#[test]
+fn seeds_default_app_rules() {
+    let database = Database::open_memory().unwrap();
+    let rules = database.app_rules().list().unwrap();
+
+    assert!(rules.iter().any(|rule| rule.process_name == "cmd.exe"
+        && !rule.manual_shortcut_allowed
+        && !rule.word_count_trigger_allowed
+        && !rule.character_trigger_allowed));
+    assert!(rules.iter().any(|rule| rule.process_name == "code.exe"
+        && rule.manual_shortcut_allowed
+        && !rule.word_count_trigger_allowed
+        && !rule.character_trigger_allowed));
+    assert!(rules
+        .iter()
+        .any(|rule| rule.process_name == "Bitwarden.exe" && rule.list_behavior == "blocklist"));
+}
+
+#[test]
+fn deletes_app_rules_by_process_and_title_pattern() {
+    let database = Database::open_memory().unwrap();
+    let rule = AppRule {
+        process_name: "word.exe".to_owned(),
+        window_title_pattern: Some("*admin*".to_owned()),
+        list_behavior: "blocklist".to_owned(),
+        manual_shortcut_allowed: false,
+        word_count_trigger_allowed: false,
+        character_trigger_allowed: false,
+        local_engine_allowed: false,
+        api_engine_allowed: false,
+    };
+    database.app_rules().upsert(&rule).unwrap();
+
+    assert!(database
+        .app_rules()
+        .delete("WORD.EXE", Some("*admin*"))
+        .unwrap());
+    assert!(!database.app_rules().list().unwrap().contains(&rule));
+}
+
+#[test]
+fn reset_app_rules_restores_seed_defaults() {
+    let database = Database::open_memory().unwrap();
+    database.app_rules().reset_to_defaults().unwrap();
+    let first_reset = database.app_rules().list().unwrap();
+
+    database.app_rules().reset_to_defaults().unwrap();
+    let second_reset = database.app_rules().list().unwrap();
+
+    assert_eq!(first_reset, second_reset);
+    assert!(first_reset
+        .iter()
+        .any(|rule| rule.process_name == "cmd.exe"));
 }
 
 #[test]
@@ -243,6 +298,21 @@ fn v2_migration_preserves_full_debug_mode() {
                 replacement_method text not null,
                 result_reason text not null,
                 latency_ms integer not null check (latency_ms >= 0)
+            );
+
+            create table app_rules (
+                id integer primary key,
+                process_name text not null,
+                window_title_pattern text,
+                list_behavior text not null check (list_behavior in ('allowlist', 'blocklist')),
+                manual_shortcut_allowed integer not null check (manual_shortcut_allowed in (0, 1)),
+                word_count_trigger_allowed integer not null check (word_count_trigger_allowed in (0, 1)),
+                character_trigger_allowed integer not null check (character_trigger_allowed in (0, 1)),
+                local_engine_allowed integer not null check (local_engine_allowed in (0, 1)),
+                api_engine_allowed integer not null check (api_engine_allowed in (0, 1)),
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp,
+                unique (process_name, window_title_pattern)
             );
 
             create table debug_events (
