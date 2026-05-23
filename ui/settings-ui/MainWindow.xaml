@@ -215,6 +215,7 @@
                                                             <TextBox Opacity="0"
                                                                      IsReadOnly="True"
                                                                      Focusable="True"
+                                                                     Cursor="Hand"
                                                                      Panel.ZIndex="-1"
                                                                      HorizontalAlignment="Stretch"
                                                                      VerticalAlignment="Stretch"
