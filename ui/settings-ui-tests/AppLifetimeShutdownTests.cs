@@ -32,7 +32,31 @@ public sealed class AppLifetimeShutdownTests
     }
 
     [TestMethod]
-    public async Task BackgroundMonitorClosesOnlyAfterBackgroundWasObserved()
+    public async Task RequestShutdownAllDoesNotThrowWhenFallbackLaunchFails()
+    {
+        var ipc = new FakeIpcClient { ShutdownResult = IpcResult<ShutdownAcceptedResponse>.Unavailable() };
+        var helper = new FakeShutdownHelperLauncher { ThrowOnLaunch = true };
+        var shutdown = new AppLifetimeShutdown(ipc, helper);
+
+        await shutdown.RequestShutdownAllAsync();
+
+        Assert.AreEqual(1, helper.Launches);
+    }
+
+    [TestMethod]
+    public async Task RequestShutdownAllUsesFallbackWhenIpcThrows()
+    {
+        var ipc = new FakeIpcClient { ThrowOnShutdown = true };
+        var helper = new FakeShutdownHelperLauncher();
+        var shutdown = new AppLifetimeShutdown(ipc, helper);
+
+        await shutdown.RequestShutdownAllAsync();
+
+        Assert.AreEqual(1, helper.Launches);
+    }
+
+    [TestMethod]
+    public async Task BackgroundMonitorClosesAfterConsecutiveMissesOnlyWhenBackgroundWasObserved()
     {
         var ipc = new FakeIpcClient();
         var monitor = new BackgroundAvailabilityMonitor(ipc);
@@ -44,16 +68,44 @@ public sealed class AppLifetimeShutdownTests
         Assert.IsFalse(await monitor.ShouldCloseSettingsAsync());
 
         ipc.RunningResult = IpcResult<BackgroundRunningResponse>.Unavailable();
+        Assert.IsFalse(await monitor.ShouldCloseSettingsAsync());
+        Assert.IsFalse(await monitor.ShouldCloseSettingsAsync());
         Assert.IsTrue(await monitor.ShouldCloseSettingsAsync());
+    }
+
+    [TestMethod]
+    public async Task BackgroundMonitorResetsMissesAfterSuccessfulPoll()
+    {
+        var ipc = new FakeIpcClient();
+        var monitor = new BackgroundAvailabilityMonitor(ipc);
+
+        ipc.RunningResult = IpcResult<BackgroundRunningResponse>.Ok(new(true));
+        Assert.IsFalse(await monitor.ShouldCloseSettingsAsync());
+
+        ipc.RunningResult = IpcResult<BackgroundRunningResponse>.Unavailable();
+        Assert.IsFalse(await monitor.ShouldCloseSettingsAsync());
+        Assert.IsFalse(await monitor.ShouldCloseSettingsAsync());
+
+        ipc.RunningResult = IpcResult<BackgroundRunningResponse>.Ok(new(true));
+        Assert.IsFalse(await monitor.ShouldCloseSettingsAsync());
+
+        ipc.RunningResult = IpcResult<BackgroundRunningResponse>.Unavailable();
+        Assert.IsFalse(await monitor.ShouldCloseSettingsAsync());
     }
 
     private sealed class FakeShutdownHelperLauncher : IShutdownHelperLauncher
     {
         public int Launches { get; private set; }
+        public bool ThrowOnLaunch { get; init; }
 
         public bool TryLaunchShutdownAll()
         {
             Launches++;
+            if (ThrowOnLaunch)
+            {
+                throw new InvalidOperationException("launch failed");
+            }
+
             return true;
         }
     }
@@ -61,6 +113,7 @@ public sealed class AppLifetimeShutdownTests
     private sealed class FakeIpcClient : IBackgroundIpcClient
     {
         public int ShutdownRequests { get; private set; }
+        public bool ThrowOnShutdown { get; init; }
         public IpcResult<ShutdownAcceptedResponse> ShutdownResult { get; set; } =
             IpcResult<ShutdownAcceptedResponse>.Ok(new(true));
         public IpcResult<BackgroundRunningResponse> RunningResult { get; set; } =
@@ -69,6 +122,11 @@ public sealed class AppLifetimeShutdownTests
         public Task<IpcResult<ShutdownAcceptedResponse>> ShutdownAllAsync()
         {
             ShutdownRequests++;
+            if (ThrowOnShutdown)
+            {
+                throw new InvalidOperationException("shutdown failed");
+            }
+
             return Task.FromResult(ShutdownResult);
         }
 

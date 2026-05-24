@@ -1,3 +1,4 @@
+using System.IO;
 using AutoFix.SettingsUi.Ipc;
 
 namespace AutoFix.SettingsUi.Lifetime;
@@ -15,12 +16,29 @@ public sealed class AppLifetimeShutdown
 
     public async Task RequestShutdownAllAsync()
     {
-        var result = await ipcClient.ShutdownAllAsync().ConfigureAwait(false);
+        IpcResult<ShutdownAcceptedResponse> result;
+        try
+        {
+            result = await ipcClient.ShutdownAllAsync().ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is IOException or TimeoutException or OperationCanceledException or InvalidOperationException)
+        {
+            System.Diagnostics.Debug.WriteLine(error);
+            result = IpcResult<ShutdownAcceptedResponse>.Unavailable();
+        }
+
         if (result is { Available: true, Value.Accepted: true })
         {
             return;
         }
 
-        helperLauncher.TryLaunchShutdownAll();
+        try
+        {
+            helperLauncher.TryLaunchShutdownAll();
+        }
+        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            System.Diagnostics.Debug.WriteLine(error);
+        }
     }
 }
