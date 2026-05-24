@@ -132,7 +132,12 @@ fn is_sibling_autofix_process(process: &ProcessSnapshot, context: &CurrentProces
         && is_path_rooted_in(&process.executable_path, &context.trusted_root)
 }
 
-fn trusted_root_for_executable(executable_path: &Path) -> Option<PathBuf> {
+fn trusted_root_for_executable(executable_path: &Path, manifest_dir: &Path) -> Option<PathBuf> {
+    let workspace_root = manifest_dir.parent().unwrap_or(manifest_dir);
+    if is_path_rooted_in(executable_path, workspace_root) {
+        return Some(workspace_root.to_path_buf());
+    }
+
     executable_path.parent().map(Path::to_path_buf)
 }
 
@@ -210,8 +215,9 @@ mod native {
     pub(super) fn current_process_context() -> Result<CurrentProcessContext, String> {
         let process_id = unsafe { GetCurrentProcessId() };
         let executable_path = std::env::current_exe().map_err(|error| error.to_string())?;
-        let trusted_root = trusted_root_for_executable(&executable_path)
-            .ok_or_else(|| "current executable has no parent directory".to_owned())?;
+        let trusted_root =
+            trusted_root_for_executable(&executable_path, Path::new(env!("CARGO_MANIFEST_DIR")))
+                .ok_or_else(|| "current executable has no parent directory".to_owned())?;
         let owner_sid = owner_sid_for_process(process_id)?;
 
         Ok(CurrentProcessContext {
@@ -523,6 +529,35 @@ mod tests {
         );
 
         assert!(!is_sibling_autofix_process(&process, &context));
+    }
+
+    #[test]
+    fn dev_build_uses_workspace_root_for_settings_ui_matching() {
+        let manifest_dir = PathBuf::from(r"C:\Repo\AutoFix\app-core-rust");
+        let background_exe = PathBuf::from(r"C:\Repo\AutoFix\target\debug\background-engine.exe");
+        let trusted_root = trusted_root_for_executable(&background_exe, &manifest_dir).unwrap();
+        let context = CurrentProcessContext {
+            process_id: 7,
+            owner_sid: "S-1-5-21".to_owned(),
+            trusted_root,
+        };
+        let settings = process(
+            42,
+            "S-1-5-21",
+            "AutoFix.SettingsUi.exe",
+            r"C:\Repo\AutoFix\ui\settings-ui\bin\Debug\net8.0-windows\AutoFix.SettingsUi.exe",
+        );
+
+        assert!(is_sibling_autofix_process(&settings, &context));
+    }
+
+    #[test]
+    fn installed_build_uses_executable_directory_as_trusted_root() {
+        let manifest_dir = PathBuf::from(r"C:\Repo\AutoFix\app-core-rust");
+        let background_exe = PathBuf::from(r"C:\Program Files\AutoFix\background-engine.exe");
+        let trusted_root = trusted_root_for_executable(&background_exe, &manifest_dir).unwrap();
+
+        assert_eq!(trusted_root, PathBuf::from(r"C:\Program Files\AutoFix"));
     }
 
     #[test]
