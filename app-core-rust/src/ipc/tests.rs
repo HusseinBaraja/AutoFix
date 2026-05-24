@@ -1,7 +1,10 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -171,10 +174,21 @@ fn unavailable_pipe_returns_background_unavailable() {
     assert!(matches!(error, IpcClientError::Unavailable));
 }
 
+#[test]
+fn shutdown_all_sets_shared_shutdown_flag() {
+    let fixture = IpcFixture::start();
+
+    let response = send_request(&fixture.pipe_path, &IpcRequest::ShutdownAll).unwrap();
+
+    assert!(matches!(response, IpcResponse::ShutdownAccepted(_)));
+    assert!(fixture.shutdown_requested.load(Ordering::Relaxed));
+}
+
 struct IpcFixture {
     root: PathBuf,
     config_path: PathBuf,
     pipe_path: String,
+    shutdown_requested: Arc<AtomicBool>,
     server: Option<NamedPipeIpcServer>,
 }
 
@@ -186,11 +200,13 @@ impl IpcFixture {
         let database_path = root.join("autofix.sqlite");
         save_config(&config_path, &AppConfig::default()).unwrap();
         let pipe_path = format!("{}-{}", pipe_path_for_process(PIPE_NAME), unique_suffix());
+        let shutdown_requested = Arc::new(AtomicBool::new(false));
         let state = IpcServerState::new(
             config_path.clone(),
             database_path.clone(),
             root.join("logs"),
             AppConfig::default(),
+            Arc::clone(&shutdown_requested),
         );
         let server = NamedPipeIpcServer::start_for_path(pipe_path.clone(), state);
 
@@ -198,6 +214,7 @@ impl IpcFixture {
             root,
             config_path,
             pipe_path,
+            shutdown_requested,
             server: Some(server),
         }
     }

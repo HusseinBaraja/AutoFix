@@ -1,4 +1,10 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use crate::{
     settings::{save_config, AppConfig, CorrectionEngine, CorrectionMode, ValidateConfig},
@@ -9,7 +15,7 @@ use super::protocol::{
     AppRuleDeletedResponse, AppRuleRequest, AppRuleUpdatedResponse, AppRulesResponse,
     AppStatusResponse, BackgroundRunningResponse, CorrectionEngineResponse, CorrectionModeResponse,
     IpcCorrectionEngine, IpcCorrectionMode, IpcRequest, IpcResponse, LogsResponse,
-    SettingUpdatedResponse, TestCorrectionEngineResponse, UndoResponse,
+    SettingUpdatedResponse, ShutdownAcceptedResponse, TestCorrectionEngineResponse, UndoResponse,
 };
 
 pub(crate) struct IpcServerState {
@@ -17,6 +23,7 @@ pub(crate) struct IpcServerState {
     database_path: PathBuf,
     log_directory: PathBuf,
     config: AppConfig,
+    shutdown_requested: Arc<AtomicBool>,
 }
 
 impl IpcServerState {
@@ -25,12 +32,14 @@ impl IpcServerState {
         database_path: PathBuf,
         log_directory: PathBuf,
         config: AppConfig,
+        shutdown_requested: Arc<AtomicBool>,
     ) -> Self {
         Self {
             config_path,
             database_path,
             log_directory,
             config,
+            shutdown_requested,
         }
     }
 
@@ -65,6 +74,10 @@ impl IpcServerState {
             }
             IpcRequest::IsBackgroundRunning => {
                 IpcResponse::BackgroundRunning(BackgroundRunningResponse { running: true })
+            }
+            IpcRequest::ShutdownAll => {
+                self.shutdown_requested.store(true, Ordering::Relaxed);
+                IpcResponse::ShutdownAccepted(ShutdownAcceptedResponse { accepted: true })
             }
         }
     }

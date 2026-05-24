@@ -1,4 +1,7 @@
-use std::fs;
+use std::{
+    fs,
+    sync::{atomic::AtomicBool, Arc},
+};
 
 use crate::{
     background::{paths::RuntimePaths, BackgroundError},
@@ -15,6 +18,7 @@ impl NamedPipeIpcServer {
     pub(crate) fn initialize(
         config: &AppConfig,
         paths: &RuntimePaths,
+        shutdown_requested: Arc<AtomicBool>,
     ) -> Result<Self, BackgroundError> {
         fs::create_dir_all(paths.log_directory()).map_err(|source| {
             BackgroundError::CreateDirectory {
@@ -28,6 +32,7 @@ impl NamedPipeIpcServer {
             paths.database_path().to_path_buf(),
             paths.log_directory().to_path_buf(),
             config.clone(),
+            shutdown_requested,
         );
         tracing::info!("named pipe IPC server initialized");
         Ok(Self(crate::ipc::NamedPipeIpcServer::start(state)))

@@ -30,6 +30,7 @@ pub(crate) enum IpcRequest {
     RequestUndoLastCorrection,
     TestCorrectionEngineLater,
     IsBackgroundRunning,
+    ShutdownAll,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -72,6 +73,7 @@ pub(crate) enum IpcResponse {
     UndoRequested(UndoResponse),
     TestCorrectionEngineQueued(TestCorrectionEngineResponse),
     BackgroundRunning(BackgroundRunningResponse),
+    ShutdownAccepted(ShutdownAcceptedResponse),
     Error(IpcErrorResponse),
 }
 
@@ -134,6 +136,11 @@ pub(crate) struct TestCorrectionEngineResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct BackgroundRunningResponse {
     pub(crate) running: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ShutdownAcceptedResponse {
+    pub(crate) accepted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

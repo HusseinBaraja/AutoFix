@@ -2,18 +2,22 @@ mod admin;
 mod components;
 mod message_loop;
 mod paths;
+mod process_group;
 mod security;
 mod shortcuts;
 mod target;
 #[cfg(test)]
 mod tests;
 mod tray;
-mod tray_exit_shutdown;
 
 use std::{
     error::Error,
     fmt, fs,
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::SystemTime,
 };
 
@@ -26,10 +30,10 @@ use self::{
     admin::reject_elevated_process,
     components::{CorrectionEngineRouter, NamedPipeIpcServer, ReplacementEngine, SessionManager},
     paths::RuntimePaths,
+    process_group::{shutdown_trusted_autofix_process_group, SiblingDisappearanceMonitor},
     security::{SecurityDecision, SecurityGate, TriggerKind},
     shortcuts::{GlobalShortcutListener, ShortcutAction},
     tray::TrayIcon,
-    tray_exit_shutdown::shutdown_sibling_autofix_processes_for_tray_exit,
 };
 
 pub(crate) struct BackgroundRuntime {
@@ -47,7 +51,8 @@ struct RuntimeComponents {
     session_manager: SessionManager,
     correction_engine_router: CorrectionEngineRouter,
     replacement_engine: ReplacementEngine,
-    tray_exit_requested: bool,
+    process_group_monitor: SiblingDisappearanceMonitor,
+    shutdown_requested: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -92,6 +97,11 @@ pub(crate) fn run_background_mode() -> Result<(), BackgroundError> {
     Ok(())
 }
 
+pub(crate) fn shutdown_process_group_mode() {
+    initialize_logging();
+    shutdown_trusted_autofix_process_group();
+}
+
 impl BackgroundRuntime {
     fn start(paths: RuntimePaths) -> Result<Self, BackgroundError> {
         reject_elevated_process()?;
@@ -101,7 +111,8 @@ impl BackgroundRuntime {
 
         let config = load_or_create_config(paths.config_path())?;
         let database = Database::open(paths.database_path()).map_err(BackgroundError::Database)?;
-        let components = RuntimeComponents::start(&config, &paths)?;
+        let shutdown_requested = Arc::new(AtomicBool::new(false));
+        let components = RuntimeComponents::start(&config, &paths, shutdown_requested)?;
 
         tracing::info!("AutoFix background process started");
         Ok(Self {
@@ -111,8 +122,8 @@ impl BackgroundRuntime {
     }
 
     fn shutdown(self) {
-        if self.components.tray_exit_requested {
-            shutdown_sibling_autofix_processes_for_tray_exit();
+        if self.components.shutdown_requested.load(Ordering::Relaxed) {
+            shutdown_trusted_autofix_process_group();
         }
         self.components.shutdown();
         drop(self.database);
@@ -125,18 +136,27 @@ impl BackgroundRuntime {
 }
 
 impl RuntimeComponents {
-    fn start(config: &AppConfig, paths: &RuntimePaths) -> Result<Self, BackgroundError> {
+    fn start(
+        config: &AppConfig,
+        paths: &RuntimePaths,
+        shutdown_requested: Arc<AtomicBool>,
+    ) -> Result<Self, BackgroundError> {
         Ok(Self {
             tray_icon: TrayIcon::initialize(config, paths),
             config_path: paths.config_path().to_path_buf(),
             config_modified_at: modified_at(paths.config_path()),
             config: config.clone(),
-            ipc_server: NamedPipeIpcServer::initialize(config, paths)?,
+            ipc_server: NamedPipeIpcServer::initialize(
+                config,
+                paths,
+                Arc::clone(&shutdown_requested),
+            )?,
             global_shortcut: GlobalShortcutListener::initialize(config),
             session_manager: SessionManager::initialize(),
             correction_engine_router: CorrectionEngineRouter::initialize(config),
             replacement_engine: ReplacementEngine::initialize(),
-            tray_exit_requested: false,
+            process_group_monitor: SiblingDisappearanceMonitor::new(),
+            shutdown_requested,
         })
     }
 
@@ -154,14 +174,19 @@ impl RuntimeComponents {
             match event {
                 message_loop::MessageLoopEvent::Hotkey(id) => self.process_shortcut(id, database),
                 message_loop::MessageLoopEvent::Poll => {}
-                message_loop::MessageLoopEvent::Tick => self.reload_shortcuts_if_config_changed(),
+                message_loop::MessageLoopEvent::Tick => {
+                    self.reload_shortcuts_if_config_changed();
+                    if self.process_group_monitor.shutdown_requested() {
+                        self.shutdown_requested.store(true, Ordering::Relaxed);
+                    }
+                }
             }
 
             let exit_requested = self.tray_icon.process_menu_events();
             if exit_requested {
-                self.tray_exit_requested = true;
+                self.shutdown_requested.store(true, Ordering::Relaxed);
             }
-            exit_requested
+            exit_requested || self.shutdown_requested.load(Ordering::Relaxed)
         });
     }
 

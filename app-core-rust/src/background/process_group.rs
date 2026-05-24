@@ -6,7 +6,7 @@ use std::{
 const ALLOWED_PROCESS_NAMES: [&str; 2] = ["background-engine.exe", "AutoFix.SettingsUi.exe"];
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
 
-pub(crate) fn shutdown_sibling_autofix_processes_for_tray_exit() {
+pub(crate) fn shutdown_trusted_autofix_process_group() {
     match native::current_process_context() {
         Ok(context) => {
             let outcome = shutdown_sibling_processes(&native::RealProcessController, &context);
@@ -17,10 +17,62 @@ pub(crate) fn shutdown_sibling_autofix_processes_for_tray_exit() {
                 force_kill_attempted = outcome.force_kill_attempted,
                 force_kill_succeeded = outcome.force_kill_succeeded,
                 force_kill_failed = outcome.force_kill_failed,
-                "overall tray-exit shutdown completed"
+                "AutoFix process-group shutdown completed"
             );
         }
-        Err(error) => tracing::warn!("tray-exit sibling shutdown skipped: {}", error),
+        Err(error) => tracing::warn!("AutoFix process-group shutdown skipped: {}", error),
+    }
+}
+
+pub(crate) struct SiblingDisappearanceMonitor {
+    observed_sibling_ids: Vec<u32>,
+}
+
+impl SiblingDisappearanceMonitor {
+    pub(crate) fn new() -> Self {
+        Self {
+            observed_sibling_ids: Vec::new(),
+        }
+    }
+
+    pub(crate) fn shutdown_requested(&mut self) -> bool {
+        match native::current_process_context() {
+            Ok(context) => self.shutdown_requested_with(&native::RealProcessController, &context),
+            Err(error) => {
+                tracing::debug!("AutoFix sibling monitor skipped: {}", error);
+                false
+            }
+        }
+    }
+
+    fn shutdown_requested_with(
+        &mut self,
+        controller: &impl ProcessController,
+        context: &CurrentProcessContext,
+    ) -> bool {
+        let sibling_ids = controller
+            .list_processes()
+            .into_iter()
+            .filter(|process| is_sibling_autofix_process(process, context))
+            .map(|process| process.process_id)
+            .collect::<Vec<_>>();
+
+        if self
+            .observed_sibling_ids
+            .iter()
+            .any(|process_id| !sibling_ids.contains(process_id))
+        {
+            tracing::info!("previously observed AutoFix sibling disappeared; shutdown requested");
+            return true;
+        }
+
+        for process_id in sibling_ids {
+            if !self.observed_sibling_ids.contains(&process_id) {
+                self.observed_sibling_ids.push(process_id);
+            }
+        }
+
+        false
     }
 }
 
@@ -462,7 +514,7 @@ mod native {
     }
 
     pub(super) fn current_process_context() -> Result<CurrentProcessContext, String> {
-        Err("tray-exit sibling shutdown is only supported on Windows".to_owned())
+        Err("AutoFix process-group shutdown is only supported on Windows".to_owned())
     }
 }
 
@@ -646,6 +698,52 @@ mod tests {
 
         assert_eq!(outcome.matched, 1);
         assert_eq!(controller.actions(), ["graceful:42", "wait:42"]);
+    }
+
+    #[test]
+    fn sibling_disappearance_monitor_triggers_only_after_seen() {
+        let mut monitor = SiblingDisappearanceMonitor::new();
+        let first = FakeProcessController::new(Vec::new());
+        assert!(!monitor.shutdown_requested_with(&first, &context()));
+
+        let seen = FakeProcessController::new(vec![process(
+            42,
+            "S-1-5-21",
+            "AutoFix.SettingsUi.exe",
+            r"C:\AutoFix\AutoFix.SettingsUi.exe",
+        )]);
+        assert!(!monitor.shutdown_requested_with(&seen, &context()));
+
+        let gone = FakeProcessController::new(Vec::new());
+        assert!(monitor.shutdown_requested_with(&gone, &context()));
+    }
+
+    #[test]
+    fn sibling_disappearance_monitor_triggers_when_one_of_multiple_siblings_disappears() {
+        let mut monitor = SiblingDisappearanceMonitor::new();
+        let both = FakeProcessController::new(vec![
+            process(
+                42,
+                "S-1-5-21",
+                "AutoFix.SettingsUi.exe",
+                r"C:\AutoFix\AutoFix.SettingsUi.exe",
+            ),
+            process(
+                43,
+                "S-1-5-21",
+                "background-engine.exe",
+                r"C:\AutoFix\background-engine.exe",
+            ),
+        ]);
+        assert!(!monitor.shutdown_requested_with(&both, &context()));
+
+        let remaining = FakeProcessController::new(vec![process(
+            43,
+            "S-1-5-21",
+            "background-engine.exe",
+            r"C:\AutoFix\background-engine.exe",
+        )]);
+        assert!(monitor.shutdown_requested_with(&remaining, &context()));
     }
 
     fn context() -> CurrentProcessContext {

@@ -122,6 +122,35 @@ public sealed class BackgroundIpcClient : IBackgroundIpcClient
         }
     }
 
+    public async Task<IpcResult<ShutdownAcceptedResponse>> ShutdownAllAsync()
+    {
+        try
+        {
+            var response = await SendAsync(new IpcEnvelope("shutdown_all")).ConfigureAwait(false);
+            return response.ReadPayload<ShutdownAcceptedResponse>("shutdown_accepted");
+        }
+        catch (IOException)
+        {
+            return IpcResult<ShutdownAcceptedResponse>.Unavailable();
+        }
+        catch (TimeoutException)
+        {
+            return IpcResult<ShutdownAcceptedResponse>.Unavailable();
+        }
+        catch (JsonException)
+        {
+            return IpcResult<ShutdownAcceptedResponse>.Unavailable();
+        }
+        catch (InvalidDataException)
+        {
+            return IpcResult<ShutdownAcceptedResponse>.Unavailable();
+        }
+        catch (OperationCanceledException)
+        {
+            return IpcResult<ShutdownAcceptedResponse>.Unavailable();
+        }
+    }
+
     private static async Task<IpcEnvelope> SendAsync(IpcEnvelope request)
     {
         await using var pipe = new NamedPipeClientStream(

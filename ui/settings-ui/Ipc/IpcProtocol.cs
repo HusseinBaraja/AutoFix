@@ -52,5 +52,8 @@ public sealed record CommandAcceptedResponse(
 public sealed record BackgroundRunningResponse(
     [property: JsonPropertyName("running")] bool Running);
 
+public sealed record ShutdownAcceptedResponse(
+    [property: JsonPropertyName("accepted")] bool Accepted);
+
 public sealed record ErrorResponse(
     [property: JsonPropertyName("message")] string Message);

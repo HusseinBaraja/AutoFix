@@ -310,6 +310,11 @@ public sealed class MainWindowViewModelTests
             StatusCheckCount++;
             return Task.FromResult(IpcResult<BackgroundRunningResponse>.Ok(new(true)));
         }
+
+        public Task<IpcResult<ShutdownAcceptedResponse>> ShutdownAllAsync()
+        {
+            return Task.FromResult(IpcResult<ShutdownAcceptedResponse>.Ok(new(true)));
+        }
     }
 
     private sealed class NullConfigFileDialog : IConfigFileDialog

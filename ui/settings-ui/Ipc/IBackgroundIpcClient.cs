@@ -15,4 +15,5 @@ public interface IBackgroundIpcClient
     Task<IpcResult<CommandAcceptedResponse>> RequestUndoLastCorrectionAsync();
     Task<IpcResult<CommandAcceptedResponse>> TestCorrectionEngineLaterAsync();
     Task<IpcResult<BackgroundRunningResponse>> IsBackgroundRunningAsync();
+    Task<IpcResult<ShutdownAcceptedResponse>> ShutdownAllAsync();
 }

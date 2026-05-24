@@ -31,7 +31,8 @@
             "open_logs",
             "request_undo_last_correction",
             "test_correction_engine_later",
-            "is_background_running"
+            "is_background_running",
+            "shutdown_all"
           ]
         },
         "payload": {
@@ -74,6 +75,7 @@
             "undo_requested",
             "test_correction_engine_queued",
             "background_running",
+            "shutdown_accepted",
             "error"
           ]
         },
