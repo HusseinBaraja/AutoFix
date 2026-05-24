@@ -72,6 +72,7 @@ fn shutdown_sibling_processes(
     };
 
     for target in targets {
+        #[cfg(not(test))]
         tracing::info!(
             process_id = target.process_id,
             executable_name = %target.executable_name,
@@ -82,6 +83,7 @@ fn shutdown_sibling_processes(
         let graceful_requested = controller.request_graceful_exit(&target);
         if graceful_requested && controller.wait_for_exit(&target, GRACEFUL_SHUTDOWN_TIMEOUT) {
             outcome.graceful_succeeded += 1;
+            #[cfg(not(test))]
             tracing::info!(
                 process_id = target.process_id,
                 executable_name = %target.executable_name,
@@ -91,6 +93,7 @@ fn shutdown_sibling_processes(
         }
 
         outcome.graceful_timed_out += 1;
+        #[cfg(not(test))]
         tracing::warn!(
             process_id = target.process_id,
             executable_name = %target.executable_name,
@@ -100,6 +103,7 @@ fn shutdown_sibling_processes(
         outcome.force_kill_attempted += 1;
         if controller.force_kill(&target) {
             outcome.force_kill_succeeded += 1;
+            #[cfg(not(test))]
             tracing::warn!(
                 process_id = target.process_id,
                 executable_name = %target.executable_name,
@@ -107,6 +111,7 @@ fn shutdown_sibling_processes(
             );
         } else {
             outcome.force_kill_failed += 1;
+            #[cfg(not(test))]
             tracing::error!(
                 process_id = target.process_id,
                 executable_name = %target.executable_name,
