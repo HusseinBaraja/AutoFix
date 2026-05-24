@@ -8,6 +8,7 @@ mod target;
 #[cfg(test)]
 mod tests;
 mod tray;
+mod tray_exit_shutdown;
 
 use std::{
     error::Error,
@@ -28,6 +29,7 @@ use self::{
     security::{SecurityDecision, SecurityGate, TriggerKind},
     shortcuts::{GlobalShortcutListener, ShortcutAction},
     tray::TrayIcon,
+    tray_exit_shutdown::shutdown_sibling_autofix_processes_for_tray_exit,
 };
 
 pub(crate) struct BackgroundRuntime {
@@ -45,6 +47,7 @@ struct RuntimeComponents {
     session_manager: SessionManager,
     correction_engine_router: CorrectionEngineRouter,
     replacement_engine: ReplacementEngine,
+    tray_exit_requested: bool,
 }
 
 #[derive(Debug)]
@@ -108,6 +111,9 @@ impl BackgroundRuntime {
     }
 
     fn shutdown(self) {
+        if self.components.tray_exit_requested {
+            shutdown_sibling_autofix_processes_for_tray_exit();
+        }
         self.components.shutdown();
         drop(self.database);
         tracing::info!("AutoFix background process exited cleanly");
@@ -130,6 +136,7 @@ impl RuntimeComponents {
             session_manager: SessionManager::initialize(),
             correction_engine_router: CorrectionEngineRouter::initialize(config),
             replacement_engine: ReplacementEngine::initialize(),
+            tray_exit_requested: false,
         })
     }
 
@@ -150,7 +157,11 @@ impl RuntimeComponents {
                 message_loop::MessageLoopEvent::Tick => self.reload_shortcuts_if_config_changed(),
             }
 
-            self.tray_icon.process_menu_events()
+            let exit_requested = self.tray_icon.process_menu_events();
+            if exit_requested {
+                self.tray_exit_requested = true;
+            }
+            exit_requested
         });
     }
 
