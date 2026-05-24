@@ -13,6 +13,7 @@ use crate::{
 use settings_app_path::settings_app_path;
 
 use std::path::PathBuf;
+use tray_icon::{MouseButton, TrayIconEvent};
 
 pub(crate) struct TrayIcon {
     context: TrayMenuContext,
@@ -172,6 +173,16 @@ fn engine_label(engine: &CorrectionEngine) -> &'static str {
         CorrectionEngine::Local => "Local",
         CorrectionEngine::Api => "API",
     }
+}
+
+fn opens_settings_for_tray_event(event: &TrayIconEvent) -> bool {
+    matches!(
+        event,
+        TrayIconEvent::DoubleClick {
+            button: MouseButton::Left,
+            ..
+        }
+    )
 }
 
 #[cfg(not(test))]

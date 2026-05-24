@@ -1,8 +1,10 @@
-use super::{assets, TrayCommandTargets, TrayMenuContext, TrayVisualState};
+use super::{
+    assets, opens_settings_for_tray_event, TrayCommandTargets, TrayMenuContext, TrayVisualState,
+};
 use std::{error::Error, path::Path, process::Command};
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
-    Icon, TrayIcon as NativeIcon, TrayIconBuilder,
+    Icon, TrayIcon as NativeIcon, TrayIconBuilder, TrayIconEvent,
 };
 
 const ID_UNDO: &str = "autofix.undo_last_correction";
@@ -48,6 +50,12 @@ impl NativeTray {
                 ID_LOGS => self.view_logs(),
                 ID_EXIT => exit_requested = true,
                 _ => {}
+            }
+        }
+
+        while let Ok(event) = TrayIconEvent::receiver().try_recv() {
+            if opens_settings_for_tray_event(&event) {
+                self.open_settings();
             }
         }
 

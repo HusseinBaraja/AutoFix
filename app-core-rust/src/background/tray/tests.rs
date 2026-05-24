@@ -1,4 +1,5 @@
 use super::*;
+use tray_icon::{dpi, MouseButton, MouseButtonState, Rect, TrayIconEvent, TrayIconId};
 
 #[test]
 fn default_context_matches_config_without_pause_logic() {
@@ -72,4 +73,43 @@ fn command_targets_open_settings_app_and_runtime_folder() {
         Some(std::ffi::OsStr::new("AutoFix.SettingsUi.exe"))
     );
     assert_eq!(targets.logs_path, root.join("logs"));
+}
+
+#[test]
+fn left_double_click_opens_settings() {
+    let event = tray_double_click(MouseButton::Left);
+
+    assert!(opens_settings_for_tray_event(&event));
+}
+
+#[test]
+fn non_double_click_tray_events_do_not_open_settings() {
+    let event = TrayIconEvent::Click {
+        id: TrayIconId::new("autofix"),
+        position: dpi::PhysicalPosition::new(0.0, 0.0),
+        rect: tray_rect(),
+        button: MouseButton::Left,
+        button_state: MouseButtonState::Up,
+    };
+
+    assert!(!opens_settings_for_tray_event(&event));
+    assert!(!opens_settings_for_tray_event(&tray_double_click(
+        MouseButton::Right
+    )));
+}
+
+fn tray_double_click(button: MouseButton) -> TrayIconEvent {
+    TrayIconEvent::DoubleClick {
+        id: TrayIconId::new("autofix"),
+        position: dpi::PhysicalPosition::new(0.0, 0.0),
+        rect: tray_rect(),
+        button,
+    }
+}
+
+fn tray_rect() -> Rect {
+    Rect {
+        size: dpi::PhysicalSize::new(16, 16),
+        position: dpi::PhysicalPosition::new(0.0, 0.0),
+    }
 }
