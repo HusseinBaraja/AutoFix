@@ -142,6 +142,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (SetProperty(ref searchText, value))
             {
                 SectionView.Refresh();
+                SelectBestSearchSection();
             }
         }
     }
@@ -207,7 +208,67 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         return section.Name.Contains(SearchText, StringComparison.OrdinalIgnoreCase)
             || section.Description.Contains(SearchText, StringComparison.OrdinalIgnoreCase)
-            || section.Settings.Any(s => s.Title.Contains(SearchText, StringComparison.OrdinalIgnoreCase));
+            || section.Settings.Any(s => SettingMatches(s, SearchText));
+    }
+
+    private void SelectBestSearchSection()
+    {
+        if (string.IsNullOrWhiteSpace(SearchText))
+        {
+            return;
+        }
+
+        var bestSection = Sections
+            .Select(section => new { Section = section, Score = SearchScore(section, SearchText) })
+            .Where(match => match.Score > 0)
+            .OrderByDescending(match => match.Score)
+            .Select(match => match.Section)
+            .FirstOrDefault();
+
+        if (bestSection is not null)
+        {
+            SelectedSection = bestSection;
+        }
+    }
+
+    private static int SearchScore(SettingsSectionViewModel section, string query)
+    {
+        var score = MatchScore(section.Name, query) * 100
+            + MatchScore(section.Description, query) * 20;
+
+        foreach (var setting in section.Settings)
+        {
+            score += MatchScore(setting.Title, query) * 50;
+            score += MatchScore(setting.Description, query) * 10;
+            score += MatchScore(setting.Path, query) * 5;
+        }
+
+        return score;
+    }
+
+    private static bool SettingMatches(SettingCardViewModel setting, string query) =>
+        setting.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
+        || setting.Description.Contains(query, StringComparison.OrdinalIgnoreCase)
+        || setting.Path.Contains(query, StringComparison.OrdinalIgnoreCase);
+
+    private static int MatchScore(string text, string query)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return 0;
+        }
+
+        if (text.Equals(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return 4;
+        }
+
+        if (text.StartsWith(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return 3;
+        }
+
+        return text.Contains(query, StringComparison.OrdinalIgnoreCase) ? 1 : 0;
     }
 
     private void ApplyUnavailable(string? detail = null)

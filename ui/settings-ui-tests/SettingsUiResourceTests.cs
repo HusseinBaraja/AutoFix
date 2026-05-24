@@ -166,6 +166,24 @@ public sealed class SettingsUiResourceTests
     }
 
     [TestMethod]
+    public void SearchHighlightTextBlocksBindToSearchText()
+    {
+        var window = LoadXaml("MainWindow.xaml");
+        var highlightBlocks = window.Descendants().Where(element => element.Name.LocalName == "HighlightTextBlock").ToList();
+
+        Assert.IsTrue(highlightBlocks.Count >= 4);
+        Assert.IsTrue(highlightBlocks.Any(block =>
+            (string?)block.Attribute("HighlightText") == "{Binding SelectedSection.Name}"
+            && (string?)block.Attribute("Query") == "{Binding SearchText}"));
+        Assert.IsTrue(highlightBlocks.Any(block =>
+            (string?)block.Attribute("HighlightText") == "{Binding Title}"
+            && (string?)block.Attribute("Query") == "{Binding DataContext.SearchText, RelativeSource={RelativeSource AncestorType=Window}}"));
+        Assert.IsTrue(highlightBlocks.Any(block =>
+            (string?)block.Attribute("HighlightText") == "{Binding Description}"
+            && (string?)block.Attribute("Query") == "{Binding DataContext.SearchText, RelativeSource={RelativeSource AncestorType=Window}}"));
+    }
+
+    [TestMethod]
     public void ToggleSwitchExposesFocusAndDisabledStates()
     {
         var chrome = LoadXaml("Resources", "SettingsChrome.xaml");

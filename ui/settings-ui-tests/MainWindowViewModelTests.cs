@@ -236,6 +236,35 @@ public sealed class MainWindowViewModelTests
         Assert.AreEqual("api", saved.Correction.Engine);
     }
 
+    [TestMethod]
+    public void SearchSelectsMostLikelyMatchingSection()
+    {
+        var viewModel = new MainWindowViewModel(
+            new FakeBackgroundIpcClient(),
+            new ConfigStorage("unused"),
+            new NullConfigFileDialog());
+
+        viewModel.SearchText = "timeout";
+
+        Assert.AreEqual("Engines", viewModel.SelectedSection?.Name);
+    }
+
+    [TestMethod]
+    public void SearchFilterMatchesSettingDescriptionsAndPaths()
+    {
+        var viewModel = new MainWindowViewModel(
+            new FakeBackgroundIpcClient(),
+            new ConfigStorage("unused"),
+            new NullConfigFileDialog());
+
+        viewModel.SearchText = "fallback_to_local";
+
+        var visibleSections = viewModel.SectionView.Cast<SettingsSectionViewModel>().Select(section => section.Name).ToArray();
+
+        CollectionAssert.AreEqual(new[] { "Engines" }, visibleSections);
+        Assert.AreEqual("Engines", viewModel.SelectedSection?.Name);
+    }
+
     private static SettingCardViewModel Card(MainWindowViewModel viewModel, string path) =>
         viewModel.Sections.SelectMany(section => section.Settings).Single(setting => setting.Path == path);
 
