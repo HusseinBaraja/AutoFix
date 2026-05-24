@@ -2,6 +2,7 @@
 target/
 bin/
 obj/
+progress-builds/
 /.idea/.gitignore
 /.idea/AutoFix.iml
 /.idea/modules.xml
