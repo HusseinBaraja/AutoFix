@@ -83,6 +83,8 @@ pub(crate) fn check_detection(
         };
     }
 
+    // TODO: Once typed-session executable text is available here, block command
+    // lines, filesystem paths, URLs, and code-like text before app rules.
     let matching_rule = matching_rule(app_rules, &target);
     if let Some(rule) = matching_rule.filter(|rule| !trigger_allowed(rule, trigger)) {
         let _ = rule;
@@ -628,6 +630,14 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "pending typed-session executable text in SecurityGate::check_detection"]
+    fn typed_session_text_safety_blocks_code_like_content_at_security_entrypoint() {
+        todo!(
+            "block command lines, filesystem paths, URLs, and code-like text once typed-session text reaches SecurityGate"
+        );
+    }
+
+    #[test]
     fn window_title_pattern_matches_case_insensitive_substrings() {
         let mut target = target("word.exe");
         target.window_title = "Quarterly Admin Notes".to_owned();
@@ -636,5 +646,4 @@ mod tests {
 
         assert!(matching_rule(&[rule], &target).is_some());
     }
-
 }

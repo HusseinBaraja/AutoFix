@@ -20,7 +20,6 @@ impl ConfigValidationError {
         Self { field, message }
     }
 
-    #[cfg(test)]
     pub(crate) fn field(&self) -> &'static str {
         self.field
     }
@@ -28,7 +27,7 @@ impl ConfigValidationError {
 
 impl fmt::Display for ConfigValidationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.field, self.message)
+        write!(formatter, "{}: {}", self.field(), self.message)
     }
 }
 

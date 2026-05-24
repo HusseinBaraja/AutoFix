@@ -48,11 +48,6 @@ pub(crate) fn parse_config(input: &str) -> Result<AppConfig, ConfigIoError> {
     Ok(config)
 }
 
-#[cfg(test)]
-pub(crate) fn default_config_toml() -> Result<String, ConfigIoError> {
-    config_to_toml(&AppConfig::default())
-}
-
 pub(crate) fn config_to_toml(config: &AppConfig) -> Result<String, ConfigIoError> {
     config.validate().map_err(ConfigIoError::Validation)?;
     let body = toml::to_string_pretty(config).map_err(ConfigIoError::Serialize)?;
