@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-const ALLOWED_PROCESS_NAMES: [&str; 2] = ["background-engine.exe", "AutoFix.SettingsUi.exe"];
+const ALLOWED_PROCESS_NAMES: [&str; 2] = ["AF-BG-Engine.exe", "Autofix.exe"];
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub(crate) fn shutdown_trusted_autofix_process_group() {
@@ -529,8 +529,8 @@ mod tests {
         let process = process(
             42,
             "S-1-5-21",
-            "background-engine.exe",
-            r"C:\AutoFix\background-engine.exe",
+            "AF-BG-Engine.exe",
+            r"C:\AutoFix\AF-BG-Engine.exe",
         );
 
         assert!(is_sibling_autofix_process(&process, &context));
@@ -542,8 +542,8 @@ mod tests {
         let process = process(
             42,
             "S-1-5-99",
-            "background-engine.exe",
-            r"C:\AutoFix\background-engine.exe",
+            "AF-BG-Engine.exe",
+            r"C:\AutoFix\AF-BG-Engine.exe",
         );
 
         assert!(!is_sibling_autofix_process(&process, &context));
@@ -555,8 +555,8 @@ mod tests {
         let process = process(
             42,
             "S-1-5-21",
-            "background-engine.exe",
-            r"C:\Other\background-engine.exe",
+            "AF-BG-Engine.exe",
+            r"C:\Other\AF-BG-Engine.exe",
         );
 
         assert!(!is_sibling_autofix_process(&process, &context));
@@ -576,8 +576,8 @@ mod tests {
         let process = process(
             7,
             "S-1-5-21",
-            "background-engine.exe",
-            r"C:\AutoFix\background-engine.exe",
+            "AF-BG-Engine.exe",
+            r"C:\AutoFix\AF-BG-Engine.exe",
         );
 
         assert!(!is_sibling_autofix_process(&process, &context));
@@ -586,7 +586,7 @@ mod tests {
     #[test]
     fn dev_build_uses_workspace_root_for_settings_ui_matching() {
         let manifest_dir = PathBuf::from(r"C:\Repo\AutoFix\app-core-rust");
-        let background_exe = PathBuf::from(r"C:\Repo\AutoFix\target\debug\background-engine.exe");
+        let background_exe = PathBuf::from(r"C:\Repo\AutoFix\target\debug\AF-BG-Engine.exe");
         let trusted_root = trusted_root_for_executable(&background_exe, &manifest_dir).unwrap();
         let context = CurrentProcessContext {
             process_id: 7,
@@ -596,8 +596,8 @@ mod tests {
         let settings = process(
             42,
             "S-1-5-21",
-            "AutoFix.SettingsUi.exe",
-            r"C:\Repo\AutoFix\ui\settings-ui\bin\Debug\net8.0-windows\AutoFix.SettingsUi.exe",
+            "Autofix.exe",
+            r"C:\Repo\AutoFix\ui\settings-ui\bin\Debug\net8.0-windows\Autofix.exe",
         );
 
         assert!(is_sibling_autofix_process(&settings, &context));
@@ -606,7 +606,7 @@ mod tests {
     #[test]
     fn installed_build_uses_executable_directory_as_trusted_root() {
         let manifest_dir = PathBuf::from(r"C:\Repo\AutoFix\app-core-rust");
-        let background_exe = PathBuf::from(r"C:\Program Files\AutoFix\background-engine.exe");
+        let background_exe = PathBuf::from(r"C:\Program Files\AutoFix\AF-BG-Engine.exe");
         let trusted_root = trusted_root_for_executable(&background_exe, &manifest_dir).unwrap();
 
         assert_eq!(trusted_root, PathBuf::from(r"C:\Program Files\AutoFix"));
@@ -617,8 +617,8 @@ mod tests {
         let controller = FakeProcessController::new(vec![process(
             42,
             "S-1-5-21",
-            "AutoFix.SettingsUi.exe",
-            r"C:\AutoFix\AutoFix.SettingsUi.exe",
+            "Autofix.exe",
+            r"C:\AutoFix\Autofix.exe",
         )])
         .with_graceful_exit(42);
 
@@ -634,8 +634,8 @@ mod tests {
         let controller = FakeProcessController::new(vec![process(
             42,
             "S-1-5-21",
-            "AutoFix.SettingsUi.exe",
-            r"C:\AutoFix\AutoFix.SettingsUi.exe",
+            "Autofix.exe",
+            r"C:\AutoFix\Autofix.exe",
         )])
         .with_force_kill_success(42);
 
@@ -653,14 +653,14 @@ mod tests {
             process(
                 42,
                 "S-1-5-21",
-                "AutoFix.SettingsUi.exe",
-                r"C:\AutoFix\AutoFix.SettingsUi.exe",
+                "Autofix.exe",
+                r"C:\AutoFix\Autofix.exe",
             ),
             process(
                 43,
                 "S-1-5-21",
-                "background-engine.exe",
-                r"C:\AutoFix\background-engine.exe",
+                "AF-BG-Engine.exe",
+                r"C:\AutoFix\AF-BG-Engine.exe",
             ),
         ])
         .with_force_kill_success(43);
@@ -682,14 +682,14 @@ mod tests {
             process(
                 7,
                 "S-1-5-21",
-                "background-engine.exe",
-                r"C:\AutoFix\background-engine.exe",
+                "AF-BG-Engine.exe",
+                r"C:\AutoFix\AF-BG-Engine.exe",
             ),
             process(
                 42,
                 "S-1-5-21",
-                "AutoFix.SettingsUi.exe",
-                r"C:\AutoFix\AutoFix.SettingsUi.exe",
+                "Autofix.exe",
+                r"C:\AutoFix\Autofix.exe",
             ),
         ])
         .with_graceful_exit(42);
@@ -709,8 +709,8 @@ mod tests {
         let seen = FakeProcessController::new(vec![process(
             42,
             "S-1-5-21",
-            "AutoFix.SettingsUi.exe",
-            r"C:\AutoFix\AutoFix.SettingsUi.exe",
+            "Autofix.exe",
+            r"C:\AutoFix\Autofix.exe",
         )]);
         assert!(!monitor.shutdown_requested_with(&seen, &context()));
 
@@ -725,14 +725,14 @@ mod tests {
             process(
                 42,
                 "S-1-5-21",
-                "AutoFix.SettingsUi.exe",
-                r"C:\AutoFix\AutoFix.SettingsUi.exe",
+                "Autofix.exe",
+                r"C:\AutoFix\Autofix.exe",
             ),
             process(
                 43,
                 "S-1-5-21",
-                "background-engine.exe",
-                r"C:\AutoFix\background-engine.exe",
+                "AF-BG-Engine.exe",
+                r"C:\AutoFix\AF-BG-Engine.exe",
             ),
         ]);
         assert!(!monitor.shutdown_requested_with(&both, &context()));
@@ -740,8 +740,8 @@ mod tests {
         let remaining = FakeProcessController::new(vec![process(
             43,
             "S-1-5-21",
-            "background-engine.exe",
-            r"C:\AutoFix\background-engine.exe",
+            "AF-BG-Engine.exe",
+            r"C:\AutoFix\AF-BG-Engine.exe",
         )]);
         assert!(monitor.shutdown_requested_with(&remaining, &context()));
     }

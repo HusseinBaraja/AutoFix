@@ -1,0 +1,79 @@
+using System.IO.Pipes;
+using System.Text;
+using System.IO;
+
+namespace AutoFix.SettingsUi.Lifetime;
+
+public sealed class SingleInstance : IDisposable
+{
+    private const string MutexName = "Global\\AutoFix.Autofix.SingleInstance";
+    private const string PipeName = "AutoFix.Autofix.Activate";
+    private readonly Mutex mutex;
+    private readonly CancellationTokenSource cancellation = new();
+    private readonly Action activated;
+    private readonly bool ownsInstance;
+
+    private SingleInstance(Mutex mutex, bool ownsInstance, Action activated)
+    {
+        this.mutex = mutex;
+        this.ownsInstance = ownsInstance;
+        this.activated = activated;
+    }
+
+    public bool OwnsInstance => ownsInstance;
+
+    public static SingleInstance Create(Action activated)
+    {
+        var mutex = new Mutex(true, MutexName, out var createdNew);
+        return new SingleInstance(mutex, createdNew, activated);
+    }
+
+    public async Task SignalExistingAsync()
+    {
+        await using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out, PipeOptions.Asynchronous);
+        await client.ConnectAsync(500).ConfigureAwait(false);
+        await client.WriteAsync(Encoding.UTF8.GetBytes("activate"), cancellation.Token).ConfigureAwait(false);
+    }
+
+    public void StartListening()
+    {
+        if (!ownsInstance)
+        {
+            return;
+        }
+
+        _ = ListenAsync();
+    }
+
+    private async Task ListenAsync()
+    {
+        while (!cancellation.IsCancellationRequested)
+        {
+            await using var server = new NamedPipeServerStream(PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+            try
+            {
+                await server.WaitForConnectionAsync(cancellation.Token).ConfigureAwait(false);
+                activated();
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        cancellation.Cancel();
+        cancellation.Dispose();
+        if (ownsInstance)
+        {
+            mutex.ReleaseMutex();
+        }
+
+        mutex.Dispose();
+    }
+}

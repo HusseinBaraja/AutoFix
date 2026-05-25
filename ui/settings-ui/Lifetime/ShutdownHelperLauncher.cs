@@ -28,9 +28,9 @@ public sealed class ShutdownHelperLauncher : IShutdownHelperLauncher
         var baseDirectory = AppContext.BaseDirectory;
         var candidates = new[]
         {
-            Path.Combine(baseDirectory, "background-engine.exe"),
-            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "target", "debug", "background-engine.exe")),
-            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "target", "release", "background-engine.exe")),
+            Path.Combine(baseDirectory, "AF-BG-Engine.exe"),
+            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "target", "debug", "AF-BG-Engine.exe")),
+            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "target", "release", "AF-BG-Engine.exe")),
         };
 
         return candidates.FirstOrDefault(File.Exists);

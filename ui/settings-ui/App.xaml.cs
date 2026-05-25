@@ -1,56 +1,48 @@
-using System.Windows;
-using System.Windows.Threading;
-using AutoFix.SettingsUi.Ipc;
 using AutoFix.SettingsUi.Lifetime;
+using System.IO;
+using WpfApplication = System.Windows.Application;
+using StartupEventArgs = System.Windows.StartupEventArgs;
+using ExitEventArgs = System.Windows.ExitEventArgs;
+using SessionEndingCancelEventArgs = System.Windows.SessionEndingCancelEventArgs;
 
 namespace AutoFix.SettingsUi;
 
-public partial class App : Application
+public partial class App : WpfApplication
 {
-    private readonly BackgroundIpcClient ipcClient = new();
-    private AppLifetimeShutdown? shutdown;
-    private BackgroundAvailabilityMonitor? backgroundMonitor;
-    private DispatcherTimer? monitorTimer;
+    private ShellLifetime? lifetime;
 
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        shutdown = new AppLifetimeShutdown(ipcClient, new ShutdownHelperLauncher());
-        backgroundMonitor = new BackgroundAvailabilityMonitor(ipcClient);
-        monitorTimer = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromSeconds(1),
-        };
-        monitorTimer.Tick += MonitorBackground;
-        monitorTimer.Start();
-    }
 
-    protected override async void OnExit(ExitEventArgs e)
-    {
-        monitorTimer?.Stop();
-        if (shutdown is not null)
+        lifetime = ShellLifetime.Create(this);
+        if (!lifetime.OwnsInstance)
         {
-            await shutdown.RequestShutdownAllAsync();
+            try
+            {
+                await lifetime.SignalExistingAsync();
+            }
+            catch (Exception error) when (error is IOException or TimeoutException or InvalidOperationException)
+            {
+                System.Diagnostics.Debug.WriteLine(error);
+            }
+
+            Shutdown();
+            return;
         }
 
+        lifetime.Start(new MainWindow());
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        lifetime?.Dispose();
         base.OnExit(e);
     }
 
-    protected override async void OnSessionEnding(SessionEndingCancelEventArgs e)
+    protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
     {
-        if (shutdown is not null)
-        {
-            await shutdown.RequestShutdownAllAsync();
-        }
-
+        lifetime?.Shutdown(ShutdownReason.SessionEnding);
         base.OnSessionEnding(e);
-    }
-
-    private async void MonitorBackground(object? sender, EventArgs e)
-    {
-        if (backgroundMonitor is not null && await backgroundMonitor.ShouldCloseSettingsAsync())
-        {
-            Shutdown();
-        }
     }
 }

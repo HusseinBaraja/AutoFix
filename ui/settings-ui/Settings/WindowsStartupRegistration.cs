@@ -11,7 +11,7 @@ public sealed class WindowsStartupRegistration : IStartupRegistration
 
     private readonly Func<string> commandFactory;
 
-    public WindowsStartupRegistration() : this(BackgroundCommand)
+    public WindowsStartupRegistration() : this(ShellCommand)
     {
     }
 
@@ -34,21 +34,15 @@ public sealed class WindowsStartupRegistration : IStartupRegistration
         runKey.DeleteValue(AppName, throwOnMissingValue: false);
     }
 
-    internal static string BackgroundCommand() => $"{Quote(BackgroundExecutablePath())} --background";
+    internal static string ShellCommand() => Quote(ShellExecutablePath());
 
-    private static string BackgroundExecutablePath()
+    private static string ShellExecutablePath()
     {
         var baseDirectory = AppContext.BaseDirectory;
-        var direct = Path.Combine(baseDirectory, "background-engine.exe");
+        var direct = Path.Combine(baseDirectory, "Autofix.exe");
         if (File.Exists(direct))
         {
             return direct;
-        }
-
-        var sibling = Path.GetFullPath(Path.Combine(baseDirectory, "..", "background-engine", "background-engine.exe"));
-        if (File.Exists(sibling))
-        {
-            return sibling;
         }
 
         return direct;

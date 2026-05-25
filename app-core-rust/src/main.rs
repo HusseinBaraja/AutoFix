@@ -2,6 +2,7 @@
 mod accessibility;
 mod background;
 mod ipc;
+#[cfg(test)]
 mod platform;
 #[cfg(test)]
 pub mod secrets;
@@ -14,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         || args.as_slice() == ["--background"]
         || args.as_slice() == ["--shutdown-all"];
     if !supported_args {
-        eprintln!("usage: background-engine.exe [--background|--shutdown-all]");
+        eprintln!("usage: AF-BG-Engine.exe [--background|--shutdown-all]");
         std::process::exit(2);
     }
 

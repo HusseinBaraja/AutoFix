@@ -8,7 +8,6 @@ mod shortcuts;
 mod target;
 #[cfg(test)]
 mod tests;
-mod tray;
 
 use std::{
     error::Error,
@@ -33,7 +32,6 @@ use self::{
     process_group::{shutdown_trusted_autofix_process_group, SiblingDisappearanceMonitor},
     security::{SecurityDecision, SecurityGate, TriggerKind},
     shortcuts::{GlobalShortcutListener, ShortcutAction},
-    tray::TrayIcon,
 };
 
 pub(crate) struct BackgroundRuntime {
@@ -45,7 +43,6 @@ struct RuntimeComponents {
     config_path: PathBuf,
     config_modified_at: Option<SystemTime>,
     config: AppConfig,
-    tray_icon: TrayIcon,
     ipc_server: NamedPipeIpcServer,
     global_shortcut: GlobalShortcutListener,
     session_manager: SessionManager,
@@ -122,9 +119,6 @@ impl BackgroundRuntime {
     }
 
     fn shutdown(self) {
-        if self.components.shutdown_requested.load(Ordering::Relaxed) {
-            shutdown_trusted_autofix_process_group();
-        }
         self.components.shutdown();
         drop(self.database);
         tracing::info!("AutoFix background process exited cleanly");
@@ -142,7 +136,6 @@ impl RuntimeComponents {
         shutdown_requested: Arc<AtomicBool>,
     ) -> Result<Self, BackgroundError> {
         Ok(Self {
-            tray_icon: TrayIcon::initialize(config, paths),
             config_path: paths.config_path().to_path_buf(),
             config_modified_at: modified_at(paths.config_path()),
             config: config.clone(),
@@ -166,7 +159,6 @@ impl RuntimeComponents {
         self.session_manager.shutdown();
         self.global_shortcut.shutdown();
         self.ipc_server.shutdown();
-        self.tray_icon.shutdown();
     }
 
     fn run_until_exit(&mut self, database: &Database) {
@@ -182,11 +174,7 @@ impl RuntimeComponents {
                 }
             }
 
-            let exit_requested = self.tray_icon.process_menu_events();
-            if exit_requested {
-                self.shutdown_requested.store(true, Ordering::Relaxed);
-            }
-            exit_requested || self.shutdown_requested.load(Ordering::Relaxed)
+            self.shutdown_requested.load(Ordering::Relaxed)
         });
     }
 

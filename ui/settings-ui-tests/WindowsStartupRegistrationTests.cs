@@ -6,11 +6,11 @@ namespace AutoFix.SettingsUi.Tests;
 public sealed class WindowsStartupRegistrationTests
 {
     [TestMethod]
-    public void BackgroundCommandStartsBackgroundMode()
+    public void ShellCommandStartsRootShell()
     {
-        var command = WindowsStartupRegistration.BackgroundCommand();
+        var command = WindowsStartupRegistration.ShellCommand();
 
-        StringAssert.EndsWith(command, "\" --background");
-        StringAssert.Contains(command, "background-engine.exe");
+        StringAssert.EndsWith(command, "Autofix.exe\"");
+        Assert.IsFalse(command.Contains("--background", StringComparison.Ordinal));
     }
 }
