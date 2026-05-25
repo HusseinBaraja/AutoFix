@@ -14,17 +14,17 @@ This repository is currently in setup stage.
 
 ## Run App
 
-From the repository root, build the WPF shell and Rust background engine:
+From the repository root, build and run AutoFix:
 
 ```powershell
-dotnet build .\AutoFix.sln
-cargo build -p background-engine
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-app.ps1
 ```
 
-Then start AutoFix through the Rust app entry point:
+For shells that already allow local PowerShell scripts, the shorter form also
+works:
 
 ```powershell
-cargo run -p background-engine
+.\scripts\run-app.ps1
 ```
 
 The Rust entry point launches the WPF shell, and the shell owns the Windows tray
@@ -51,3 +51,11 @@ The app creates its settings file at:
 - `shared-schema/` - Shared config schemas, IPC contracts, and documentation.
 - `installer/` - Installer scripts and packaging assets later.
 - `docs/` - Architecture and design notes.
+
+## Rust testing
+
+Use `#[cfg(test)]` for test modules, unit tests placed next to the code, and helper functions or mock types that exist only for tests. Do not use it for integration tests in the `tests/` directory, normal production logic, public APIs, or alternate implementations that make code behave differently in tests than it does in real builds.
+
+## When you are unsure
+
+use context7 to get the official documentation and check official internet sources if you need them.
