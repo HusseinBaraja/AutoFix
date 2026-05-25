@@ -12,22 +12,30 @@ Planned capabilities include:
 
 This repository is currently in setup stage.
 
-## Run Background App
+## Run App
 
-From the repository root, run the Rust background app with:
+From the repository root, build the WPF shell and Rust background engine:
+
+```powershell
+dotnet build .\AutoFix.sln
+cargo build -p background-engine
+```
+
+Then start AutoFix through the Rust app entry point:
 
 ```powershell
 cargo run -p background-engine
 ```
 
-The app starts the background process and Windows tray icon. It keeps running until
-you choose `Exit` from the tray menu or stop it with `Ctrl+C` in the terminal.
+The Rust entry point launches the WPF shell, and the shell owns the Windows tray
+icon and supervises the background engine. It keeps running until you choose
+`Exit` from the tray menu.
 
 To build and run the executable directly:
 
 ```powershell
 cargo build -p background-engine
-.\target\debug\background-engine.exe
+.\target\debug\AF-BG-Engine.exe
 ```
 
 The app creates its settings file at:

@@ -69,6 +69,6 @@ if ($innoCompiler) {
     exit 1
 }
 
-Invoke-Check "Rust tests" { cargo test }
-Invoke-Check "Rust console app" { cargo run -p background-engine }
 Invoke-Check ".NET SDK and WPF build" { dotnet build .\AutoFix.sln }
+Invoke-Check "Rust tests" { cargo test }
+Invoke-Check "Rust app entry point" { cargo run -p background-engine }
