@@ -1,4 +1,5 @@
 mod admin;
+pub(crate) mod app_identity;
 mod components;
 mod message_loop;
 mod paths;

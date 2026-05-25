@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Autofix</AssemblyName>
+    <AssemblyTitle>AutoFix Settings</AssemblyTitle>
+    <FileDescription>AutoFix Settings</FileDescription>
+    <ProductName>Autofix</ProductName>
     <ApplicationIcon>..\..\assets\brand\autofix-logo.ico</ApplicationIcon>
   </PropertyGroup>
 

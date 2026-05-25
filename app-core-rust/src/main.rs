@@ -15,6 +15,10 @@ mod settings;
 mod storage;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if let Err(error) = background::app_identity::set_current_process_app_identity() {
+        eprintln!("failed to set app identity: {error}");
+    }
+
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let supported_args = args.is_empty()
         || args.as_slice() == ["--background"]
