@@ -20,23 +20,9 @@ From the repository root, build and run AutoFix:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-app.ps1
 ```
 
-For shells that already allow local PowerShell scripts, the shorter form also
-works:
-
-```powershell
-.\scripts\run-app.ps1
-```
-
 The Rust entry point launches the WPF shell, and the shell owns the Windows tray
 icon and supervises the background engine. It keeps running until you choose
 `Exit` from the tray menu.
-
-To build and run the executable directly:
-
-```powershell
-cargo build -p background-engine
-.\target\debug\AF-BG-Engine.exe
-```
 
 The app creates its settings file at:
 
