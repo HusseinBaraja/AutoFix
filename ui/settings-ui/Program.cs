@@ -56,7 +56,11 @@ internal sealed class AppRoleHost : IAppRoleHost
         return 0;
     }
 
-    public int RunEngine() => NativeEngine.RunBackground();
+    public int RunEngine()
+    {
+        using var roleWindow = EngineRoleWindow.Create();
+        return NativeEngine.RunBackground();
+    }
 
     public int ShutdownAll() => NativeEngine.ShutdownAll();
 

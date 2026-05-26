@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:AutoFix.SettingsUi.Controls"
         xmlns:sys="clr-namespace:System;assembly=mscorlib"
-        Title="AutoFix Settings"
+        Title="Autofix Settings"
         Icon="{DynamicResource AutoFixLogoImage}"
         Width="1080"
         Height="720"

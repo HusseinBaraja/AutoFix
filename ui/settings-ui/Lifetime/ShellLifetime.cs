@@ -48,6 +48,7 @@ public sealed class ShellLifetime : IDisposable
     public void Start(Window shellWindow)
     {
         window = shellWindow;
+        AppWindowIdentity.Apply(shellWindow);
         application.MainWindow = shellWindow;
         application.ShutdownMode = ShutdownMode.OnExplicitShutdown;
         shellWindow.Closing += WindowClosing;
