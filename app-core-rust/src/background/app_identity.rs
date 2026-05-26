@@ -4,6 +4,10 @@ pub(crate) fn set_current_process_app_identity() -> Result<(), String> {
     native::set_current_process_app_identity(APP_USER_MODEL_ID)
 }
 
+fn format_hresult(result: i32) -> String {
+    format!("0x{:08X}", result as u32)
+}
+
 #[cfg(windows)]
 mod native {
     use std::iter::once;
@@ -20,7 +24,8 @@ mod native {
             Ok(())
         } else {
             Err(format!(
-                "SetCurrentProcessExplicitAppUserModelID failed with HRESULT 0x{result:08X}"
+                "SetCurrentProcessExplicitAppUserModelID failed with HRESULT {}",
+                super::format_hresult(result)
             ))
         }
     }
@@ -40,5 +45,11 @@ mod tests {
     #[test]
     fn app_user_model_id_is_shared_shell_identity() {
         assert_eq!(APP_USER_MODEL_ID, "Zerone.Autofix");
+    }
+
+    #[test]
+    fn hresult_formats_as_unsigned_windows_hex() {
+        assert_eq!(format_hresult(i32::MIN), "0x80000000");
+        assert_eq!(format_hresult(-2147024891), "0x80070005");
     }
 }
