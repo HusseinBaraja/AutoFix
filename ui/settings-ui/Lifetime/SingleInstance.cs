@@ -66,7 +66,7 @@ public sealed class SingleInstance : IDisposable
             try
             {
                 await server.WaitForConnectionAsync(cancellation.Token).ConfigureAwait(false);
-                activated();
+                TryActivate(activated);
             }
             catch (OperationCanceledException)
             {
@@ -75,6 +75,19 @@ public sealed class SingleInstance : IDisposable
             catch (IOException)
             {
             }
+        }
+    }
+
+    internal static bool TryActivate(Action activated)
+    {
+        try
+        {
+            activated();
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
         }
     }
 

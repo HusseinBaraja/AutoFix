@@ -64,6 +64,21 @@ public sealed class SingleInstanceTests
         }
     }
 
+    [TestMethod]
+    public void ActivationCallbackExceptionIsContained()
+    {
+        var activated = false;
+
+        var succeeded = SingleInstance.TryActivate(() =>
+        {
+            activated = true;
+            throw new InvalidOperationException("Activation failed.");
+        });
+
+        Assert.IsTrue(activated);
+        Assert.IsFalse(succeeded);
+    }
+
     private static string UniqueMutexName() =>
         $"Local\\AutoFix.Tests.{Guid.NewGuid():N}";
 }
