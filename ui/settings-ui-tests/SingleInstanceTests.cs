@@ -79,6 +79,17 @@ public sealed class SingleInstanceTests
         Assert.IsFalse(succeeded);
     }
 
+    [TestMethod]
+    public void DisposeCanBeCalledTwice()
+    {
+        var name = UniqueMutexName();
+        var mutex = new Mutex(true, name, out _);
+        var singleInstance = new SingleInstance(mutex, ownsInstance: true, activated: () => { });
+
+        singleInstance.Dispose();
+        singleInstance.Dispose();
+    }
+
     private static string UniqueMutexName() =>
         $"Local\\AutoFix.Tests.{Guid.NewGuid():N}";
 }

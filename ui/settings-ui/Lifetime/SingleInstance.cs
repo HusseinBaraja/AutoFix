@@ -12,8 +12,9 @@ public sealed class SingleInstance : IDisposable
     private readonly CancellationTokenSource cancellation = new();
     private readonly Action activated;
     private readonly bool ownsInstance;
+    private bool disposed;
 
-    private SingleInstance(Mutex mutex, bool ownsInstance, Action activated)
+    internal SingleInstance(Mutex mutex, bool ownsInstance, Action activated)
     {
         this.mutex = mutex;
         this.ownsInstance = ownsInstance;
@@ -93,11 +94,23 @@ public sealed class SingleInstance : IDisposable
 
     public void Dispose()
     {
+        if (disposed)
+        {
+            return;
+        }
+
+        disposed = true;
         cancellation.Cancel();
         cancellation.Dispose();
         if (ownsInstance)
         {
-            mutex.ReleaseMutex();
+            try
+            {
+                mutex.ReleaseMutex();
+            }
+            catch (ApplicationException)
+            {
+            }
         }
 
         mutex.Dispose();
