@@ -11,6 +11,6 @@ public sealed class WindowsStartupRegistrationTests
         var command = WindowsStartupRegistration.ShellCommand();
 
         StringAssert.EndsWith(command, "Autofix.exe\"");
-        Assert.IsFalse(command.Contains("--background", StringComparison.Ordinal));
+        Assert.IsFalse(command.Contains("--engine", StringComparison.Ordinal));
     }
 }

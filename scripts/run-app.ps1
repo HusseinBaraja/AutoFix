@@ -15,6 +15,6 @@ if ($runningShell) {
 }
 
 & .\scripts\clear-stale-dev-outputs.ps1
-dotnet build .\AutoFix.sln
 cargo build -p background-engine
-cargo run -p background-engine
+dotnet build .\AutoFix.sln
+& .\ui\settings-ui\bin\Debug\net8.0-windows\Autofix.exe

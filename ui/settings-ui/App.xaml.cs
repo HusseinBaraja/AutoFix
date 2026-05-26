@@ -13,7 +13,6 @@ public partial class App : WpfApplication
 
     protected override async void OnStartup(StartupEventArgs e)
     {
-        AppIdentity.SetCurrentProcess();
         base.OnStartup(e);
 
         lifetime = ShellLifetime.Create(this);

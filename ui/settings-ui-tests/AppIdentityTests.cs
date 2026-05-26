@@ -19,8 +19,8 @@ public sealed class AppIdentityTests
         var assembly = typeof(AppIdentity).Assembly;
         var info = FileVersionInfo.GetVersionInfo(assembly.Location);
 
-        Assert.AreEqual("AutoFix Settings", assembly.GetCustomAttribute<AssemblyTitleAttribute>()?.Title);
-        Assert.AreEqual("AutoFix Settings", info.FileDescription);
+        Assert.AreEqual("AutoFix", assembly.GetCustomAttribute<AssemblyTitleAttribute>()?.Title);
+        Assert.AreEqual("AutoFix", info.FileDescription);
         Assert.AreEqual("Autofix", info.ProductName);
     }
 }

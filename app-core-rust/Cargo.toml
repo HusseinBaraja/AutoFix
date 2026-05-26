@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lib]
+name = "autofix_core"
+crate-type = ["cdylib", "rlib"]
+
 [[bin]]
 name = "AF-BG-Engine"
 path = "src/main.rs"

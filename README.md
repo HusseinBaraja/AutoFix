@@ -20,8 +20,18 @@ From the repository root, build and run AutoFix:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-app.ps1
 ```
 
-The Rust entry point launches the WPF shell, and the shell owns the Windows tray
-icon and supervises the background engine. It keeps running until you choose
+`Autofix.exe` owns the Windows tray icon and supervises the background engine.
+The same executable hosts every normal runtime role so Windows can group the
+processes together:
+
+```powershell
+.\ui\settings-ui\bin\Debug\net8.0-windows\Autofix.exe
+.\ui\settings-ui\bin\Debug\net8.0-windows\Autofix.exe --engine
+.\ui\settings-ui\bin\Debug\net8.0-windows\Autofix.exe --shutdown-all
+```
+
+The Rust engine is loaded through `autofix_core.dll`; `AF-BG-Engine.exe` is only
+kept as a direct Rust dev entry point. AutoFix keeps running until you choose
 `Exit` from the tray menu.
 
 The app creates its settings file at:

@@ -5,12 +5,28 @@
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <StartupObject>AutoFix.SettingsUi.Program</StartupObject>
     <AssemblyName>Autofix</AssemblyName>
-    <AssemblyTitle>AutoFix Settings</AssemblyTitle>
-    <FileDescription>AutoFix Settings</FileDescription>
+    <AssemblyTitle>AutoFix</AssemblyTitle>
+    <FileDescription>AutoFix</FileDescription>
     <ProductName>Autofix</ProductName>
     <ApplicationIcon>..\..\assets\brand\autofix-logo.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <PropertyGroup>
+    <RustTargetProfile>debug</RustTargetProfile>
+    <RustCargoBuildArgs></RustCargoBuildArgs>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RustTargetProfile>release</RustTargetProfile>
+    <RustCargoBuildArgs> --release</RustCargoBuildArgs>
+  </PropertyGroup>
+
+  <Target Name="BuildRustNativeLibrary" BeforeTargets="Build">
+    <Exec Command="cargo build -p background-engine$(RustCargoBuildArgs)" WorkingDirectory="$(MSBuildProjectDirectory)\..\.." />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\..\target\$(RustTargetProfile)\autofix_core.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />

@@ -21,24 +21,27 @@ public sealed class EngineProcessLauncher : IEngineProcessLauncher
 {
     public IEngineProcess Start()
     {
-        var path = EnginePath.Find();
+        var path = AutofixHostPath.Find();
         if (path is null)
         {
-            throw new FileNotFoundException("AF-BG-Engine.exe was not found.");
+            throw new FileNotFoundException("Autofix.exe was not found.");
         }
 
-        var process = Process.Start(new ProcessStartInfo
-        {
-            FileName = path,
-            Arguments = "--background",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = Path.GetDirectoryName(path),
-        }) ?? throw new InvalidOperationException("AF-BG-Engine.exe did not start.");
+        var process = Process.Start(CreateStartInfo(path))
+            ?? throw new InvalidOperationException("Autofix.exe --engine did not start.");
 
         process.EnableRaisingEvents = true;
         return new RealEngineProcess(process);
     }
+
+    internal static ProcessStartInfo CreateStartInfo(string path) => new()
+    {
+        FileName = path,
+        Arguments = Program.EngineArgument,
+        UseShellExecute = false,
+        CreateNoWindow = true,
+        WorkingDirectory = Path.GetDirectoryName(path),
+    };
 
     private sealed class RealEngineProcess : IEngineProcess
     {
@@ -67,16 +70,21 @@ public sealed class EngineProcessLauncher : IEngineProcessLauncher
     }
 }
 
-public static class EnginePath
+public static class AutofixHostPath
 {
     public static string? Find()
     {
+        if (Environment.ProcessPath is { } currentProcess && File.Exists(currentProcess))
+        {
+            return currentProcess;
+        }
+
         var baseDirectory = AppContext.BaseDirectory;
         var candidates = new[]
         {
-            Path.Combine(baseDirectory, "AF-BG-Engine.exe"),
-            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "target", "debug", "AF-BG-Engine.exe")),
-            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "target", "release", "AF-BG-Engine.exe")),
+            Path.Combine(baseDirectory, "Autofix.exe"),
+            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "ui", "settings-ui", "bin", "Debug", "net8.0-windows", "Autofix.exe")),
+            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "ui", "settings-ui", "bin", "Release", "net8.0-windows", "Autofix.exe")),
         };
 
         return candidates.FirstOrDefault(File.Exists);

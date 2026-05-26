@@ -7,32 +7,24 @@ public sealed class ShutdownHelperLauncher : IShutdownHelperLauncher
 {
     public bool TryLaunchShutdownAll()
     {
-        var path = FindBackgroundEnginePath();
+        var path = AutofixHostPath.Find();
         if (path is null)
         {
             return false;
         }
 
-        Process.Start(new ProcessStartInfo
-        {
-            FileName = path,
-            Arguments = "--shutdown-all",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        });
+        Process.Start(CreateStartInfo(path));
         return true;
     }
 
-    private static string? FindBackgroundEnginePath()
+    internal static ProcessStartInfo CreateStartInfo(string path)
     {
-        var baseDirectory = AppContext.BaseDirectory;
-        var candidates = new[]
+        return new ProcessStartInfo
         {
-            Path.Combine(baseDirectory, "AF-BG-Engine.exe"),
-            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "target", "debug", "AF-BG-Engine.exe")),
-            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "target", "release", "AF-BG-Engine.exe")),
+            FileName = path,
+            Arguments = Program.ShutdownAllArgument,
+            UseShellExecute = false,
+            CreateNoWindow = true,
         };
-
-        return candidates.FirstOrDefault(File.Exists);
     }
 }

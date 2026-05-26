@@ -34,7 +34,7 @@ sqlite3 --version
 dotnet --info
 dotnet build .\AutoFix.sln
 cargo test
-cargo run -p background-engine
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-app.ps1
 ```
 
 Expected Rust coverage:

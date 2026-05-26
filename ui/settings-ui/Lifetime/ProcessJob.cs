@@ -9,6 +9,7 @@ public sealed class ProcessJob : IDisposable
 
     public ProcessJob()
     {
+        // Lifecycle guard only. Task Manager grouping comes from using Autofix.exe for every role.
         if (!OperatingSystem.IsWindows())
         {
             return;
