@@ -13,6 +13,7 @@ public enum EngineExitClassification
 
 public sealed class EngineSupervisor : IDisposable
 {
+    private readonly object engineLock = new();
     private readonly IEngineProcessLauncher launcher;
     private readonly RestartPolicy restartPolicy;
     private readonly IntentionalEngineStop intentionalStop;
@@ -31,29 +32,48 @@ public sealed class EngineSupervisor : IDisposable
 
     public event EventHandler<EngineExitClassification>? EngineExitClassified;
 
-    public bool IsRunning => engine is { HasExited: false };
+    public bool IsRunning
+    {
+        get
+        {
+            lock (engineLock)
+            {
+                return engine is { HasExited: false };
+            }
+        }
+    }
 
     public void Start()
     {
-        if (IsRunning)
+        lock (engineLock)
         {
-            return;
-        }
+            if (engine is { HasExited: false })
+            {
+                return;
+            }
 
-        StartNewEngine();
+            StartNewEngine();
+        }
     }
 
     public void StopIntentionally(ShutdownReason reason)
     {
-        restartPolicy.Clear();
-        intentionalStop.Mark(reason);
-        if (engine is { HasExited: false } running)
+        IEngineProcess? running = null;
+        lock (engineLock)
         {
-            running.Kill();
-            return;
+            restartPolicy.Clear();
+            intentionalStop.Mark(reason);
+            if (engine is { HasExited: false } current)
+            {
+                running = current;
+            }
+            else
+            {
+                intentionalStop.Clear();
+            }
         }
 
-        intentionalStop.Clear();
+        running?.Kill();
     }
 
     private void StartNewEngine()
@@ -66,44 +86,58 @@ public sealed class EngineSupervisor : IDisposable
 
     private void EngineExited(object? sender, EventArgs e)
     {
-        if (disposed)
+        EngineExitClassification? classification = null;
+
+        lock (engineLock)
         {
-            return;
+            if (disposed)
+            {
+                return;
+            }
+
+            if (intentionalStop.HasCurrentStop)
+            {
+                intentionalStop.Clear();
+                classification = EngineExitClassification.Intentional;
+            }
+            else if (engine?.ExitCode == 1)
+            {
+                classification = EngineExitClassification.ExternalKill;
+            }
+            else if (!restartPolicy.TryRecordAttempt())
+            {
+                classification = EngineExitClassification.RestartExhausted;
+            }
+            else
+            {
+                try
+                {
+                    StartNewEngine();
+                    classification = EngineExitClassification.Restarted;
+                }
+                catch (Exception error) when (error is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                    classification = EngineExitClassification.StartFailed;
+                }
+            }
+
         }
 
-        if (intentionalStop.HasCurrentStop)
+        if (classification is { } exitClassification)
         {
-            intentionalStop.Clear();
-            EngineExitClassified?.Invoke(this, EngineExitClassification.Intentional);
-            return;
-        }
-
-        if (engine?.ExitCode == 1)
-        {
-            EngineExitClassified?.Invoke(this, EngineExitClassification.ExternalKill);
-            return;
-        }
-
-        if (!restartPolicy.TryRecordAttempt())
-        {
-            EngineExitClassified?.Invoke(this, EngineExitClassification.RestartExhausted);
-            return;
-        }
-
-        try
-        {
-            StartNewEngine();
-            EngineExitClassified?.Invoke(this, EngineExitClassification.Restarted);
-        }
-        catch (Exception error) when (error is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            EngineExitClassified?.Invoke(this, EngineExitClassification.StartFailed);
+            EngineExitClassified?.Invoke(this, exitClassification);
         }
     }
 
     public void Dispose()
     {
-        disposed = true;
-        engine?.Dispose();
+        IEngineProcess? current;
+        lock (engineLock)
+        {
+            disposed = true;
+            current = engine;
+        }
+
+        current?.Dispose();
     }
 }

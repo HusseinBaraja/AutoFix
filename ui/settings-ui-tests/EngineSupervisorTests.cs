@@ -69,15 +69,28 @@ public sealed class EngineSupervisorTests
         Assert.AreEqual(1, launcher.Starts);
     }
 
+    [TestMethod]
+    public void ConcurrentStartCallsCreateOneEngine()
+    {
+        var launcher = new FakeLauncher();
+        var supervisor = new EngineSupervisor(launcher);
+
+        Parallel.For(0, 32, _ => supervisor.Start());
+
+        Assert.AreEqual(1, launcher.Starts);
+    }
+
     private sealed class FakeLauncher : IEngineProcessLauncher
     {
-        public int Starts { get; private set; }
+        private int starts;
+
+        public int Starts => starts;
         public FakeProcess? LastProcess { get; private set; }
 
         public IEngineProcess Start()
         {
-            Starts++;
-            LastProcess = new FakeProcess(Starts);
+            var currentStart = Interlocked.Increment(ref starts);
+            LastProcess = new FakeProcess(currentStart);
             return LastProcess;
         }
     }
