@@ -45,6 +45,11 @@ public sealed class SingleInstance : IDisposable
 
     public async Task SignalExistingAsync()
     {
+        if (disposed)
+        {
+            throw new ObjectDisposedException(nameof(SingleInstance));
+        }
+
         await using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out, PipeOptions.Asynchronous);
         await client.ConnectAsync(500).ConfigureAwait(false);
         await client.WriteAsync(Encoding.UTF8.GetBytes("activate"), cancellation.Token).ConfigureAwait(false);

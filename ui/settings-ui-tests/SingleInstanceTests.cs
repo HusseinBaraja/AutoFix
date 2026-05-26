@@ -100,6 +100,20 @@ public sealed class SingleInstanceTests
         singleInstance.Dispose();
     }
 
+    [TestMethod]
+    public async Task SignalExistingAfterDisposeThrowsObjectDisposedException()
+    {
+        var name = UniqueMutexName();
+        var mutex = new Mutex(true, name, out _);
+        var singleInstance = new SingleInstance(mutex, ownsInstance: true, activated: () => { });
+        singleInstance.Dispose();
+
+        var exception = await Assert.ThrowsExceptionAsync<ObjectDisposedException>(
+            singleInstance.SignalExistingAsync);
+
+        Assert.AreEqual(nameof(SingleInstance), exception.ObjectName);
+    }
+
     private static string UniqueMutexName() =>
         $"Local\\AutoFix.Tests.{Guid.NewGuid():N}";
 }
