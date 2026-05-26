@@ -25,7 +25,20 @@ public sealed class SingleInstance : IDisposable
     public static SingleInstance Create(Action activated)
     {
         var mutex = new Mutex(true, MutexName, out var createdNew);
-        return new SingleInstance(mutex, createdNew, activated);
+        var ownsInstance = createdNew || TryAcquireExistingMutex(mutex);
+        return new SingleInstance(mutex, ownsInstance, activated);
+    }
+
+    internal static bool TryAcquireExistingMutex(Mutex mutex)
+    {
+        try
+        {
+            return mutex.WaitOne(0);
+        }
+        catch (AbandonedMutexException)
+        {
+            return true;
+        }
     }
 
     public async Task SignalExistingAsync()

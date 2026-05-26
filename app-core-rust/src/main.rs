@@ -2,8 +2,6 @@
 mod accessibility;
 mod background;
 mod ipc;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -54,8 +52,6 @@ fn launch_settings_shell() -> Result<(), Box<dyn std::error::Error>> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    command.creation_flags(0x0000_0008 | 0x0000_0200);
     command.spawn()?;
     Ok(())
 }
@@ -63,7 +59,14 @@ fn launch_settings_shell() -> Result<(), Box<dyn std::error::Error>> {
 fn find_settings_shell() -> Option<PathBuf> {
     settings_shell_candidates()
         .into_iter()
-        .find(|candidate| candidate.is_file())
+        .find(|candidate| is_settings_shell_candidate(candidate))
+}
+
+fn is_settings_shell_candidate(candidate: &PathBuf) -> bool {
+    candidate.is_file()
+        && candidate
+            .parent()
+            .is_some_and(|parent| parent.join("Autofix.dll").is_file())
 }
 
 fn settings_shell_candidates() -> Vec<PathBuf> {
@@ -109,5 +112,12 @@ mod app_launch_tests {
         assert!(candidates
             .iter()
             .any(|path| path.ends_with("ui/settings-ui/bin/Release/net8.0-windows/Autofix.exe")));
+    }
+
+    #[test]
+    fn settings_shell_candidates_require_wpf_apphost_sibling_files() {
+        let missing = PathBuf::from(r"C:\AutoFix\Autofix.exe");
+
+        assert!(!is_settings_shell_candidate(&missing));
     }
 }
