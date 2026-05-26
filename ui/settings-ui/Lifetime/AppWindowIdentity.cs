@@ -18,7 +18,7 @@ internal static class AppWindowIdentity
         window.SourceInitialized += (_, _) => ApplyToHandle(new WindowInteropHelper(window).Handle);
     }
 
-    private static void ApplyToHandle(IntPtr windowHandle)
+    internal static void ApplyToHandle(IntPtr windowHandle)
     {
         if (windowHandle == IntPtr.Zero)
         {

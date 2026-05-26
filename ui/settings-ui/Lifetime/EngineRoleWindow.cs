@@ -38,10 +38,10 @@ internal sealed class EngineRoleWindow : IDisposable
         }
 
         var handle = NativeMethods.CreateWindowExW(
-            NativeMethods.WS_EX_TOOLWINDOW | NativeMethods.WS_EX_NOACTIVATE,
+            0,
             className,
             Title,
-            NativeMethods.WS_POPUP,
+            NativeMethods.WS_OVERLAPPEDWINDOW,
             -32000,
             -32000,
             1,
@@ -56,6 +56,7 @@ internal sealed class EngineRoleWindow : IDisposable
             return null;
         }
 
+        AppWindowIdentity.ApplyToHandle(handle);
         NativeMethods.ShowWindow(handle, NativeMethods.SW_SHOWNOACTIVATE);
         return new EngineRoleWindow(atom, wndProc, handle);
     }
@@ -79,9 +80,7 @@ internal sealed class EngineRoleWindow : IDisposable
     private static partial class NativeMethods
     {
         internal const int SW_SHOWNOACTIVATE = 4;
-        internal const int WS_POPUP = unchecked((int)0x80000000);
-        internal const int WS_EX_TOOLWINDOW = 0x00000080;
-        internal const int WS_EX_NOACTIVATE = 0x08000000;
+        internal const int WS_OVERLAPPEDWINDOW = 0x00CF0000;
 
         internal delegate IntPtr WndProc(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
 
