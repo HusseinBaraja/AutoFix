@@ -12,6 +12,7 @@ public sealed class ShellLifetime : IDisposable
     private readonly SingleInstance singleInstance;
     private ShellTray? tray;
     private Window? window;
+    private readonly object shutdownSync = new();
     private bool shutdownInProgress;
 
     public ShellLifetime(
@@ -60,12 +61,16 @@ public sealed class ShellLifetime : IDisposable
 
     public void Shutdown(ShutdownReason reason)
     {
-        if (shutdownInProgress)
+        lock (shutdownSync)
         {
-            return;
+            if (shutdownInProgress)
+            {
+                return;
+            }
+
+            shutdownInProgress = true;
         }
 
-        shutdownInProgress = true;
         engineSupervisor.StopIntentionally(reason);
         tray?.Dispose();
         application.Shutdown();
@@ -73,9 +78,12 @@ public sealed class ShellLifetime : IDisposable
 
     private void WindowClosing(object? sender, CancelEventArgs e)
     {
-        if (shutdownInProgress)
+        lock (shutdownSync)
         {
-            return;
+            if (shutdownInProgress)
+            {
+                return;
+            }
         }
 
         e.Cancel = true;
