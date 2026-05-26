@@ -3,6 +3,8 @@ mod ipc;
 mod settings;
 mod storage;
 
+use std::panic;
+
 #[cfg(test)]
 mod accessibility;
 #[cfg(test)]
@@ -26,7 +28,13 @@ pub fn run_background_entry() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn autofix_run_background() -> i32 {
-    run_background_entry()
+    match panic::catch_unwind(run_background_entry) {
+        Ok(code) => code,
+        Err(_) => {
+            eprintln!("panic in autofix_run_background");
+            2
+        }
+    }
 }
 
 #[cfg(test)]
