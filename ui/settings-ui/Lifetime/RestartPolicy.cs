@@ -24,20 +24,29 @@ public sealed class RestartPolicy
 
     public bool TryRecordAttempt()
     {
-        var now = timeProvider.GetUtcNow();
-        while (attempts.Count > 0 && now - attempts.Peek() > window)
+        lock (attempts)
         {
-            attempts.Dequeue();
-        }
+            var now = timeProvider.GetUtcNow();
+            while (attempts.Count > 0 && now - attempts.Peek() > window)
+            {
+                attempts.Dequeue();
+            }
 
-        if (attempts.Count >= maxAttempts)
-        {
-            return false;
-        }
+            if (attempts.Count >= maxAttempts)
+            {
+                return false;
+            }
 
-        attempts.Enqueue(now);
-        return true;
+            attempts.Enqueue(now);
+            return true;
+        }
     }
 
-    public void Clear() => attempts.Clear();
+    public void Clear()
+    {
+        lock (attempts)
+        {
+            attempts.Clear();
+        }
+    }
 }
