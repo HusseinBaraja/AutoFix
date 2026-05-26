@@ -10,6 +10,7 @@ public sealed class SingleInstance : IDisposable
     private const string PipeName = "AutoFix.Autofix.Activate";
     private readonly Mutex mutex;
     private readonly CancellationTokenSource cancellation = new();
+    private readonly object disposeLock = new();
     private readonly Action activated;
     private readonly bool ownsInstance;
     private Task? listenerTask;
@@ -45,14 +46,17 @@ public sealed class SingleInstance : IDisposable
 
     public async Task SignalExistingAsync()
     {
-        if (disposed)
+        lock (disposeLock)
         {
-            throw new ObjectDisposedException(nameof(SingleInstance));
+            if (disposed)
+            {
+                throw new ObjectDisposedException(nameof(SingleInstance));
+            }
         }
 
         await using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out, PipeOptions.Asynchronous);
         await client.ConnectAsync(500).ConfigureAwait(false);
-        await client.WriteAsync(Encoding.UTF8.GetBytes("activate"), cancellation.Token).ConfigureAwait(false);
+        await client.WriteAsync(Encoding.UTF8.GetBytes("activate"), CancellationToken.None).ConfigureAwait(false);
     }
 
     public void StartListening()
@@ -115,12 +119,16 @@ public sealed class SingleInstance : IDisposable
 
     public void Dispose()
     {
-        if (disposed)
+        lock (disposeLock)
         {
-            return;
+            if (disposed)
+            {
+                return;
+            }
+
+            disposed = true;
         }
 
-        disposed = true;
         cancellation.Cancel();
         if (listenerTask?.IsFaulted == true)
         {
