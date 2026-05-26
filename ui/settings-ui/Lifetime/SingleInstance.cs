@@ -12,6 +12,7 @@ public sealed class SingleInstance : IDisposable
     private readonly CancellationTokenSource cancellation = new();
     private readonly Action activated;
     private readonly bool ownsInstance;
+    private Task? listenerTask;
     private bool disposed;
 
     internal SingleInstance(Mutex mutex, bool ownsInstance, Action activated)
@@ -56,7 +57,22 @@ public sealed class SingleInstance : IDisposable
             return;
         }
 
-        _ = ListenAsync();
+        listenerTask = Task.Run(ListenAsync);
+        _ = ObserveListenerTaskAsync(listenerTask);
+    }
+
+    internal static async Task ObserveListenerTaskAsync(Task task)
+    {
+        try
+        {
+            await task.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception)
+        {
+        }
     }
 
     private async Task ListenAsync()
@@ -101,6 +117,11 @@ public sealed class SingleInstance : IDisposable
 
         disposed = true;
         cancellation.Cancel();
+        if (listenerTask?.IsFaulted == true)
+        {
+            _ = listenerTask.Exception;
+        }
+
         cancellation.Dispose();
         if (ownsInstance)
         {

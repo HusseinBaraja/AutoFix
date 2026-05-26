@@ -80,6 +80,16 @@ public sealed class SingleInstanceTests
     }
 
     [TestMethod]
+    public async Task ListenerTaskExceptionIsObserved()
+    {
+        var failedTask = Task.FromException(new InvalidOperationException("Listener failed."));
+
+        await SingleInstance.ObserveListenerTaskAsync(failedTask);
+
+        Assert.IsTrue(failedTask.IsFaulted);
+    }
+
+    [TestMethod]
     public void DisposeCanBeCalledTwice()
     {
         var name = UniqueMutexName();
