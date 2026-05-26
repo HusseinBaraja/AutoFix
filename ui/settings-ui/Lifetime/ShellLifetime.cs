@@ -96,6 +96,7 @@ public sealed class ShellLifetime : IDisposable
 
     public void Dispose()
     {
+        engineSupervisor.EngineExitClassified -= EngineExitClassified;
         tray?.Dispose();
         engineSupervisor.Dispose();
         processJob.Dispose();
