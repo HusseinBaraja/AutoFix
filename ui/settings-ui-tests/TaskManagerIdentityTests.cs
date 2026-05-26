@@ -10,4 +10,10 @@ public sealed class TaskManagerIdentityTests
     {
         Assert.AreEqual("Autofix", AppWindowIdentity.AppDisplayName);
     }
+
+    [TestMethod]
+    public void QuoteDoublesInternalQuotesForWindowsCommandLine()
+    {
+        Assert.AreEqual("\"C:\\App\"\"Name\\Autofix.exe\"", AppWindowIdentity.Quote("C:\\App\"Name\\Autofix.exe"));
+    }
 }

@@ -46,7 +46,7 @@ internal static class AppWindowIdentity
         propertyStore.Commit();
     }
 
-    private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"")}\"";
+    internal static string Quote(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
 
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
     internal readonly struct PropertyKey
