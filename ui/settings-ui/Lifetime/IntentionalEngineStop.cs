@@ -2,22 +2,58 @@ namespace AutoFix.SettingsUi.Lifetime;
 
 public sealed class IntentionalEngineStop
 {
-    public ShutdownReason? CurrentReason { get; private set; }
+    private readonly object lockObj = new();
+    private ShutdownReason? currentReason;
 
-    public bool HasCurrentStop => CurrentReason is not null;
+    public ShutdownReason? CurrentReason
+    {
+        get
+        {
+            lock (lockObj)
+            {
+                return currentReason;
+            }
+        }
+    }
 
-    public void Mark(ShutdownReason reason) => CurrentReason = reason;
+    public bool HasCurrentStop
+    {
+        get
+        {
+            lock (lockObj)
+            {
+                return currentReason is not null;
+            }
+        }
+    }
+
+    public void Mark(ShutdownReason reason)
+    {
+        lock (lockObj)
+        {
+            currentReason = reason;
+        }
+    }
 
     public bool ConsumeIfMatches(ShutdownReason reason)
     {
-        if (CurrentReason != reason)
+        lock (lockObj)
         {
-            return false;
-        }
+            if (currentReason != reason)
+            {
+                return false;
+            }
 
-        CurrentReason = null;
-        return true;
+            currentReason = null;
+            return true;
+        }
     }
 
-    public void Clear() => CurrentReason = null;
+    public void Clear()
+    {
+        lock (lockObj)
+        {
+            currentReason = null;
+        }
+    }
 }

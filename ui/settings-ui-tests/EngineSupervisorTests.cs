@@ -81,6 +81,29 @@ public sealed class EngineSupervisorTests
     }
 
     [TestMethod]
+    public void ConcurrentConsumesClearReasonOnce()
+    {
+        var intentionalStop = new IntentionalEngineStop();
+        intentionalStop.Mark(ShutdownReason.UserExit);
+
+        var matches = 0;
+
+        Parallel.For(
+            0,
+            32,
+            _ =>
+            {
+                if (intentionalStop.ConsumeIfMatches(ShutdownReason.UserExit))
+                {
+                    Interlocked.Increment(ref matches);
+                }
+            });
+
+        Assert.AreEqual(1, matches);
+        Assert.IsFalse(intentionalStop.HasCurrentStop);
+    }
+
+    [TestMethod]
     public void StaleEngineExitDoesNotRestartCurrentEngine()
     {
         var launcher = new FakeLauncher();
