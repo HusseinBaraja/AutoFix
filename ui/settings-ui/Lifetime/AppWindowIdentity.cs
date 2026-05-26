@@ -35,15 +35,22 @@ internal static class AppWindowIdentity
             return;
         }
 
-        using var appId = PropVariant.FromString(AppIdentity.AppUserModelId);
-        using var relaunchName = PropVariant.FromString(AppDisplayName);
-        using var relaunchCommand = PropVariant.FromString(Quote(
-            Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "Autofix.exe")));
+        try
+        {
+            using var appId = PropVariant.FromString(AppIdentity.AppUserModelId);
+            using var relaunchName = PropVariant.FromString(AppDisplayName);
+            using var relaunchCommand = PropVariant.FromString(Quote(
+                Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "Autofix.exe")));
 
-        propertyStore.SetValue(NativeMethods.PKEY_AppUserModel_ID, appId);
-        propertyStore.SetValue(NativeMethods.PKEY_AppUserModel_RelaunchDisplayNameResource, relaunchName);
-        propertyStore.SetValue(NativeMethods.PKEY_AppUserModel_RelaunchCommand, relaunchCommand);
-        propertyStore.Commit();
+            propertyStore.SetValue(NativeMethods.PKEY_AppUserModel_ID, appId);
+            propertyStore.SetValue(NativeMethods.PKEY_AppUserModel_RelaunchDisplayNameResource, relaunchName);
+            propertyStore.SetValue(NativeMethods.PKEY_AppUserModel_RelaunchCommand, relaunchCommand);
+            propertyStore.Commit();
+        }
+        finally
+        {
+            Marshal.ReleaseComObject(propertyStore);
+        }
     }
 
     internal static string Quote(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
