@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -36,7 +37,8 @@ internal static class AppWindowIdentity
 
         using var appId = PropVariant.FromString(AppIdentity.AppUserModelId);
         using var relaunchName = PropVariant.FromString(AppDisplayName);
-        using var relaunchCommand = PropVariant.FromString(Quote(Environment.ProcessPath ?? "Autofix.exe"));
+        using var relaunchCommand = PropVariant.FromString(Quote(
+            Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "Autofix.exe")));
 
         propertyStore.SetValue(NativeMethods.PKEY_AppUserModel_ID, appId);
         propertyStore.SetValue(NativeMethods.PKEY_AppUserModel_RelaunchDisplayNameResource, relaunchName);
