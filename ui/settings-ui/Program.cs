@@ -44,8 +44,7 @@ internal sealed class AppRoleHost : IAppRoleHost
     {
         var app = new App();
         app.InitializeComponent();
-        app.Run();
-        return 0;
+        return app.Run();
     }
 
     public int RunEngine()
