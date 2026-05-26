@@ -28,17 +28,6 @@ public sealed class ProgramDispatchTests
     }
 
     [TestMethod]
-    public void ShutdownAllArgumentRunsShutdownRoleAfterSettingIdentity()
-    {
-        var host = new FakeAppRoleHost(shutdownExitCode: 13);
-
-        var exitCode = Program.Run(new[] { Program.ShutdownAllArgument }, host);
-
-        Assert.AreEqual(13, exitCode);
-        CollectionAssert.AreEqual(new[] { "identity", "shutdown" }, host.Calls);
-    }
-
-    [TestMethod]
     public void UnknownArgumentsReturnUsageErrorWithoutIdentity()
     {
         var host = new FakeAppRoleHost();
@@ -51,8 +40,7 @@ public sealed class ProgramDispatchTests
 
     private sealed class FakeAppRoleHost(
         int settingsExitCode = 0,
-        int engineExitCode = 0,
-        int shutdownExitCode = 0) : IAppRoleHost
+        int engineExitCode = 0) : IAppRoleHost
     {
         public List<string> Calls { get; } = new();
 
@@ -68,12 +56,6 @@ public sealed class ProgramDispatchTests
         {
             Calls.Add("engine");
             return engineExitCode;
-        }
-
-        public int ShutdownAll()
-        {
-            Calls.Add("shutdown");
-            return shutdownExitCode;
         }
 
         public void WriteUsage() => Calls.Add("usage");

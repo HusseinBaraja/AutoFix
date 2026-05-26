@@ -31,8 +31,7 @@
             "open_logs",
             "request_undo_last_correction",
             "test_correction_engine_later",
-            "is_background_running",
-            "shutdown_all"
+            "is_background_running"
           ]
         },
         "payload": {

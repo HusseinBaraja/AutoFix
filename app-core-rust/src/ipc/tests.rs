@@ -174,21 +174,10 @@ fn unavailable_pipe_returns_background_unavailable() {
     assert!(matches!(error, IpcClientError::Unavailable));
 }
 
-#[test]
-fn shutdown_all_sets_shared_shutdown_flag() {
-    let fixture = IpcFixture::start();
-
-    let response = send_request(&fixture.pipe_path, &IpcRequest::ShutdownAll).unwrap();
-
-    assert!(matches!(response, IpcResponse::ShutdownAccepted(_)));
-    assert!(fixture.shutdown_requested.load(Ordering::Relaxed));
-}
-
 struct IpcFixture {
     root: PathBuf,
     config_path: PathBuf,
     pipe_path: String,
-    shutdown_requested: Arc<AtomicBool>,
     server: Option<NamedPipeIpcServer>,
 }
 
@@ -214,7 +203,6 @@ impl IpcFixture {
             root,
             config_path,
             pipe_path,
-            shutdown_requested,
             server: Some(server),
         }
     }

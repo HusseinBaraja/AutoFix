@@ -30,7 +30,7 @@ use self::{
     admin::reject_elevated_process,
     components::{CorrectionEngineRouter, NamedPipeIpcServer, ReplacementEngine, SessionManager},
     paths::RuntimePaths,
-    process_group::{shutdown_trusted_autofix_process_group, SiblingDisappearanceMonitor},
+    process_group::SiblingDisappearanceMonitor,
     security::{SecurityDecision, SecurityGate, TriggerKind},
     shortcuts::{GlobalShortcutListener, ShortcutAction},
 };
@@ -93,11 +93,6 @@ pub(crate) fn run_background_mode() -> Result<(), BackgroundError> {
     runtime.run_until_exit();
     runtime.shutdown();
     Ok(())
-}
-
-pub(crate) fn shutdown_process_group_mode() {
-    initialize_logging();
-    shutdown_trusted_autofix_process_group();
 }
 
 impl BackgroundRuntime {

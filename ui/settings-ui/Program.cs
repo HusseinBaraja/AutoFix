@@ -7,14 +7,12 @@ internal interface IAppRoleHost
     void SetAppIdentity();
     int RunSettings();
     int RunEngine();
-    int ShutdownAll();
     void WriteUsage();
 }
 
 internal static class Program
 {
     internal const string EngineArgument = "--engine";
-    internal const string ShutdownAllArgument = "--shutdown-all";
 
     [STAThread]
     public static int Main(string[] args) => Run(args, new AppRoleHost());
@@ -31,12 +29,6 @@ internal static class Program
         {
             host.SetAppIdentity();
             return host.RunEngine();
-        }
-
-        if (args.Count == 1 && args[0] == ShutdownAllArgument)
-        {
-            host.SetAppIdentity();
-            return host.ShutdownAll();
         }
 
         host.WriteUsage();
@@ -62,7 +54,5 @@ internal sealed class AppRoleHost : IAppRoleHost
         return NativeEngine.RunBackground();
     }
 
-    public int ShutdownAll() => NativeEngine.ShutdownAll();
-
-    public void WriteUsage() => Console.Error.WriteLine("usage: Autofix.exe [--engine|--shutdown-all]");
+    public void WriteUsage() => Console.Error.WriteLine("usage: Autofix.exe [--engine]");
 }

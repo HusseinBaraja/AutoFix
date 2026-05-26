@@ -1,28 +1,6 @@
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::path::{Path, PathBuf};
 
-const ALLOWED_PROCESS_NAMES: [&str; 2] = ["AF-BG-Engine.exe", "Autofix.exe"];
-const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
-
-pub(crate) fn shutdown_trusted_autofix_process_group() {
-    match native::current_process_context() {
-        Ok(context) => {
-            let outcome = shutdown_sibling_processes(&native::RealProcessController, &context);
-            tracing::info!(
-                matched = outcome.matched,
-                graceful_succeeded = outcome.graceful_succeeded,
-                graceful_timed_out = outcome.graceful_timed_out,
-                force_kill_attempted = outcome.force_kill_attempted,
-                force_kill_succeeded = outcome.force_kill_succeeded,
-                force_kill_failed = outcome.force_kill_failed,
-                "AutoFix process-group shutdown completed"
-            );
-        }
-        Err(error) => tracing::warn!("AutoFix process-group shutdown skipped: {}", error),
-    }
-}
+const ALLOWED_PROCESS_NAMES: [&str; 1] = ["Autofix.exe"];
 
 pub(crate) struct SiblingDisappearanceMonitor {
     observed_sibling_ids: Vec<u32>,
@@ -91,88 +69,8 @@ struct CurrentProcessContext {
     trusted_root: PathBuf,
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
-struct ShutdownOutcome {
-    matched: usize,
-    graceful_succeeded: usize,
-    graceful_timed_out: usize,
-    force_kill_attempted: usize,
-    force_kill_succeeded: usize,
-    force_kill_failed: usize,
-}
-
 trait ProcessController {
     fn list_processes(&self) -> Vec<ProcessSnapshot>;
-    fn request_graceful_exit(&self, process: &ProcessSnapshot) -> bool;
-    fn wait_for_exit(&self, process: &ProcessSnapshot, timeout: Duration) -> bool;
-    fn force_kill(&self, process: &ProcessSnapshot) -> bool;
-}
-
-fn shutdown_sibling_processes(
-    controller: &impl ProcessController,
-    context: &CurrentProcessContext,
-) -> ShutdownOutcome {
-    let targets = controller
-        .list_processes()
-        .into_iter()
-        .filter(|process| is_sibling_autofix_process(process, context))
-        .collect::<Vec<_>>();
-
-    let mut outcome = ShutdownOutcome {
-        matched: targets.len(),
-        ..ShutdownOutcome::default()
-    };
-
-    for target in targets {
-        #[cfg(not(test))]
-        tracing::info!(
-            process_id = target.process_id,
-            executable_name = %target.executable_name,
-            executable_path = %target.executable_path.display(),
-            "matched AutoFix process discovered for tray-exit shutdown"
-        );
-
-        let graceful_requested = controller.request_graceful_exit(&target);
-        if graceful_requested && controller.wait_for_exit(&target, GRACEFUL_SHUTDOWN_TIMEOUT) {
-            outcome.graceful_succeeded += 1;
-            #[cfg(not(test))]
-            tracing::info!(
-                process_id = target.process_id,
-                executable_name = %target.executable_name,
-                "graceful exit succeeded for AutoFix process"
-            );
-            continue;
-        }
-
-        outcome.graceful_timed_out += 1;
-        #[cfg(not(test))]
-        tracing::warn!(
-            process_id = target.process_id,
-            executable_name = %target.executable_name,
-            "graceful exit timed out for AutoFix process"
-        );
-
-        outcome.force_kill_attempted += 1;
-        if controller.force_kill(&target) {
-            outcome.force_kill_succeeded += 1;
-            #[cfg(not(test))]
-            tracing::warn!(
-                process_id = target.process_id,
-                executable_name = %target.executable_name,
-                "force-kill succeeded for AutoFix process"
-            );
-        } else {
-            outcome.force_kill_failed += 1;
-            #[cfg(not(test))]
-            tracing::error!(
-                process_id = target.process_id,
-                executable_name = %target.executable_name,
-                "force-kill failed for AutoFix process"
-            );
-        }
-    }
-
-    outcome
 }
 
 fn is_sibling_autofix_process(process: &ProcessSnapshot, context: &CurrentProcessContext) -> bool {
@@ -214,18 +112,13 @@ mod native {
     };
     use std::{
         ffi::OsString,
-        iter::once,
         mem::{size_of, zeroed},
-        os::windows::ffi::{OsStrExt, OsStringExt},
+        os::windows::ffi::OsStringExt,
         path::{Path, PathBuf},
         ptr::null_mut,
-        time::Duration,
     };
     use windows_sys::Win32::{
-        Foundation::{
-            CloseHandle, LocalFree, BOOL, HANDLE, HWND, INVALID_HANDLE_VALUE, LPARAM, MAX_PATH,
-            TRUE, WAIT_OBJECT_0,
-        },
+        Foundation::{CloseHandle, LocalFree, HANDLE, INVALID_HANDLE_VALUE, MAX_PATH},
         Security::{
             Authorization::ConvertSidToStringSidW, GetTokenInformation, TokenUser, TOKEN_QUERY,
             TOKEN_USER,
@@ -237,11 +130,9 @@ mod native {
             },
             Threading::{
                 GetCurrentProcessId, OpenProcess, OpenProcessToken, QueryFullProcessImageNameW,
-                TerminateProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
-                PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+                PROCESS_QUERY_LIMITED_INFORMATION,
             },
         },
-        UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, PostMessageW, WM_CLOSE},
     };
 
     pub(super) struct RealProcessController;
@@ -249,18 +140,6 @@ mod native {
     impl ProcessController for RealProcessController {
         fn list_processes(&self) -> Vec<ProcessSnapshot> {
             list_processes()
-        }
-
-        fn request_graceful_exit(&self, process: &ProcessSnapshot) -> bool {
-            request_window_close(process.process_id)
-        }
-
-        fn wait_for_exit(&self, process: &ProcessSnapshot, timeout: Duration) -> bool {
-            wait_for_exit(process.process_id, timeout)
-        }
-
-        fn force_kill(&self, process: &ProcessSnapshot) -> bool {
-            force_kill(process.process_id)
         }
     }
 
@@ -411,66 +290,6 @@ mod native {
         Ok(sid)
     }
 
-    struct CloseWindowContext {
-        process_id: u32,
-        posted: bool,
-    }
-
-    fn request_window_close(process_id: u32) -> bool {
-        let mut context = CloseWindowContext {
-            process_id,
-            posted: false,
-        };
-
-        unsafe {
-            EnumWindows(
-                Some(enum_window_for_process),
-                &mut context as *mut CloseWindowContext as LPARAM,
-            );
-        }
-
-        context.posted
-    }
-
-    unsafe extern "system" fn enum_window_for_process(window: HWND, parameter: LPARAM) -> BOOL {
-        let context = &mut *(parameter as *mut CloseWindowContext);
-        let mut window_process_id = 0;
-        GetWindowThreadProcessId(window, &mut window_process_id);
-        if window_process_id == context.process_id {
-            if PostMessageW(window, WM_CLOSE, 0, 0) != 0 {
-                context.posted = true;
-            }
-        }
-
-        TRUE
-    }
-
-    fn wait_for_exit(process_id: u32, timeout: Duration) -> bool {
-        let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, process_id) };
-        if process.is_null() {
-            return true;
-        }
-
-        let result = unsafe { WaitForSingleObject(process, timeout.as_millis() as u32) };
-        unsafe {
-            CloseHandle(process);
-        }
-        result == WAIT_OBJECT_0
-    }
-
-    fn force_kill(process_id: u32) -> bool {
-        let process = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
-        if process.is_null() {
-            return false;
-        }
-
-        let ok = unsafe { TerminateProcess(process, 1) } != 0;
-        unsafe {
-            CloseHandle(process);
-        }
-        ok
-    }
-
     fn process_name_from_entry(entry: &PROCESSENTRY32W) -> String {
         let nul = entry
             .szExeFile
@@ -481,35 +300,17 @@ mod native {
             .to_string_lossy()
             .into_owned()
     }
-
-    #[allow(dead_code)]
-    fn wide(path: &Path) -> Vec<u16> {
-        path.as_os_str().encode_wide().chain(once(0)).collect()
-    }
 }
 
 #[cfg(not(windows))]
 mod native {
     use super::{CurrentProcessContext, ProcessController, ProcessSnapshot};
-    use std::time::Duration;
 
     pub(super) struct RealProcessController;
 
     impl ProcessController for RealProcessController {
         fn list_processes(&self) -> Vec<ProcessSnapshot> {
             Vec::new()
-        }
-
-        fn request_graceful_exit(&self, _process: &ProcessSnapshot) -> bool {
-            false
-        }
-
-        fn wait_for_exit(&self, _process: &ProcessSnapshot, _timeout: Duration) -> bool {
-            true
-        }
-
-        fn force_kill(&self, _process: &ProcessSnapshot) -> bool {
-            false
         }
     }
 
@@ -521,17 +322,11 @@ mod native {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
 
     #[test]
     fn accepts_same_user_allowlisted_process_under_trusted_root() {
         let context = context();
-        let process = process(
-            42,
-            "S-1-5-21",
-            "AF-BG-Engine.exe",
-            r"C:\AutoFix\AF-BG-Engine.exe",
-        );
+        let process = process(42, "S-1-5-21", "Autofix.exe", r"C:\AutoFix\Autofix.exe");
 
         assert!(is_sibling_autofix_process(&process, &context));
     }
@@ -539,12 +334,7 @@ mod tests {
     #[test]
     fn rejects_different_owner_sid() {
         let context = context();
-        let process = process(
-            42,
-            "S-1-5-99",
-            "AF-BG-Engine.exe",
-            r"C:\AutoFix\AF-BG-Engine.exe",
-        );
+        let process = process(42, "S-1-5-99", "Autofix.exe", r"C:\AutoFix\Autofix.exe");
 
         assert!(!is_sibling_autofix_process(&process, &context));
     }
@@ -552,12 +342,7 @@ mod tests {
     #[test]
     fn rejects_same_name_outside_trusted_root() {
         let context = context();
-        let process = process(
-            42,
-            "S-1-5-21",
-            "AF-BG-Engine.exe",
-            r"C:\Other\AF-BG-Engine.exe",
-        );
+        let process = process(42, "S-1-5-21", "Autofix.exe", r"C:\Other\Autofix.exe");
 
         assert!(!is_sibling_autofix_process(&process, &context));
     }
@@ -573,12 +358,7 @@ mod tests {
     #[test]
     fn excludes_current_process_from_sibling_pass() {
         let context = context();
-        let process = process(
-            7,
-            "S-1-5-21",
-            "AF-BG-Engine.exe",
-            r"C:\AutoFix\AF-BG-Engine.exe",
-        );
+        let process = process(7, "S-1-5-21", "Autofix.exe", r"C:\AutoFix\Autofix.exe");
 
         assert!(!is_sibling_autofix_process(&process, &context));
     }
@@ -586,8 +366,9 @@ mod tests {
     #[test]
     fn dev_build_uses_workspace_root_for_settings_ui_matching() {
         let manifest_dir = PathBuf::from(r"C:\Repo\AutoFix\app-core-rust");
-        let background_exe = PathBuf::from(r"C:\Repo\AutoFix\target\debug\AF-BG-Engine.exe");
-        let trusted_root = trusted_root_for_executable(&background_exe, &manifest_dir).unwrap();
+        let engine_host =
+            PathBuf::from(r"C:\Repo\AutoFix\ui\settings-ui\bin\Debug\net8.0-windows\Autofix.exe");
+        let trusted_root = trusted_root_for_executable(&engine_host, &manifest_dir).unwrap();
         let context = CurrentProcessContext {
             process_id: 7,
             owner_sid: "S-1-5-21".to_owned(),
@@ -606,98 +387,10 @@ mod tests {
     #[test]
     fn installed_build_uses_executable_directory_as_trusted_root() {
         let manifest_dir = PathBuf::from(r"C:\Repo\AutoFix\app-core-rust");
-        let background_exe = PathBuf::from(r"C:\Program Files\AutoFix\AF-BG-Engine.exe");
-        let trusted_root = trusted_root_for_executable(&background_exe, &manifest_dir).unwrap();
+        let engine_host = PathBuf::from(r"C:\Program Files\AutoFix\Autofix.exe");
+        let trusted_root = trusted_root_for_executable(&engine_host, &manifest_dir).unwrap();
 
         assert_eq!(trusted_root, PathBuf::from(r"C:\Program Files\AutoFix"));
-    }
-
-    #[test]
-    fn graceful_success_does_not_force_kill() {
-        let controller = FakeProcessController::new(vec![process(
-            42,
-            "S-1-5-21",
-            "Autofix.exe",
-            r"C:\AutoFix\Autofix.exe",
-        )])
-        .with_graceful_exit(42);
-
-        let outcome = shutdown_sibling_processes(&controller, &context());
-
-        assert_eq!(outcome.graceful_succeeded, 1);
-        assert_eq!(outcome.force_kill_attempted, 0);
-        assert_eq!(controller.actions(), ["graceful:42", "wait:42"]);
-    }
-
-    #[test]
-    fn graceful_timeout_triggers_force_kill() {
-        let controller = FakeProcessController::new(vec![process(
-            42,
-            "S-1-5-21",
-            "Autofix.exe",
-            r"C:\AutoFix\Autofix.exe",
-        )])
-        .with_force_kill_success(42);
-
-        let outcome = shutdown_sibling_processes(&controller, &context());
-
-        assert_eq!(outcome.graceful_timed_out, 1);
-        assert_eq!(outcome.force_kill_attempted, 1);
-        assert_eq!(outcome.force_kill_succeeded, 1);
-        assert_eq!(controller.actions(), ["graceful:42", "kill:42"]);
-    }
-
-    #[test]
-    fn failure_on_one_target_does_not_block_remaining_targets() {
-        let controller = FakeProcessController::new(vec![
-            process(
-                42,
-                "S-1-5-21",
-                "Autofix.exe",
-                r"C:\AutoFix\Autofix.exe",
-            ),
-            process(
-                43,
-                "S-1-5-21",
-                "AF-BG-Engine.exe",
-                r"C:\AutoFix\AF-BG-Engine.exe",
-            ),
-        ])
-        .with_force_kill_success(43);
-
-        let outcome = shutdown_sibling_processes(&controller, &context());
-
-        assert_eq!(outcome.force_kill_attempted, 2);
-        assert_eq!(outcome.force_kill_succeeded, 1);
-        assert_eq!(outcome.force_kill_failed, 1);
-        assert_eq!(
-            controller.actions(),
-            ["graceful:42", "kill:42", "graceful:43", "kill:43"]
-        );
-    }
-
-    #[test]
-    fn self_shutdown_is_ordered_last_by_excluding_current_process() {
-        let controller = FakeProcessController::new(vec![
-            process(
-                7,
-                "S-1-5-21",
-                "AF-BG-Engine.exe",
-                r"C:\AutoFix\AF-BG-Engine.exe",
-            ),
-            process(
-                42,
-                "S-1-5-21",
-                "Autofix.exe",
-                r"C:\AutoFix\Autofix.exe",
-            ),
-        ])
-        .with_graceful_exit(42);
-
-        let outcome = shutdown_sibling_processes(&controller, &context());
-
-        assert_eq!(outcome.matched, 1);
-        assert_eq!(controller.actions(), ["graceful:42", "wait:42"]);
     }
 
     #[test]
@@ -722,26 +415,16 @@ mod tests {
     fn sibling_disappearance_monitor_triggers_when_one_of_multiple_siblings_disappears() {
         let mut monitor = SiblingDisappearanceMonitor::new();
         let both = FakeProcessController::new(vec![
-            process(
-                42,
-                "S-1-5-21",
-                "Autofix.exe",
-                r"C:\AutoFix\Autofix.exe",
-            ),
-            process(
-                43,
-                "S-1-5-21",
-                "AF-BG-Engine.exe",
-                r"C:\AutoFix\AF-BG-Engine.exe",
-            ),
+            process(42, "S-1-5-21", "Autofix.exe", r"C:\AutoFix\Autofix.exe"),
+            process(43, "S-1-5-21", "Autofix.exe", r"C:\AutoFix\Autofix.exe"),
         ]);
         assert!(!monitor.shutdown_requested_with(&both, &context()));
 
         let remaining = FakeProcessController::new(vec![process(
             43,
             "S-1-5-21",
-            "AF-BG-Engine.exe",
-            r"C:\AutoFix\AF-BG-Engine.exe",
+            "Autofix.exe",
+            r"C:\AutoFix\Autofix.exe",
         )]);
         assert!(monitor.shutdown_requested_with(&remaining, &context()));
     }
@@ -770,60 +453,17 @@ mod tests {
 
     struct FakeProcessController {
         processes: Vec<ProcessSnapshot>,
-        graceful_exits: Vec<u32>,
-        force_kill_successes: Vec<u32>,
-        actions: RefCell<Vec<String>>,
     }
 
     impl FakeProcessController {
         fn new(processes: Vec<ProcessSnapshot>) -> Self {
-            Self {
-                processes,
-                graceful_exits: Vec::new(),
-                force_kill_successes: Vec::new(),
-                actions: RefCell::new(Vec::new()),
-            }
-        }
-
-        fn with_graceful_exit(mut self, process_id: u32) -> Self {
-            self.graceful_exits.push(process_id);
-            self
-        }
-
-        fn with_force_kill_success(mut self, process_id: u32) -> Self {
-            self.force_kill_successes.push(process_id);
-            self
-        }
-
-        fn actions(&self) -> Vec<String> {
-            self.actions.borrow().clone()
+            Self { processes }
         }
     }
 
     impl ProcessController for FakeProcessController {
         fn list_processes(&self) -> Vec<ProcessSnapshot> {
             self.processes.clone()
-        }
-
-        fn request_graceful_exit(&self, process: &ProcessSnapshot) -> bool {
-            self.actions
-                .borrow_mut()
-                .push(format!("graceful:{}", process.process_id));
-            self.graceful_exits.contains(&process.process_id)
-        }
-
-        fn wait_for_exit(&self, process: &ProcessSnapshot, _timeout: Duration) -> bool {
-            self.actions
-                .borrow_mut()
-                .push(format!("wait:{}", process.process_id));
-            self.graceful_exits.contains(&process.process_id)
-        }
-
-        fn force_kill(&self, process: &ProcessSnapshot) -> bool {
-            self.actions
-                .borrow_mut()
-                .push(format!("kill:{}", process.process_id));
-            self.force_kill_successes.contains(&process.process_id)
         }
     }
 }

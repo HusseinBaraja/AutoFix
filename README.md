@@ -27,12 +27,10 @@ processes together:
 ```powershell
 .\ui\settings-ui\bin\Debug\net8.0-windows\Autofix.exe
 .\ui\settings-ui\bin\Debug\net8.0-windows\Autofix.exe --engine
-.\ui\settings-ui\bin\Debug\net8.0-windows\Autofix.exe --shutdown-all
 ```
 
-The Rust engine is loaded through `autofix_core.dll`; `AF-BG-Engine.exe` is only
-kept as a direct Rust dev entry point. AutoFix keeps running until you choose
-`Exit` from the tray menu.
+The Rust engine is loaded through `autofix_core.dll`. AutoFix keeps running until
+you choose `Exit` from the tray menu.
 
 The app creates its settings file at:
 
