@@ -90,6 +90,11 @@ public sealed class EngineSupervisor : IDisposable
 
         lock (engineLock)
         {
+            if (sender is not IEngineProcess exitedEngine || !ReferenceEquals(exitedEngine, engine))
+            {
+                return;
+            }
+
             if (disposed)
             {
                 return;
@@ -100,7 +105,7 @@ public sealed class EngineSupervisor : IDisposable
                 intentionalStop.Clear();
                 classification = EngineExitClassification.Intentional;
             }
-            else if (engine?.ExitCode == 1)
+            else if (exitedEngine.ExitCode == 1)
             {
                 classification = EngineExitClassification.ExternalKill;
             }

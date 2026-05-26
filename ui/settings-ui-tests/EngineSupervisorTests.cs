@@ -80,6 +80,25 @@ public sealed class EngineSupervisorTests
         Assert.AreEqual(1, launcher.Starts);
     }
 
+    [TestMethod]
+    public void StaleEngineExitDoesNotRestartCurrentEngine()
+    {
+        var launcher = new FakeLauncher();
+        var supervisor = new EngineSupervisor(launcher, new RestartPolicy(maxAttempts: 3));
+        var classifications = new List<EngineExitClassification>();
+        supervisor.EngineExitClassified += (_, classification) => classifications.Add(classification);
+
+        supervisor.Start();
+        var firstProcess = launcher.LastProcess!;
+        supervisor.StopIntentionally(ShutdownReason.UserExit);
+        supervisor.Start();
+
+        firstProcess.RaiseExitedAgain();
+
+        Assert.AreEqual(2, launcher.Starts);
+        CollectionAssert.AreEqual(new[] { EngineExitClassification.Intentional }, classifications);
+    }
+
     private sealed class FakeLauncher : IEngineProcessLauncher
     {
         private int starts;
@@ -108,6 +127,8 @@ public sealed class EngineSupervisorTests
             ExitCode = exitCode;
             Exited?.Invoke(this, EventArgs.Empty);
         }
+
+        public void RaiseExitedAgain() => Exited?.Invoke(this, EventArgs.Empty);
 
         public void Kill() => Exit(0);
         public void Dispose() { }
