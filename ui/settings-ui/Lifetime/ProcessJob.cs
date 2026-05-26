@@ -34,12 +34,21 @@ public sealed class ProcessJob : IDisposable
         try
         {
             Marshal.StructureToPtr(info, buffer, false);
-            NativeMethods.SetInformationJobObject(
+            var setInfoResult = NativeMethods.SetInformationJobObject(
                 handle,
                 NativeMethods.JobObjectExtendedLimitInformation,
                 buffer,
                 (uint)length);
-            NativeMethods.AssignProcessToJobObject(handle, NativeMethods.GetCurrentProcess());
+            if (!setInfoResult)
+            {
+                return;
+            }
+
+            var assignResult = NativeMethods.AssignProcessToJobObject(handle, NativeMethods.GetCurrentProcess());
+            if (!assignResult)
+            {
+                return;
+            }
         }
         finally
         {
