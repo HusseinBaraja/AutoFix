@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Threading;
 using System.Windows;
 using WpfApplication = System.Windows.Application;
 
@@ -12,8 +13,7 @@ public sealed class ShellLifetime : IDisposable
     private readonly SingleInstance singleInstance;
     private ShellTray? tray;
     private Window? window;
-    private readonly object shutdownSync = new();
-    private bool shutdownInProgress;
+    private int shutdownInProgress;
 
     public ShellLifetime(
         WpfApplication application,
@@ -61,14 +61,9 @@ public sealed class ShellLifetime : IDisposable
 
     public void Shutdown(ShutdownReason reason)
     {
-        lock (shutdownSync)
+        if (Interlocked.Exchange(ref shutdownInProgress, 1) != 0)
         {
-            if (shutdownInProgress)
-            {
-                return;
-            }
-
-            shutdownInProgress = true;
+            return;
         }
 
         engineSupervisor.StopIntentionally(reason);
@@ -78,12 +73,9 @@ public sealed class ShellLifetime : IDisposable
 
     private void WindowClosing(object? sender, CancelEventArgs e)
     {
-        lock (shutdownSync)
+        if (Volatile.Read(ref shutdownInProgress) != 0)
         {
-            if (shutdownInProgress)
-            {
-                return;
-            }
+            return;
         }
 
         e.Cancel = true;
