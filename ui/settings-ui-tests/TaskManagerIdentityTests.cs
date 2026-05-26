@@ -9,6 +9,5 @@ public sealed class TaskManagerIdentityTests
     public void WindowIdentityUsesRequestedTaskManagerLabels()
     {
         Assert.AreEqual("Autofix", AppWindowIdentity.AppDisplayName);
-        Assert.AreEqual("Autofix Engine", EngineRoleWindow.Title);
     }
 }
