@@ -139,7 +139,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         get => searchText;
         set
         {
-            if (SetProperty(ref searchText, value))
+            if (SetProperty(ref searchText, value?.Trim() ?? ""))
             {
                 SectionView.Refresh();
                 SelectBestSearchSection();
