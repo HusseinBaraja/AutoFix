@@ -14,14 +14,27 @@ if ((Test-Path $targetDebugShell) -and -not (Test-Path (Join-Path $targetDebug "
     Remove-Item -LiteralPath $targetDebugShell -Force
 }
 
-Get-ChildItem -Path $settingsBin -Recurse -Filter "Autofix.exe" | ForEach-Object {
-    $settingsDllCandidates = @(
-        (Join-Path $_.DirectoryName "Autofix.dll"),
-        (Join-Path $_.DirectoryName "AutoFix.SettingsUi.dll")
-    )
-    $hasSettingsDll = $settingsDllCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-    if (-not $hasSettingsDll) {
-        Write-Host "Removing stale dev shell: $($_.FullName)"
-        Remove-Item -LiteralPath $_.FullName -Force
+$settingsDevOutputRoots = Get-ChildItem -Path (Join-Path $settingsBin "Debug*") -Directory -ErrorAction SilentlyContinue
+
+$settingsDevOutputRoots | ForEach-Object {
+    Get-ChildItem -Path $_.FullName -Recurse -Filter "Autofix.exe" | ForEach-Object {
+        $lowerPath = $_.FullName.ToLowerInvariant()
+        if (
+            $lowerPath.Contains("\publish\") -or
+            $lowerPath.Contains("\bin\release\") -or
+            $lowerPath.Contains("\release\")
+        ) {
+            return
+        }
+
+        $settingsDllCandidates = @(
+            (Join-Path $_.DirectoryName "Autofix.dll"),
+            (Join-Path $_.DirectoryName "AutoFix.SettingsUi.dll")
+        )
+        $hasSettingsDll = $settingsDllCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-not $hasSettingsDll) {
+            Write-Host "Removing stale dev shell: $($_.FullName)"
+            Remove-Item -LiteralPath $_.FullName -Force
+        }
     }
 }
