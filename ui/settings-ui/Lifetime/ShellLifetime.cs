@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Threading;
 using System.Windows;
 using WpfApplication = System.Windows.Application;
@@ -53,10 +54,32 @@ public sealed class ShellLifetime : IDisposable
         application.MainWindow = shellWindow;
         application.ShutdownMode = ShutdownMode.OnExplicitShutdown;
         shellWindow.Closing += WindowClosing;
-        tray = new ShellTray(ShowShell, () => Shutdown(ShutdownReason.UserExit));
-        singleInstance.StartListening();
-        engineSupervisor.Start();
-        shellWindow.Show();
+        try
+        {
+            tray = new ShellTray(ShowShell, () => Shutdown(ShutdownReason.UserExit));
+            singleInstance.StartListening();
+            engineSupervisor.Start();
+            shellWindow.Show();
+        }
+        catch (Exception error)
+        {
+            Debug.WriteLine(error);
+            RollBackStartup(shellWindow);
+            Shutdown(ShutdownReason.UserExit);
+        }
+    }
+
+    private void RollBackStartup(Window shellWindow)
+    {
+        engineSupervisor.StopIntentionally(ShutdownReason.UserExit);
+        tray?.Dispose();
+        tray = null;
+        singleInstance.Dispose();
+        shellWindow.Closing -= WindowClosing;
+        if (shellWindow.IsVisible)
+        {
+            shellWindow.Close();
+        }
     }
 
     public void Shutdown(ShutdownReason reason)
