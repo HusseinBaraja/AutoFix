@@ -17,6 +17,11 @@ public sealed class RestartPolicy
             throw new ArgumentOutOfRangeException(nameof(maxAttempts));
         }
 
+        if (window.HasValue && window.Value <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(window));
+        }
+
         this.maxAttempts = maxAttempts;
         this.window = window ?? DefaultWindow;
         this.timeProvider = timeProvider ?? TimeProvider.System;

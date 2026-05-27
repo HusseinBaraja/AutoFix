@@ -43,6 +43,15 @@ public sealed class RestartPolicyTests
         Assert.IsFalse(policy.TryRecordAttempt());
     }
 
+    [TestMethod]
+    public void ConstructorRejectsNonPositiveWindow()
+    {
+        Assert.ThrowsException<ArgumentOutOfRangeException>(
+            () => new RestartPolicy(window: TimeSpan.Zero));
+        Assert.ThrowsException<ArgumentOutOfRangeException>(
+            () => new RestartPolicy(window: TimeSpan.FromTicks(-1)));
+    }
+
     private sealed class FakeTimeProvider : TimeProvider
     {
         private DateTimeOffset now = DateTimeOffset.Parse("2026-05-25T00:00:00Z");
