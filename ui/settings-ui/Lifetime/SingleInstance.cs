@@ -8,6 +8,9 @@ public sealed class SingleInstance : IDisposable
 {
     private const string MutexName = "Global\\AutoFix.Autofix.SingleInstance";
     private const string PipeName = "AutoFix.Autofix.Activate";
+    private const string ActivationMessage = "activate";
+    private const int ActivationMessageMaxBytes = 32;
+    private static readonly TimeSpan ActivationMessageReadTimeout = TimeSpan.FromMilliseconds(500);
     private readonly Mutex mutex;
     private readonly CancellationTokenSource cancellation = new();
     private readonly object disposeLock = new();
@@ -56,7 +59,7 @@ public sealed class SingleInstance : IDisposable
 
         await using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out, PipeOptions.Asynchronous);
         await client.ConnectAsync(500).ConfigureAwait(false);
-        await client.WriteAsync(Encoding.UTF8.GetBytes("activate"), CancellationToken.None).ConfigureAwait(false);
+        await client.WriteAsync(Encoding.UTF8.GetBytes(ActivationMessage), CancellationToken.None).ConfigureAwait(false);
     }
 
     public void StartListening()
@@ -92,7 +95,10 @@ public sealed class SingleInstance : IDisposable
             try
             {
                 await server.WaitForConnectionAsync(cancellation.Token).ConfigureAwait(false);
-                TryActivate(activated);
+                if (await ReadActivationRequestAsync(server, cancellation.Token).ConfigureAwait(false))
+                {
+                    TryActivate(activated);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -102,6 +108,26 @@ public sealed class SingleInstance : IDisposable
             {
             }
         }
+    }
+
+    internal static async Task<bool> ReadActivationRequestAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[ActivationMessageMaxBytes];
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(ActivationMessageReadTimeout);
+
+        int bytesRead;
+        try
+        {
+            bytesRead = await stream.ReadAsync(buffer, timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        return bytesRead == Encoding.UTF8.GetByteCount(ActivationMessage)
+            && Encoding.UTF8.GetString(buffer, 0, bytesRead) == ActivationMessage;
     }
 
     internal static bool TryActivate(Action activated)

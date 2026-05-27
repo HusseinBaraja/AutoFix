@@ -90,6 +90,26 @@ public sealed class SingleInstanceTests
     }
 
     [TestMethod]
+    public async Task ActivationRequestAcceptsActivateMessage()
+    {
+        await using var stream = new MemoryStream("activate"u8.ToArray());
+
+        var accepted = await SingleInstance.ReadActivationRequestAsync(stream, CancellationToken.None);
+
+        Assert.IsTrue(accepted);
+    }
+
+    [TestMethod]
+    public async Task ActivationRequestRejectsUnexpectedMessage()
+    {
+        await using var stream = new MemoryStream("open"u8.ToArray());
+
+        var accepted = await SingleInstance.ReadActivationRequestAsync(stream, CancellationToken.None);
+
+        Assert.IsFalse(accepted);
+    }
+
+    [TestMethod]
     public void DisposeCanBeCalledTwice()
     {
         var name = UniqueMutexName();
