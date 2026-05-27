@@ -74,7 +74,7 @@ public static class AutofixHostPath
 {
     public static string? Find()
     {
-        if (Environment.ProcessPath is { } currentProcess && File.Exists(currentProcess))
+        if (Environment.ProcessPath is { } currentProcess && IsAutofixHostPath(currentProcess))
         {
             return currentProcess;
         }
@@ -89,4 +89,8 @@ public static class AutofixHostPath
 
         return candidates.FirstOrDefault(File.Exists);
     }
+
+    internal static bool IsAutofixHostPath(string path) =>
+        File.Exists(path)
+        && Path.GetFileName(path).Equals("Autofix.exe", StringComparison.OrdinalIgnoreCase);
 }
