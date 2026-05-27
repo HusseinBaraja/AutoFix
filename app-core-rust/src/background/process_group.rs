@@ -118,7 +118,10 @@ mod native {
         ptr::null_mut,
     };
     use windows_sys::Win32::{
-        Foundation::{CloseHandle, LocalFree, HANDLE, INVALID_HANDLE_VALUE, MAX_PATH},
+        Foundation::{
+            CloseHandle, GetLastError, LocalFree, ERROR_INSUFFICIENT_BUFFER, HANDLE,
+            INVALID_HANDLE_VALUE, MAX_PATH,
+        },
         Security::{
             Authorization::ConvertSidToStringSidW, GetTokenInformation, TokenUser, TOKEN_QUERY,
             TOKEN_USER,
@@ -207,14 +210,21 @@ mod native {
         }
 
         let mut buffer = vec![0_u16; MAX_PATH as usize];
-        let mut length = buffer.len() as u32;
-        let ok =
-            unsafe { QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut length) };
+        let length = loop {
+            let mut length = buffer.len() as u32;
+            let ok =
+                unsafe { QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut length) };
+            if ok != 0 || unsafe { GetLastError() } != ERROR_INSUFFICIENT_BUFFER {
+                break if ok == 0 { 0 } else { length };
+            }
+
+            buffer.resize(buffer.len() * 2, 0);
+        };
         unsafe {
             CloseHandle(process);
         }
 
-        if ok == 0 || length == 0 {
+        if length == 0 {
             None
         } else {
             Some(PathBuf::from(OsString::from_wide(
