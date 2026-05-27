@@ -70,6 +70,21 @@ public sealed class EngineSupervisorTests
     }
 
     [TestMethod]
+    public void NativeStartFailureExitCodeClassifiesAsStartFailed()
+    {
+        var launcher = new FakeLauncher();
+        var supervisor = new EngineSupervisor(launcher);
+        var classifications = new List<EngineExitClassification>();
+        supervisor.EngineExitClassified += (_, classification) => classifications.Add(classification);
+
+        supervisor.Start();
+        launcher.LastProcess!.Exit(NativeEngine.NativeStartFailedExitCode);
+
+        CollectionAssert.AreEqual(new[] { EngineExitClassification.StartFailed }, classifications);
+        Assert.AreEqual(1, launcher.Starts);
+    }
+
+    [TestMethod]
     public void ConcurrentStartCallsCreateOneEngine()
     {
         var launcher = new FakeLauncher();

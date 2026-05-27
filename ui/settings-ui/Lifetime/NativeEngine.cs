@@ -4,7 +4,25 @@ namespace AutoFix.SettingsUi.Lifetime;
 
 internal static partial class NativeEngine
 {
-    internal static int RunBackground() => NativeMethods.autofix_run_background();
+    internal const int NativeStartFailedExitCode = 70;
+
+    internal static int RunBackground()
+    {
+        try
+        {
+            return NativeMethods.autofix_run_background();
+        }
+        catch (DllNotFoundException error)
+        {
+            System.Diagnostics.Debug.WriteLine(error);
+            return NativeStartFailedExitCode;
+        }
+        catch (EntryPointNotFoundException error)
+        {
+            System.Diagnostics.Debug.WriteLine(error);
+            return NativeStartFailedExitCode;
+        }
+    }
 
     private static partial class NativeMethods
     {

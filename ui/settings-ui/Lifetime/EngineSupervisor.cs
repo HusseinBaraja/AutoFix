@@ -105,6 +105,10 @@ public sealed class EngineSupervisor : IDisposable
                 intentionalStop.Clear();
                 classification = EngineExitClassification.Intentional;
             }
+            else if (exitedEngine.ExitCode == NativeEngine.NativeStartFailedExitCode)
+            {
+                classification = EngineExitClassification.StartFailed;
+            }
             else if (exitedEngine.ExitCode == 1)
             {
                 classification = EngineExitClassification.ExternalKill;
