@@ -9,7 +9,7 @@
     <AssemblyName>Autofix</AssemblyName>
     <AssemblyTitle>AutoFix</AssemblyTitle>
     <FileDescription>AutoFix</FileDescription>
-    <ProductName>Autofix</ProductName>
+    <Product>Autofix</Product>
     <ApplicationIcon>..\..\assets\brand\autofix-logo.ico</ApplicationIcon>
   </PropertyGroup>
 
