@@ -228,6 +228,26 @@ public sealed class SettingsUiResourceTests
     }
 
     [TestMethod]
+    public void SettingsControlsDoNotUseDefaultDottedFocusVisuals()
+    {
+        var controls = LoadXaml("Resources", "SettingsControls.xaml");
+        var chrome = LoadXaml("Resources", "SettingsChrome.xaml");
+        var tables = LoadXaml("Resources", "SettingsTables.xaml");
+        var recorder = LoadXaml("Resources", "HotkeyRecorder.xaml");
+
+        AssertStyleSetter(StyleByKey(controls, "PolishedButton"), "FocusVisualStyle", "{x:Null}");
+        AssertStyleSetter(StyleByTargetType(controls, "ComboBox"), "FocusVisualStyle", "{x:Null}");
+        AssertStyleSetter(StyleByTargetType(controls, "ItemsControl"), "FocusVisualStyle", "{x:Null}");
+        AssertStyleSetter(StyleByTargetType(controls, "ScrollViewer"), "FocusVisualStyle", "{x:Null}");
+        AssertStyleSetter(StyleByKey(chrome, "SidebarItem"), "FocusVisualStyle", "{x:Null}");
+        AssertStyleSetter(StyleByKey(chrome, "ToggleSwitch"), "FocusVisualStyle", "{x:Null}");
+        AssertStyleSetter(StyleByTargetType(tables, "DataGrid"), "FocusVisualStyle", "{x:Null}");
+        AssertStyleSetter(StyleByTargetType(tables, "DataGridCell"), "FocusVisualStyle", "{x:Null}");
+        AssertStyleSetter(StyleByKey(recorder, "HotkeyClearButton"), "FocusVisualStyle", "{x:Null}");
+        AssertStyleSetter(StyleByKey(recorder, "HotkeyDefaultLink"), "FocusVisualStyle", "{x:Null}");
+    }
+
+    [TestMethod]
     public void HotkeyRecorderResourcesExist()
     {
         var recorder = LoadXaml("Resources", "HotkeyRecorder.xaml");
@@ -347,6 +367,16 @@ public sealed class SettingsUiResourceTests
             .Any(setter => (string?)setter.Attribute("Property") == setterProperty
                 && (string?)setter.Attribute("Value") == value));
     }
+
+    private static XElement StyleByKey(XElement resource, string key) =>
+        resource
+            .Descendants(Presentation + "Style")
+            .Single(style => (string?)style.Attribute(Xaml + "Key") == key);
+
+    private static XElement StyleByTargetType(XElement resource, string targetType) =>
+        resource
+            .Descendants(Presentation + "Style")
+            .Single(style => (string?)style.Attribute("TargetType") == targetType);
 
     private static XElement LoadXaml(params string[] pathParts)
     {

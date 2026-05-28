@@ -21,6 +21,7 @@
     </Style>
 
     <Style TargetType="DataGrid">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Background" Value="{StaticResource TableSurfaceBrush}" />
         <Setter Property="BorderBrush" Value="{StaticResource TableBorderBrush}" />
         <Setter Property="BorderThickness" Value="0" />
@@ -35,6 +36,7 @@
     </Style>
 
     <Style TargetType="DataGridColumnHeader">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Background" Value="#F8FAFD" />
         <Setter Property="Foreground" Value="{StaticResource TableMutedTextBrush}" />
         <Setter Property="FontWeight" Value="SemiBold" />
@@ -44,6 +46,7 @@
     </Style>
 
     <Style TargetType="DataGridCell">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Padding" Value="12,0" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Template">
@@ -59,6 +62,7 @@
     </Style>
 
     <Style TargetType="DataGridRow">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Background" Value="{StaticResource TableSurfaceBrush}" />
         <Setter Property="BorderBrush" Value="Transparent" />
         <Setter Property="BorderThickness" Value="1" />
