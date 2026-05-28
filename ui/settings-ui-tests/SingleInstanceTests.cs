@@ -1,4 +1,5 @@
 using AutoFix.SettingsUi.Lifetime;
+using System.Reflection;
 
 namespace AutoFix.SettingsUi.Tests;
 
@@ -121,6 +122,20 @@ public sealed class SingleInstanceTests
     }
 
     [TestMethod]
+    public void DisposeWaitsForListenerTaskCompletion()
+    {
+        var name = UniqueMutexName();
+        var mutex = new Mutex(true, name, out _);
+        var singleInstance = new SingleInstance(mutex, ownsInstance: true, activated: () => { });
+        var listenerTask = Task.Delay(TimeSpan.FromMilliseconds(50));
+        SetListenerTask(singleInstance, listenerTask);
+
+        singleInstance.Dispose();
+
+        Assert.IsTrue(listenerTask.IsCompleted);
+    }
+
+    [TestMethod]
     public async Task SignalExistingAfterDisposeThrowsObjectDisposedException()
     {
         var name = UniqueMutexName();
@@ -136,4 +151,14 @@ public sealed class SingleInstanceTests
 
     private static string UniqueMutexName() =>
         $"Local\\AutoFix.Tests.{Guid.NewGuid():N}";
+
+    private static void SetListenerTask(SingleInstance singleInstance, Task listenerTask)
+    {
+        var field = typeof(SingleInstance).GetField(
+            "listenerTask",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        Assert.IsNotNull(field);
+        field.SetValue(singleInstance, listenerTask);
+    }
 }

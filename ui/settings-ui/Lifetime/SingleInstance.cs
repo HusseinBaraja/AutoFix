@@ -146,6 +146,7 @@ public sealed class SingleInstance : IDisposable
 
     public void Dispose()
     {
+        Task? taskToWait;
         lock (disposeLock)
         {
             if (disposed)
@@ -154,12 +155,19 @@ public sealed class SingleInstance : IDisposable
             }
 
             disposed = true;
+            taskToWait = listenerTask;
         }
 
         cancellation.Cancel();
-        if (listenerTask?.IsFaulted == true)
+        if (taskToWait is not null)
         {
-            _ = listenerTask.Exception;
+            try
+            {
+                taskToWait.Wait(TimeSpan.FromSeconds(1));
+            }
+            catch (AggregateException)
+            {
+            }
         }
 
         cancellation.Dispose();
