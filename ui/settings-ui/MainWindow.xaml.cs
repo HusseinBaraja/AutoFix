@@ -76,7 +76,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void HotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    private void HotkeyBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: SettingCardViewModel vm })
         {

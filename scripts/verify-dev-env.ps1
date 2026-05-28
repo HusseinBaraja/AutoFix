@@ -40,6 +40,7 @@ Invoke-Check "Rust toolchain" { rustc --version; cargo --version }
 Invoke-Check "Git" { git --version }
 Invoke-Check "SQLite CLI" { sqlite3 --version }
 Invoke-Check ".NET SDK" { dotnet --info }
+Invoke-Check "Stale dev shell cleanup" { & .\scripts\clear-stale-dev-outputs.ps1 }
 
 $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
 if (Test-Path $vswhere) {
@@ -69,6 +70,6 @@ if ($innoCompiler) {
     exit 1
 }
 
-Invoke-Check "Rust tests" { cargo test }
-Invoke-Check "Rust console app" { cargo run -p background-engine }
 Invoke-Check ".NET SDK and WPF build" { dotnet build .\AutoFix.sln }
+Invoke-Check "Rust tests" { cargo test }
+Invoke-Check "Rust native library build" { cargo build -p background-engine }

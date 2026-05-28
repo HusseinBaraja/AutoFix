@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use crate::{
     settings::{save_config, AppConfig, CorrectionEngine, CorrectionMode, ValidateConfig},
@@ -25,6 +25,7 @@ impl IpcServerState {
         database_path: PathBuf,
         log_directory: PathBuf,
         config: AppConfig,
+        _shutdown_requested: Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
         Self {
             config_path,

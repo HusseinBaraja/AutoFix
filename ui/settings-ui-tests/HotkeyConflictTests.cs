@@ -142,6 +142,7 @@ public sealed class HotkeyConflictTests
 
         public Task<IpcResult<BackgroundRunningResponse>> IsBackgroundRunningAsync() =>
             Task.FromResult(IpcResult<BackgroundRunningResponse>.Ok(new(true)));
+
     }
 
     private sealed class FakeFileDialog : IConfigFileDialog

@@ -74,6 +74,7 @@
             "undo_requested",
             "test_correction_engine_queued",
             "background_running",
+            "shutdown_accepted",
             "error"
           ]
         },

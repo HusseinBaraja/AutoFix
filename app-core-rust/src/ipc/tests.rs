@@ -1,7 +1,10 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -186,11 +189,13 @@ impl IpcFixture {
         let database_path = root.join("autofix.sqlite");
         save_config(&config_path, &AppConfig::default()).unwrap();
         let pipe_path = format!("{}-{}", pipe_path_for_process(PIPE_NAME), unique_suffix());
+        let shutdown_requested = Arc::new(AtomicBool::new(false));
         let state = IpcServerState::new(
             config_path.clone(),
             database_path.clone(),
             root.join("logs"),
             AppConfig::default(),
+            Arc::clone(&shutdown_requested),
         );
         let server = NamedPipeIpcServer::start_for_path(pipe_path.clone(), state);
 

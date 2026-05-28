@@ -12,23 +12,25 @@ Planned capabilities include:
 
 This repository is currently in setup stage.
 
-## Run Background App
+## Run App
 
-From the repository root, run the Rust background app with:
-
-```powershell
-cargo run -p background-engine
-```
-
-The app starts the background process and Windows tray icon. It keeps running until
-you choose `Exit` from the tray menu or stop it with `Ctrl+C` in the terminal.
-
-To build and run the executable directly:
+From the repository root, build and run AutoFix:
 
 ```powershell
-cargo build -p background-engine
-.\target\debug\background-engine.exe
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-app.ps1
 ```
+
+`Autofix.exe` owns the Windows tray icon and supervises the background engine.
+The same executable hosts every normal runtime role so Windows can group the
+processes together:
+
+```powershell
+.\ui\settings-ui\bin\Debug\net8.0-windows\Autofix.exe
+.\ui\settings-ui\bin\Debug\net8.0-windows\Autofix.exe --engine
+```
+
+The Rust engine is loaded through `autofix_core.dll`. AutoFix keeps running until
+you choose `Exit` from the tray menu.
 
 The app creates its settings file at:
 
@@ -43,3 +45,11 @@ The app creates its settings file at:
 - `shared-schema/` - Shared config schemas, IPC contracts, and documentation.
 - `installer/` - Installer scripts and packaging assets later.
 - `docs/` - Architecture and design notes.
+
+## Rust testing
+
+Use `#[cfg(test)]` for test modules, unit tests placed next to the code, and helper functions or mock types that exist only for tests. Do not use it for integration tests in the `tests/` directory, normal production logic, public APIs, or alternate implementations that make code behave differently in tests than it does in real builds.
+
+## When you are unsure
+
+use context7 to get the official documentation and check official internet sources if you need them.
