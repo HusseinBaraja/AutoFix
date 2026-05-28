@@ -58,8 +58,9 @@ public sealed class SingleInstance : IDisposable
         }
 
         await using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out, PipeOptions.Asynchronous);
-        await client.ConnectAsync(500).ConfigureAwait(false);
-        await client.WriteAsync(Encoding.UTF8.GetBytes(ActivationMessage), CancellationToken.None).ConfigureAwait(false);
+        using var timeout = new CancellationTokenSource(ActivationMessageReadTimeout);
+        await client.ConnectAsync((int)ActivationMessageReadTimeout.TotalMilliseconds).ConfigureAwait(false);
+        await client.WriteAsync(Encoding.UTF8.GetBytes(ActivationMessage), timeout.Token).ConfigureAwait(false);
     }
 
     public void StartListening()
