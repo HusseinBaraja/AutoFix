@@ -236,13 +236,17 @@ public sealed class SettingsUiResourceTests
         var recorder = LoadXaml("Resources", "HotkeyRecorder.xaml");
 
         AssertStyleSetter(StyleByKey(controls, "PolishedButton"), "FocusVisualStyle", "{x:Null}");
+        AssertStyleSetter(StyleByKey(controls, "InputTextBox"), "FocusVisualStyle", "{x:Null}");
         AssertStyleSetter(StyleByTargetType(controls, "ComboBox"), "FocusVisualStyle", "{x:Null}");
+        AssertStyleSetter(StyleByTargetType(controls, "ComboBoxItem"), "FocusVisualStyle", "{x:Null}");
         AssertStyleSetter(StyleByTargetType(controls, "ItemsControl"), "FocusVisualStyle", "{x:Null}");
         AssertStyleSetter(StyleByTargetType(controls, "ScrollViewer"), "FocusVisualStyle", "{x:Null}");
         AssertStyleSetter(StyleByKey(chrome, "SidebarItem"), "FocusVisualStyle", "{x:Null}");
         AssertStyleSetter(StyleByKey(chrome, "ToggleSwitch"), "FocusVisualStyle", "{x:Null}");
         AssertStyleSetter(StyleByTargetType(tables, "DataGrid"), "FocusVisualStyle", "{x:Null}");
+        AssertStyleSetter(StyleByTargetType(tables, "DataGridColumnHeader"), "FocusVisualStyle", "{x:Null}");
         AssertStyleSetter(StyleByTargetType(tables, "DataGridCell"), "FocusVisualStyle", "{x:Null}");
+        AssertStyleSetter(StyleByTargetType(tables, "DataGridRow"), "FocusVisualStyle", "{x:Null}");
         AssertStyleSetter(StyleByKey(recorder, "HotkeyClearButton"), "FocusVisualStyle", "{x:Null}");
         AssertStyleSetter(StyleByKey(recorder, "HotkeyDefaultLink"), "FocusVisualStyle", "{x:Null}");
     }
