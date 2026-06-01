@@ -44,6 +44,7 @@
     </Style>
 
     <Style x:Key="PolishedButton" TargetType="Button">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="MinHeight" Value="40" />
         <Setter Property="MinWidth" Value="92" />
         <Setter Property="Padding" Value="16,0" />
@@ -90,6 +91,7 @@
     <Style TargetType="Button" BasedOn="{StaticResource PolishedButton}" />
 
     <Style x:Key="InputTextBox" TargetType="TextBox">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Height" Value="40" />
         <Setter Property="Padding" Value="13,9" />
         <Setter Property="Background" Value="Transparent" />
@@ -108,6 +110,7 @@
     </Style>
 
     <Style TargetType="ComboBoxItem">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Padding" Value="12,8" />
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         <Setter Property="Template">
@@ -133,6 +136,7 @@
     </Style>
 
     <Style TargetType="ComboBox">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Height" Value="40" />
         <Setter Property="Padding" Value="13,0" />
         <Setter Property="Background" Value="{StaticResource ControlBrush}" />
@@ -210,6 +214,14 @@
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
+    </Style>
+
+    <Style TargetType="ItemsControl">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    </Style>
+
+    <Style TargetType="ScrollViewer">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
     </Style>
 
 </ResourceDictionary>

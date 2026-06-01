@@ -45,6 +45,7 @@
 
     <!-- Clear (x) button -->
     <Style x:Key="HotkeyClearButton" TargetType="Button">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Width" Value="24" />
         <Setter Property="Height" Value="24" />
         <Setter Property="Cursor" Value="Hand" />
@@ -82,6 +83,7 @@
 
     <!-- Reset to default link -->
     <Style x:Key="HotkeyDefaultLink" TargetType="Button">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
