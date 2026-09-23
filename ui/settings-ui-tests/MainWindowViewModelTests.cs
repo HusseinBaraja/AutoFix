@@ -12,7 +12,12 @@ public sealed class MainWindowViewModelTests
     {
         using var fixture = TempConfigFixture.Create();
         var ipcClient = new FakeBackgroundIpcClient();
-        var viewModel = new MainWindowViewModel(ipcClient, fixture.Storage, new NullConfigFileDialog());
+        var viewModel = new MainWindowViewModel(
+            ipcClient,
+            fixture.Storage,
+            new NullConfigFileDialog(),
+            new FakeApiKeyStatus(false),
+            new FakeStartupRegistration());
         await viewModel.LoadSettingsAsync();
 
         Card(viewModel, "feedback.show_timeout_notice").IsEnabled = false;
