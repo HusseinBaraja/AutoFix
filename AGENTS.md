@@ -41,6 +41,11 @@ For commits, use `.agents/skills/conventional-commit/SKILL.md` and
 `.agents/skills/caveman-commit/SKILL.md`; keep the final message Conventional
 Commits compliant. Close only shells and app processes started for the task.
 
+## Pull requests
+
+Create pull requests ready for review, never as drafts. Write clear titles and
+descriptions that explain the change, why it matters, and how it was verified.
+
 ## Review fixes
 
 For CodeRabbit findings, make the smallest correct fix and verify the affected
