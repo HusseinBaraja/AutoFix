@@ -159,6 +159,10 @@ pub(crate) fn detect_focused_target() -> TargetDetection {
     })
 }
 
+pub(crate) fn active_window_handle_value() -> isize {
+    unsafe { GetForegroundWindow() as isize }
+}
+
 pub(crate) fn session_key_for(
     focused_element_id: Option<&FocusedElementId>,
     window_handle: Option<isize>,
