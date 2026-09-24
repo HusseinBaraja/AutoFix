@@ -51,7 +51,7 @@ pub(crate) enum FocusedElementId {
     AutomationId(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum SessionKey {
     FocusedElement(String),
     WindowHandle(isize),

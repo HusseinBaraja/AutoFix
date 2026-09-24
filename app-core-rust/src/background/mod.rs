@@ -6,6 +6,7 @@ mod message_loop;
 mod paths;
 mod process_group;
 mod security;
+mod session;
 mod shortcuts;
 mod target;
 #[cfg(test)]
@@ -35,8 +36,9 @@ use self::{
     paths::RuntimePaths,
     process_group::SiblingDisappearanceMonitor,
     security::{SecurityDecision, SecurityGate, TriggerKind},
+    session::SessionManager,
     shortcuts::{GlobalShortcutListener, ShortcutAction},
-    typing::{MovementSignal, TypedSession},
+    typing::MovementSignal,
 };
 
 pub(crate) struct BackgroundRuntime {
@@ -51,7 +53,7 @@ struct RuntimeComponents {
     ipc_server: NamedPipeIpcServer,
     global_shortcut: GlobalShortcutListener,
     input_listener: InputListener,
-    typed_session: TypedSession,
+    session_manager: SessionManager,
     correction_engine_router: CorrectionEngineRouter,
     replacement_engine: ReplacementEngine,
     process_group_monitor: SiblingDisappearanceMonitor,
@@ -153,7 +155,7 @@ impl RuntimeComponents {
             )?,
             global_shortcut: GlobalShortcutListener::initialize(config),
             input_listener,
-            typed_session: TypedSession::new(),
+            session_manager: SessionManager::new(),
             correction_engine_router: CorrectionEngineRouter::initialize(config),
             replacement_engine: ReplacementEngine::initialize(),
             process_group_monitor: SiblingDisappearanceMonitor::new(),
@@ -176,6 +178,7 @@ impl RuntimeComponents {
                 message_loop::MessageLoopEvent::Poll => self.process_input(database),
                 message_loop::MessageLoopEvent::Tick => {
                     self.reload_shortcuts_if_config_changed();
+                    self.session_manager.prune_exited();
                     if self.process_group_monitor.shutdown_requested() {
                         self.shutdown_requested.store(true, Ordering::Relaxed);
                     }
@@ -194,31 +197,38 @@ impl RuntimeComponents {
         for event in events {
             match event {
                 InputEvent::FocusChange => {
-                    self.typed_session.focus(None);
-                    self.typed_session.invalidate(MovementSignal::FocusChange);
+                    self.session_manager.deactivate(MovementSignal::FocusChange);
                 }
-                InputEvent::MouseClick => self.typed_session.invalidate(MovementSignal::MouseClick),
+                InputEvent::MouseClick => {
+                    self.session_manager.deactivate(MovementSignal::MouseClick)
+                }
                 InputEvent::Key(key) => {
                     let window = key.window;
                     if window == 0 || window != target::active_window_handle_value() {
-                        self.typed_session.focus(None);
+                        self.session_manager.deactivate(MovementSignal::FocusChange);
                         continue;
                     }
                     match SecurityGate::check(TriggerKind::Character, &self.config, database) {
                         SecurityDecision::Allowed { target } if target.window_handle == window => {
-                            self.typed_session
-                                .focus(Some((window, target.session_key())));
-                            self.typed_session.input(key.translate());
+                            self.session_manager.focus(&target);
+                            self.session_manager.input(key.translate());
                         }
-                        _ => self.typed_session.focus(None),
+                        _ => self.session_manager.deactivate(MovementSignal::FocusChange),
                     }
                 }
             }
         }
-        if let Some(signal) = self.typed_session.latest_movement() {
+        if let Some(signal) = self
+            .session_manager
+            .active()
+            .and_then(|session| session.latest_movement())
+        {
             tracing::debug!(?signal, "typed session position changed");
         }
-        let typed_chars = self.typed_session.executable_context().chars().count();
+        let typed_chars = self
+            .session_manager
+            .active()
+            .map_or(0, |session| session.executable_context().chars().count());
         tracing::debug!(typed_chars, "typed session updated");
     }
 

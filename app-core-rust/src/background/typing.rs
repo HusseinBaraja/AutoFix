@@ -98,6 +98,25 @@ impl TypedSession {
     pub(crate) fn latest_movement(&self) -> Option<MovementSignal> {
         self.movement
     }
+
+    /// Replace only the known text immediately before the caret. The tracked
+    /// suffix remains untouched and is never submitted to a correction engine.
+    pub(crate) fn replace_executable_suffix(&mut self, original: &str, replacement: &str) -> bool {
+        let original: Vec<char> = original.chars().collect();
+        let replacement: Vec<char> = replacement.chars().collect();
+        if original.len() > self.caret
+            || self.typed[self.caret - original.len()..self.caret] != original
+            || self.typed.len() - original.len() + replacement.len() > MAX_TYPED_CHARS
+        {
+            return false;
+        }
+        self.typed.splice(
+            self.caret - original.len()..self.caret,
+            replacement.iter().copied(),
+        );
+        self.caret = self.caret - original.len() + replacement.len();
+        true
+    }
 }
 
 #[cfg(test)]
@@ -176,5 +195,18 @@ mod tests {
             session.executable_context().chars().count(),
             MAX_TYPED_CHARS - 1
         );
+    }
+
+    #[test]
+    fn correction_changes_only_prefix_before_caret() {
+        let mut session = session();
+        session.input(TypedInput::Text("abxcd".into()));
+        session.input(TypedInput::Left);
+        session.input(TypedInput::Left);
+        assert!(session.replace_executable_suffix("abx", "AB"));
+        assert_eq!(session.executable_context(), "AB");
+        session.input(TypedInput::Right);
+        assert_eq!(session.executable_context(), "ABc");
+        assert!(!session.replace_executable_suffix("ab", "bad"));
     }
 }
