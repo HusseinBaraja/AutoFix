@@ -30,24 +30,31 @@ mod native {
         collections::VecDeque,
         sync::{
             atomic::{AtomicBool, Ordering},
-            Mutex, OnceLock,
+            mpsc, Mutex, OnceLock,
         },
+        thread::{self, JoinHandle},
     };
 
-    use windows_sys::Win32::UI::{
-        Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK},
-        Input::KeyboardAndMouse::{
-            GetAsyncKeyState, GetKeyState, GetKeyboardLayout, ToUnicodeEx, VK_BACK, VK_CAPITAL,
-            VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU,
-            VK_LSHIFT, VK_LWIN, VK_MENU, VK_NEXT, VK_NUMLOCK, VK_PRIOR, VK_RCONTROL, VK_RETURN,
-            VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SCROLL, VK_SHIFT, VK_UP,
-        },
-        WindowsAndMessaging::{
-            CallNextHookEx, GetForegroundWindow, GetWindowThreadProcessId, SetWindowsHookExW,
-            UnhookWindowsHookEx, EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND, HHOOK,
-            KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLMHF_INJECTED, MSLLHOOKSTRUCT, WH_KEYBOARD_LL,
-            WH_MOUSE_LL, WINEVENT_OUTOFCONTEXT, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN,
-            WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_XBUTTONDOWN,
+    use windows_sys::Win32::{
+        Foundation::ERROR_GEN_FAILURE,
+        System::Threading::GetCurrentThreadId,
+        UI::{
+            Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK},
+            Input::KeyboardAndMouse::{
+                GetAsyncKeyState, GetKeyState, GetKeyboardLayout, ToUnicodeEx, VK_BACK, VK_CAPITAL,
+                VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU,
+                VK_LSHIFT, VK_LWIN, VK_MENU, VK_NEXT, VK_NUMLOCK, VK_PRIOR, VK_RCONTROL, VK_RETURN,
+                VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SCROLL, VK_SHIFT, VK_UP,
+            },
+            WindowsAndMessaging::{
+                CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW,
+                GetWindowThreadProcessId, PeekMessageW, PostThreadMessageW, SetWindowsHookExW,
+                TranslateMessage, UnhookWindowsHookEx, EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND,
+                HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT,
+                PM_NOREMOVE, WH_KEYBOARD_LL, WH_MOUSE_LL, WINEVENT_OUTOFCONTEXT, WM_KEYDOWN,
+                WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_QUIT, WM_RBUTTONDOWN, WM_SYSKEYDOWN,
+                WM_XBUTTONDOWN,
+            },
         },
     };
 
@@ -64,6 +71,11 @@ mod native {
     }
 
     pub(crate) struct InputListener {
+        thread_id: u32,
+        thread: Option<JoinHandle<()>>,
+    }
+
+    struct Hooks {
         keyboard: HHOOK,
         mouse: HHOOK,
         foreground: HWINEVENTHOOK,
@@ -73,6 +85,99 @@ mod native {
     impl InputListener {
         pub(crate) fn initialize() -> Result<Self, u32> {
             EVENTS.get_or_init(|| Mutex::new(VecDeque::new()));
+            let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+            let thread = thread::Builder::new()
+                .name("autofix-input-hooks".into())
+                .spawn(move || {
+                    let thread_id = unsafe { GetCurrentThreadId() };
+                    let mut message = unsafe { std::mem::zeroed::<MSG>() };
+                    // PostThreadMessage requires the destination message queue to exist.
+                    unsafe { PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_NOREMOVE) };
+                    let hooks = Hooks::install();
+                    let ready = hooks.as_ref().map(|_| thread_id).map_err(|error| *error);
+                    if ready_tx.send(ready).is_err() {
+                        return;
+                    }
+                    let Ok(_hooks) = hooks else {
+                        return;
+                    };
+                    loop {
+                        let result =
+                            unsafe { GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) };
+                        if result <= 0 {
+                            if result < 0 {
+                                tracing::error!(
+                                    error =
+                                        unsafe { windows_sys::Win32::Foundation::GetLastError() },
+                                    "keyboard session listener message loop failed"
+                                );
+                            }
+                            break;
+                        }
+                        unsafe {
+                            TranslateMessage(&message);
+                            DispatchMessageW(&message);
+                        }
+                    }
+                })
+                .map_err(|error| {
+                    error
+                        .raw_os_error()
+                        .map_or(ERROR_GEN_FAILURE, |code| code as u32)
+                })?;
+            match ready_rx.recv() {
+                Ok(Ok(thread_id)) => {
+                    tracing::info!("keyboard session listener initialized");
+                    Ok(Self {
+                        thread_id,
+                        thread: Some(thread),
+                    })
+                }
+                result => {
+                    let _ = thread.join();
+                    Err(result
+                        .ok()
+                        .and_then(Result::err)
+                        .unwrap_or(ERROR_GEN_FAILURE))
+                }
+            }
+        }
+
+        pub(crate) fn drain(&self) -> Vec<InputEvent> {
+            let mut raw = VecDeque::new();
+            if let Ok(mut events) = queue().lock() {
+                std::mem::swap(&mut *events, &mut raw);
+            } else {
+                OVERFLOWED.store(true, Ordering::Relaxed);
+            }
+            let mut result = Vec::new();
+            if OVERFLOWED.swap(false, Ordering::Relaxed) {
+                return vec![InputEvent::FocusChange];
+            }
+            for event in raw {
+                match event {
+                    RawEvent::Key(key) => result.push(InputEvent::Key(key)),
+                    RawEvent::MouseClick => {
+                        result.clear();
+                        result.push(InputEvent::MouseClick);
+                    }
+                    RawEvent::FocusChange => {
+                        result.clear();
+                        result.push(InputEvent::FocusChange);
+                    }
+                }
+            }
+            result
+        }
+
+        #[cfg(test)]
+        pub(crate) fn hook_thread_id(&self) -> u32 {
+            self.thread_id
+        }
+    }
+
+    impl Hooks {
+        fn install() -> Result<Self, u32> {
             let keyboard = unsafe {
                 SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), std::ptr::null_mut(), 0)
             };
@@ -120,7 +225,6 @@ mod native {
                 }
                 return Err(error);
             }
-            tracing::info!("keyboard session listener initialized");
             Ok(Self {
                 keyboard,
                 mouse,
@@ -128,36 +232,29 @@ mod native {
                 focus,
             })
         }
-
-        pub(crate) fn drain(&self) -> Vec<InputEvent> {
-            let mut raw = VecDeque::new();
-            if let Ok(mut events) = queue().lock() {
-                std::mem::swap(&mut *events, &mut raw);
-            } else {
-                OVERFLOWED.store(true, Ordering::Relaxed);
-            }
-            let mut result = Vec::new();
-            if OVERFLOWED.swap(false, Ordering::Relaxed) {
-                return vec![InputEvent::FocusChange];
-            }
-            for event in raw {
-                match event {
-                    RawEvent::Key(key) => result.push(InputEvent::Key(key)),
-                    RawEvent::MouseClick => {
-                        result.clear();
-                        result.push(InputEvent::MouseClick);
-                    }
-                    RawEvent::FocusChange => {
-                        result.clear();
-                        result.push(InputEvent::FocusChange);
-                    }
-                }
-            }
-            result
-        }
     }
 
     impl Drop for InputListener {
+        fn drop(&mut self) {
+            if self
+                .thread
+                .as_ref()
+                .is_some_and(|thread| !thread.is_finished())
+                && unsafe { PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0) } == 0
+            {
+                tracing::error!("failed to stop keyboard session listener thread");
+                return;
+            }
+            if let Some(thread) = self.thread.take() {
+                if thread.join().is_err() {
+                    tracing::error!("keyboard session listener thread panicked");
+                }
+            }
+            tracing::info!("keyboard session listener shut down");
+        }
+    }
+
+    impl Drop for Hooks {
         fn drop(&mut self) {
             unsafe {
                 UnhookWindowsHookEx(self.keyboard);
@@ -168,7 +265,6 @@ mod native {
             if let Ok(mut events) = queue().lock() {
                 events.clear();
             }
-            tracing::info!("keyboard session listener shut down");
         }
     }
 

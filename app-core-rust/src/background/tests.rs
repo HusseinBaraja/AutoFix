@@ -39,6 +39,10 @@ fn background_runtime_respects_elevation_and_initializes_files() {
         }
         Ok(()) => {
             let runtime = result.unwrap();
+            #[cfg(windows)]
+            assert_ne!(runtime.components.input_listener.hook_thread_id(), unsafe {
+                windows_sys::Win32::System::Threading::GetCurrentThreadId()
+            });
             runtime.shutdown();
 
             assert!(config_path.exists());
