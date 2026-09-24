@@ -344,11 +344,7 @@ impl SessionManager {
 
     pub(crate) fn deactivate(&mut self, reason: MovementSignal) {
         if let Some(identity) = self.active.take() {
-            if matches!(&identity.key, SessionKey::TemporaryActiveSession) {
-                self.sessions.remove(&identity);
-                return;
-            }
-            if let Some(session) = self.sessions.get_mut(&identity) {
+            if let Some(mut session) = self.sessions.remove(&identity) {
                 session.deactivate(reason);
             }
         }
@@ -451,7 +447,7 @@ mod tests {
         manager.input(TypedInput::Text("two".into()));
         manager.focus(&other_process);
         manager.input(TypedInput::Text("three".into()));
-        assert_eq!(manager.sessions.len(), 3);
+        assert_eq!(manager.sessions.len(), 1);
         manager.focus(&first);
         assert_eq!(manager.active().unwrap().executable_context(), "");
         assert_eq!(manager.active().unwrap().informative_context(), "");
@@ -466,13 +462,13 @@ mod tests {
             .active_mut()
             .unwrap()
             .queue_correction("word".into(), "Word".into()));
-        let before = manager.active().unwrap().versions();
         manager.deactivate(MovementSignal::MouseClick);
+        assert!(manager.sessions.is_empty());
         manager.focus(&target(1, 10, None));
         let active = manager.active().unwrap();
         assert!(active.executable_context().is_empty());
         assert!(active.pending_corrections.is_empty());
-        assert!(active.versions().caret_anchor > before.caret_anchor);
+        assert_eq!(active.versions(), ContextVersions::default());
     }
 
     #[test]
@@ -688,8 +684,11 @@ mod tests {
     fn focused_element_ids_are_scoped_to_window() {
         let mut manager = SessionManager::new(ContextConfig::default());
         manager.focus(&target(1, 10, Some("Editor")));
+        manager.input(TypedInput::Text("first".into()));
         manager.focus(&target(1, 20, Some("Editor")));
-        assert_eq!(manager.sessions.len(), 2);
+        assert_eq!(manager.sessions.len(), 1);
+        assert_eq!(manager.active().unwrap().executable_context(), "");
+        assert_eq!(manager.active.as_ref().unwrap().element_window, Some(20));
     }
 
     #[test]

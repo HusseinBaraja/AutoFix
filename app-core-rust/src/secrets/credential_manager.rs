@@ -177,6 +177,19 @@ mod tests {
     use super::*;
     use windows_sys::Win32::Foundation::ERROR_NO_SUCH_LOGON_SESSION;
 
+    fn initial_check<T>(result: Result<T, SecretStoreError>) -> Option<T> {
+        match result {
+            Err(
+                SecretStoreError::CredentialReadFailed(ERROR_NO_SUCH_LOGON_SESSION)
+                | SecretStoreError::CredentialDeleteFailed(ERROR_NO_SUCH_LOGON_SESSION),
+            ) => {
+                eprintln!("Credential Manager unavailable without a logon session");
+                None
+            }
+            result => Some(result.unwrap()),
+        }
+    }
+
     #[test]
     fn stores_reads_updates_and_deletes_secret_by_profile_id() {
         let profile_id = format!(
@@ -187,10 +200,18 @@ mod tests {
                 .as_nanos()
         );
 
-        delete_secret(&profile_id).unwrap();
+        let Some(()) = initial_check(delete_secret(&profile_id)) else {
+            return;
+        };
 
-        assert!(!has_secret(&profile_id).unwrap());
-        assert_eq!(get_secret(&profile_id).unwrap(), None);
+        let Some(stored) = initial_check(has_secret(&profile_id)) else {
+            return;
+        };
+        assert!(!stored);
+        let Some(secret) = initial_check(get_secret(&profile_id)) else {
+            return;
+        };
+        assert_eq!(secret, None);
 
         match set_secret(&profile_id, "first-token") {
             Err(SecretStoreError::CredentialWriteFailed(ERROR_NO_SUCH_LOGON_SESSION)) => {

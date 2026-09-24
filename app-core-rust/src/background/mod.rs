@@ -194,26 +194,42 @@ impl RuntimeComponents {
         if events.is_empty() {
             return;
         }
+        let mut gate_result: Option<(isize, bool)> = None;
         for event in events {
             match event {
                 InputEvent::FocusChange => {
+                    gate_result = None;
                     self.session_manager.deactivate(MovementSignal::FocusChange);
                 }
                 InputEvent::MouseClick => {
+                    gate_result = None;
                     self.session_manager.deactivate(MovementSignal::MouseClick)
                 }
                 InputEvent::Key(key) => {
                     let window = key.window;
                     if window == 0 || window != target::active_window_handle_value() {
+                        gate_result = None;
                         self.session_manager.deactivate(MovementSignal::FocusChange);
                         continue;
+                    }
+                    if let Some((checked_window, allowed)) = gate_result {
+                        if checked_window == window {
+                            if allowed {
+                                self.session_manager.input(key.translate());
+                            }
+                            continue;
+                        }
                     }
                     match SecurityGate::check(TriggerKind::Character, &self.config, database) {
                         SecurityDecision::Allowed { target } if target.window_handle == window => {
                             self.session_manager.focus(&target);
+                            gate_result = Some((window, true));
                             self.session_manager.input(key.translate());
                         }
-                        _ => self.session_manager.deactivate(MovementSignal::FocusChange),
+                        _ => {
+                            gate_result = Some((window, false));
+                            self.session_manager.deactivate(MovementSignal::FocusChange);
+                        }
                     }
                 }
             }
