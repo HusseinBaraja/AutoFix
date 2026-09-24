@@ -1,6 +1,7 @@
 mod admin;
 pub(crate) mod app_identity;
 mod components;
+mod context_capture;
 mod input_listener;
 mod message_loop;
 mod paths;
@@ -195,15 +196,18 @@ impl RuntimeComponents {
             return;
         }
         let mut gate_result: Option<(isize, bool)> = None;
+        let mut needs_capture = false;
         for event in events {
             match event {
                 InputEvent::FocusChange => {
                     gate_result = None;
                     self.session_manager.deactivate(MovementSignal::FocusChange);
+                    needs_capture = true;
                 }
                 InputEvent::MouseClick => {
                     gate_result = None;
-                    self.session_manager.deactivate(MovementSignal::MouseClick)
+                    self.session_manager.deactivate(MovementSignal::MouseClick);
+                    needs_capture = true;
                 }
                 InputEvent::Key(key) => {
                     let window = key.window;
@@ -215,16 +219,16 @@ impl RuntimeComponents {
                     if let Some((checked_window, allowed)) = gate_result {
                         if checked_window == window {
                             if allowed {
-                                self.session_manager.input(key.translate());
+                                needs_capture |= self.session_manager.input(key.translate());
                             }
                             continue;
                         }
                     }
                     match SecurityGate::check(TriggerKind::Character, &self.config, database) {
                         SecurityDecision::Allowed { target } if target.window_handle == window => {
-                            self.session_manager.focus(&target);
+                            needs_capture |= self.session_manager.focus(&target);
                             gate_result = Some((window, true));
-                            self.session_manager.input(key.translate());
+                            needs_capture |= self.session_manager.input(key.translate());
                         }
                         _ => {
                             gate_result = Some((window, false));
@@ -232,6 +236,24 @@ impl RuntimeComponents {
                         }
                     }
                 }
+            }
+        }
+        if needs_capture {
+            if let SecurityDecision::Allowed { target } =
+                SecurityGate::check(TriggerKind::Character, &self.config, database)
+            {
+                self.session_manager.focus(&target);
+                let preceding = context_capture::read_before_caret(&target, &self.config.context);
+                let executable = self
+                    .session_manager
+                    .active()
+                    .map_or_else(String::new, |session| session.executable_context());
+                let context = context_capture::captured_context(
+                    preceding.as_deref(),
+                    &executable,
+                    &self.config.context,
+                );
+                self.session_manager.set_informative_context(context);
             }
         }
         if let Some(signal) = self

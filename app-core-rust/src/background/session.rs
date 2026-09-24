@@ -183,23 +183,14 @@ impl Session {
         self.executable.focus(Some((window, key)));
     }
 
-    /// Explicitly reanchor after verified same-field movement. Only observed
-    /// current-session text can become informative context.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "called after a verified reanchor in the correction router"
-        )
-    )]
-    pub(crate) fn capture_informative_context(&mut self, limits: &ContextConfig) {
-        let observed = self.executable.executable_context();
-        self.append_informative(&observed, limits);
-        self.executable.invalidate(MovementSignal::UnknownPosition);
+    /// Reanchor the read-only prefix at the current caret. Executable typing
+    /// already observed in this input batch remains a separate segment.
+    fn set_informative_context(&mut self, context: String, limits: &ContextConfig) {
+        self.informative_context = context;
+        self.trim_informative(limits);
         self.pending_corrections.clear();
         self.correction_undo_history.clear();
         self.versions.context = self.versions.context.wrapping_add(1);
-        self.versions.executable = self.versions.executable.wrapping_add(1);
         self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
     }
 
@@ -320,7 +311,7 @@ impl SessionManager {
         }
     }
 
-    pub(crate) fn focus(&mut self, target: &FocusedTarget) {
+    pub(crate) fn focus(&mut self, target: &FocusedTarget) -> bool {
         let identity = SessionIdentity {
             process_id: target.process_id,
             key: target.session_key(),
@@ -331,7 +322,7 @@ impl SessionManager {
                 .filter(|window| *window != 0),
         };
         if self.active.as_ref() == Some(&identity) {
-            return;
+            return false;
         }
         self.deactivate(MovementSignal::FocusChange);
         let session = self
@@ -340,6 +331,7 @@ impl SessionManager {
             .or_insert_with(|| Session::new(target.window_handle, identity.key.clone()));
         session.reactivate(target.window_handle, identity.key.clone());
         self.active = Some(identity);
+        true
     }
 
     pub(crate) fn deactivate(&mut self, reason: MovementSignal) {
@@ -350,11 +342,35 @@ impl SessionManager {
         }
     }
 
-    pub(crate) fn input(&mut self, input: TypedInput) {
+    pub(crate) fn input(&mut self, input: TypedInput) -> bool {
+        let movement = matches!(input, TypedInput::Uncertain(_))
+            || matches!(input, TypedInput::Left | TypedInput::Right);
         if let Some(identity) = self.active.as_ref() {
             if let Some(session) = self.sessions.get_mut(identity) {
+                let backspace_into_informative = matches!(input, TypedInput::Backspace)
+                    && session.executable_context().is_empty();
                 session.input(input, &self.limits);
+                return backspace_into_informative
+                    || movement
+                        && matches!(
+                            session.latest_movement(),
+                            Some(
+                                MovementSignal::UnknownPosition
+                                    | MovementSignal::VerticalArrow
+                                    | MovementSignal::HomeEnd
+                                    | MovementSignal::ControlArrow
+                                    | MovementSignal::Page
+                            )
+                        );
             }
+        }
+        false
+    }
+
+    pub(crate) fn set_informative_context(&mut self, context: String) {
+        let limits = self.limits.clone();
+        if let Some(session) = self.active_mut() {
+            session.set_informative_context(context, &limits);
         }
     }
 
@@ -610,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn reanchor_appends_only_observed_text_and_caps_context() {
+    fn reanchor_replaces_read_only_context_and_preserves_new_typing() {
         let limits = ContextConfig {
             informative_context_max_chars: 5,
             ..ContextConfig::default()
@@ -624,9 +640,9 @@ mod tests {
             .complete_without_changes(&limits);
         manager.input(TypedInput::Text("éxyz".into()));
         let session = manager.active_mut().unwrap();
-        session.capture_informative_context(&limits);
-        assert_eq!(session.informative_context(), "céxyz");
-        assert_eq!(session.executable_context(), "");
+        session.set_informative_context("old cé".into(), &limits);
+        assert_eq!(session.informative_context(), "ld cé");
+        assert_eq!(session.executable_context(), "éxyz");
     }
 
     #[test]
@@ -639,7 +655,7 @@ mod tests {
             .active_mut()
             .unwrap()
             .complete_without_changes(&limits);
-        manager.input(TypedInput::Backspace);
+        assert!(manager.input(TypedInput::Backspace));
         assert_eq!(manager.active().unwrap().informative_context(), "");
     }
 
