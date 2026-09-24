@@ -28,13 +28,19 @@ elements, falling back to the window handle, process ID and title, then a
 temporary active key. Keys are scoped to the owning process. It stores
 informative context separately from editable executable context, plus pending
 corrections, correction undo history, and context, executable, and caret-anchor
-versions. Informative context can only be captured from text observed in the
-current engine run; correction and undo operations change only executable
-context before the caret. Uncertain movement invalidates executable context and
-pending corrections. Runtime ticks delete sessions when their owning process
-exits. All session state disappears on engine exit or termination and is never
-written to disk. The correction router and replacement engine are still
-placeholders; they do not yet submit or apply corrections.
+versions. Only text observed in the current engine run enters either context.
+On a successful correction, corrected text becomes read-only informative
+context and executable context clears. A trigger or final fix with no changes
+does the same with the original text. Exceeding the configured executable word
+limit also commits the current segment. New typing starts a fresh executable
+segment. Undo restores the corrected span in informative context to its
+original text and leaves newer executable text intact. Informative context is
+bounded by the configured character limit. Uncertain movement invalidates
+executable context and pending corrections. Runtime ticks delete sessions when
+their owning process exits. All session state disappears on engine exit or
+termination and is never written to disk. The correction router and replacement
+engine are still placeholders; lifecycle methods model their outcomes in
+memory and do not change target application text.
 
 Feature code should be organized by product behavior, not technical layer. Keep modules small, private by default, and colocate tests with the behavior they verify.
 

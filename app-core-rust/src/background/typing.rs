@@ -95,6 +95,11 @@ impl TypedSession {
         self.typed[..self.caret].iter().collect()
     }
 
+    pub(crate) fn clear_executable(&mut self) {
+        self.typed.clear();
+        self.caret = 0;
+    }
+
     pub(crate) fn latest_movement(&self) -> Option<MovementSignal> {
         self.movement
     }

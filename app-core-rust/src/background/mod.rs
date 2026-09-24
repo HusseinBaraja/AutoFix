@@ -155,7 +155,7 @@ impl RuntimeComponents {
             )?,
             global_shortcut: GlobalShortcutListener::initialize(config),
             input_listener,
-            session_manager: SessionManager::new(),
+            session_manager: SessionManager::new(config.context.clone()),
             correction_engine_router: CorrectionEngineRouter::initialize(config),
             replacement_engine: ReplacementEngine::initialize(),
             process_group_monitor: SiblingDisappearanceMonitor::new(),
@@ -321,6 +321,7 @@ impl RuntimeComponents {
                 }
                 self.config = config.clone();
                 self.global_shortcut.reload(&config);
+                self.session_manager.update_limits(config.context);
             }
             Err(error) => tracing::warn!("failed to reload shortcuts from config: {}", error),
         }

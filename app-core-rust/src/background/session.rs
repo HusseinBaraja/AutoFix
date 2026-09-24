@@ -6,6 +6,7 @@ use super::{
     target::{FocusedTarget, SessionKey},
     typing::{MovementSignal, TypedInput, TypedSession},
 };
+use crate::settings::ContextConfig;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct SessionIdentity {
@@ -35,12 +36,13 @@ pub(crate) struct PendingCorrection {
 pub(crate) struct CorrectionUndo {
     original: String,
     replacement: String,
-    applied_versions: ContextVersions,
+    informative_start: usize,
+    caret_anchor: u64,
 }
 
 pub(crate) struct Session {
-    // Informative text is captured from known typed text. Correction and undo
-    // never write it or use it as a replacement target.
+    // Informative text is known session text before the executable segment.
+    // It is never an editable replacement target.
     informative_context: String,
     executable: TypedSession,
     pending_corrections: VecDeque<PendingCorrection>,
@@ -85,14 +87,17 @@ impl Session {
         self.executable.latest_movement()
     }
 
-    fn input(&mut self, input: TypedInput) {
+    fn input(&mut self, input: TypedInput, limits: &ContextConfig) {
+        if matches!(&input, TypedInput::Backspace) && self.executable_context().is_empty() {
+            // The user may have deleted text we only keep as read-only context.
+            self.informative_context.clear();
+            self.correction_undo_history.clear();
+        }
         if matches!(&input, TypedInput::Uncertain(_)) {
             // This text was observed in the current control before the caret
             // became uncertain. Keep it for context, never for replacement.
             let observed = self.executable.executable_context();
-            if !observed.is_empty() {
-                self.informative_context = observed;
-            }
+            self.append_informative(&observed, limits);
         }
         let is_text_edit = matches!(&input, TypedInput::Text(value) if !value.is_empty())
             || matches!(&input, TypedInput::Backspace | TypedInput::Delete);
@@ -105,11 +110,60 @@ impl Session {
             self.versions.context = self.versions.context.wrapping_add(1);
             self.versions.executable = self.versions.executable.wrapping_add(1);
             self.pending_corrections.clear();
-            self.correction_undo_history.clear();
         }
         if is_anchor_change {
             self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
+            self.correction_undo_history.clear();
         }
+        if self.executable_context().split_whitespace().count()
+            > usize::from(limits.executable_context_max_words)
+        {
+            self.commit_executable(limits);
+        }
+    }
+
+    fn append_informative(&mut self, text: &str, limits: &ContextConfig) {
+        if text.is_empty() {
+            return;
+        }
+        self.informative_context.push_str(text);
+        self.trim_informative(limits);
+    }
+
+    fn trim_informative(&mut self, limits: &ContextConfig) {
+        let max = limits.informative_context_max_chars as usize;
+        let excess = self.informative_context.chars().count().saturating_sub(max);
+        if excess > 0 {
+            let boundary = self
+                .informative_context
+                .char_indices()
+                .nth(excess)
+                .map_or(self.informative_context.len(), |(index, _)| index);
+            self.informative_context.drain(..boundary);
+            self.correction_undo_history.clear();
+        }
+    }
+
+    /// Move only known text before the caret into read-only context.
+    fn commit_executable(&mut self, limits: &ContextConfig) {
+        let observed = self.executable.executable_context();
+        if observed.is_empty() {
+            return;
+        }
+        self.append_informative(&observed, limits);
+        self.executable.clear_executable();
+        self.pending_corrections.clear();
+        self.versions.context = self.versions.context.wrapping_add(1);
+        self.versions.executable = self.versions.executable.wrapping_add(1);
+    }
+
+    /// Called only after a trigger or final-fix completed with no changes.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "called by the upcoming correction router")
+    )]
+    pub(crate) fn complete_without_changes(&mut self, limits: &ContextConfig) {
+        self.commit_executable(limits);
     }
 
     fn deactivate(&mut self, reason: MovementSignal) {
@@ -138,10 +192,12 @@ impl Session {
             reason = "called after a verified reanchor in the correction router"
         )
     )]
-    pub(crate) fn capture_informative_context(&mut self) {
-        self.informative_context = self.executable.executable_context();
+    pub(crate) fn capture_informative_context(&mut self, limits: &ContextConfig) {
+        let observed = self.executable.executable_context();
+        self.append_informative(&observed, limits);
         self.executable.invalidate(MovementSignal::UnknownPosition);
         self.pending_corrections.clear();
+        self.correction_undo_history.clear();
         self.versions.context = self.versions.context.wrapping_add(1);
         self.versions.executable = self.versions.executable.wrapping_add(1);
         self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
@@ -167,7 +223,7 @@ impl Session {
         not(test),
         expect(dead_code, reason = "called after target replacement succeeds")
     )]
-    pub(crate) fn apply_next_correction(&mut self) -> bool {
+    pub(crate) fn apply_next_correction(&mut self, limits: &ContextConfig) -> bool {
         let Some(correction) = self.pending_corrections.pop_front() else {
             return false;
         };
@@ -178,14 +234,35 @@ impl Session {
         {
             return false;
         }
-        self.pending_corrections.clear();
-        self.versions.context = self.versions.context.wrapping_add(1);
-        self.versions.executable = self.versions.executable.wrapping_add(1);
-        self.correction_undo_history.push(CorrectionUndo {
-            original: correction.original,
-            replacement: correction.replacement,
-            applied_versions: self.versions,
-        });
+        let corrected_empty = self.executable_context().is_empty();
+        self.commit_executable(limits);
+        if corrected_empty {
+            self.pending_corrections.clear();
+            self.versions.context = self.versions.context.wrapping_add(1);
+            self.versions.executable = self.versions.executable.wrapping_add(1);
+        }
+        let replacement: String = correction
+            .replacement
+            .chars()
+            .rev()
+            .take(limits.informative_context_max_chars as usize)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if let Some(informative_start) = self
+            .informative_context
+            .len()
+            .checked_sub(replacement.len())
+            .filter(|start| self.informative_context.get(*start..) == Some(replacement.as_str()))
+        {
+            self.correction_undo_history.push(CorrectionUndo {
+                original: correction.original,
+                replacement,
+                informative_start,
+                caret_anchor: self.versions.caret_anchor,
+            });
+        }
         true
     }
 
@@ -193,41 +270,54 @@ impl Session {
         not(test),
         expect(dead_code, reason = "called after target undo succeeds")
     )]
-    pub(crate) fn undo_last_correction(&mut self) -> bool {
+    pub(crate) fn undo_last_correction(&mut self, limits: &ContextConfig) -> bool {
         let Some(last) = self.correction_undo_history.last() else {
             return false;
         };
-        if last.applied_versions != self.versions {
+        if last.caret_anchor != self.versions.caret_anchor {
             return false;
         }
-        let original = last.original.clone();
-        let replacement = last.replacement.clone();
-        if !self
-            .executable
-            .replace_executable_suffix(&replacement, &original)
-        {
+        let start = last.informative_start;
+        let end = start + last.replacement.len();
+        if self.informative_context.get(start..end) != Some(last.replacement.as_str()) {
             return false;
         }
+        self.informative_context
+            .replace_range(start..end, &last.original);
         self.correction_undo_history.pop();
+        self.trim_informative(limits);
         self.pending_corrections.clear();
         self.versions.context = self.versions.context.wrapping_add(1);
-        self.versions.executable = self.versions.executable.wrapping_add(1);
-        if let Some(previous) = self.correction_undo_history.last_mut() {
-            previous.applied_versions = self.versions;
-        }
         true
     }
 }
 
-#[derive(Default)]
 pub(crate) struct SessionManager {
     sessions: HashMap<SessionIdentity, Session>,
     active: Option<SessionIdentity>,
+    limits: ContextConfig,
 }
 
 impl SessionManager {
-    pub(crate) fn new() -> Self {
-        Self::default()
+    pub(crate) fn new(limits: ContextConfig) -> Self {
+        Self {
+            sessions: HashMap::new(),
+            active: None,
+            limits,
+        }
+    }
+
+    pub(crate) fn update_limits(&mut self, limits: ContextConfig) {
+        self.limits = limits;
+        let active_limits = self.limits.clone();
+        if let Some(session) = self.active_mut() {
+            session.trim_informative(&active_limits);
+            if session.executable_context().split_whitespace().count()
+                > usize::from(active_limits.executable_context_max_words)
+            {
+                session.commit_executable(&active_limits);
+            }
+        }
     }
 
     pub(crate) fn focus(&mut self, target: &FocusedTarget) {
@@ -265,8 +355,10 @@ impl SessionManager {
     }
 
     pub(crate) fn input(&mut self, input: TypedInput) {
-        if let Some(session) = self.active_mut() {
-            session.input(input);
+        if let Some(identity) = self.active.as_ref() {
+            if let Some(session) = self.sessions.get_mut(identity) {
+                session.input(input, &self.limits);
+            }
         }
     }
 
@@ -349,7 +441,7 @@ mod tests {
 
     #[test]
     fn keys_isolate_elements_windows_and_processes() {
-        let mut manager = SessionManager::new();
+        let mut manager = SessionManager::new(ContextConfig::default());
         let first = target(1, 10, Some("editor"));
         let other_field = target(1, 10, Some("search"));
         let other_process = target(2, 10, Some("editor"));
@@ -367,7 +459,7 @@ mod tests {
 
     #[test]
     fn uncertain_focus_invalidates_editable_text_and_pending_work() {
-        let mut manager = SessionManager::new();
+        let mut manager = SessionManager::new(ContextConfig::default());
         manager.focus(&target(1, 10, None));
         manager.input(TypedInput::Text("word".into()));
         assert!(manager
@@ -385,7 +477,7 @@ mod tests {
 
     #[test]
     fn uncertain_navigation_keeps_typed_text_as_read_only_context() {
-        let mut manager = SessionManager::new();
+        let mut manager = SessionManager::new(ContextConfig::default());
         manager.focus(&target(1, 10, None));
         manager.input(TypedInput::Text("earlier".into()));
         manager.input(TypedInput::Uncertain(MovementSignal::VerticalArrow));
@@ -400,11 +492,114 @@ mod tests {
     }
 
     #[test]
-    fn correction_and_undo_only_change_executable_context() {
-        let mut manager = SessionManager::new();
+    fn correction_commits_context_and_undo_preserves_new_typing() {
+        let limits = ContextConfig::default();
+        let mut manager = SessionManager::new(ContextConfig::default());
         manager.focus(&target(1, 10, None));
-        manager.input(TypedInput::Text("old".into()));
-        manager.active_mut().unwrap().capture_informative_context();
+        manager.input(TypedInput::Text("old ".into()));
+        manager
+            .active_mut()
+            .unwrap()
+            .complete_without_changes(&limits);
+        manager.input(TypedInput::Text("teh".into()));
+        let session = manager.active_mut().unwrap();
+        assert_eq!(session.executable_context(), "teh");
+        assert_eq!(session.informative_context(), "old ");
+        assert!(session.queue_correction("teh".into(), "the".into()));
+        assert!(session.apply_next_correction(&limits));
+        assert_eq!(session.executable_context(), "");
+        assert_eq!(session.informative_context(), "old the");
+        session.input(TypedInput::Text(" next".into()), &limits);
+        assert!(session.undo_last_correction(&limits));
+        assert_eq!(session.informative_context(), "old teh");
+        assert_eq!(session.executable_context(), " next");
+    }
+
+    #[test]
+    fn trigger_and_final_fix_without_changes_commit_each_segment() {
+        let limits = ContextConfig::default();
+        let mut manager = SessionManager::new(limits.clone());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("first ".into()));
+        let session = manager.active_mut().unwrap();
+        session.complete_without_changes(&limits); // trigger
+        assert_eq!(session.informative_context(), "first ");
+        assert_eq!(session.executable_context(), "");
+        session.input(TypedInput::Text("second".into()), &limits);
+        session.complete_without_changes(&limits); // final fix
+        assert_eq!(session.informative_context(), "first second");
+        assert_eq!(session.executable_context(), "");
+    }
+
+    #[test]
+    fn configurable_word_limit_commits_on_exceeding() {
+        let limits = ContextConfig {
+            executable_context_max_words: 2,
+            ..ContextConfig::default()
+        };
+        let mut manager = SessionManager::new(limits.clone());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("one two".into()));
+        assert_eq!(manager.active().unwrap().executable_context(), "one two");
+        manager.input(TypedInput::Text(" three".into()));
+        assert_eq!(
+            manager.active().unwrap().informative_context(),
+            "one two three"
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "");
+        manager.input(TypedInput::Text(" four".into()));
+        assert_eq!(manager.active().unwrap().executable_context(), " four");
+    }
+
+    #[test]
+    fn updated_limit_commits_active_segment() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("one two".into()));
+        manager.update_limits(ContextConfig {
+            executable_context_max_words: 1,
+            ..ContextConfig::default()
+        });
+        assert_eq!(manager.active().unwrap().informative_context(), "one two");
+        assert_eq!(manager.active().unwrap().executable_context(), "");
+    }
+
+    #[test]
+    fn deletion_correction_can_be_undone() {
+        let limits = ContextConfig::default();
+        let mut manager = SessionManager::new(limits.clone());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("extra".into()));
+        let session = manager.active_mut().unwrap();
+        assert!(session.queue_correction("extra".into(), "".into()));
+        assert!(session.apply_next_correction(&limits));
+        assert_eq!(session.informative_context(), "");
+        assert_eq!(session.executable_context(), "");
+        assert!(session.undo_last_correction(&limits));
+        assert_eq!(session.informative_context(), "extra");
+    }
+
+    #[test]
+    fn undo_restores_original_suffix_after_informative_limit() {
+        let limits = ContextConfig {
+            informative_context_max_chars: 4,
+            ..ContextConfig::default()
+        };
+        let mut manager = SessionManager::new(limits.clone());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("abcdef".into()));
+        let session = manager.active_mut().unwrap();
+        assert!(session.queue_correction("abcdef".into(), "uvwxyz".into()));
+        assert!(session.apply_next_correction(&limits));
+        assert_eq!(session.informative_context(), "wxyz");
+        assert!(session.undo_last_correction(&limits));
+        assert_eq!(session.informative_context(), "cdef");
+    }
+
+    #[test]
+    fn correction_never_commits_known_text_after_caret() {
+        let limits = ContextConfig::default();
+        let mut manager = SessionManager::new(limits.clone());
         manager.focus(&target(1, 10, None));
         manager.input(TypedInput::Text("teh tail".into()));
         for _ in 0..5 {
@@ -412,35 +607,66 @@ mod tests {
         }
         let session = manager.active_mut().unwrap();
         assert_eq!(session.executable_context(), "teh");
-        assert_eq!(session.informative_context(), "old");
         assert!(session.queue_correction("teh".into(), "the".into()));
-        assert!(session.apply_next_correction());
-        assert_eq!(session.executable_context(), "the");
-        assert_eq!(session.informative_context(), "old");
-        assert!(session.undo_last_correction());
-        assert_eq!(session.executable_context(), "teh");
-        session.input(TypedInput::Right);
-        assert_eq!(session.executable_context(), "teh ");
+        assert!(session.apply_next_correction(&limits));
+        assert_eq!(session.informative_context(), "the");
+        assert_eq!(session.executable_context(), "");
+    }
+
+    #[test]
+    fn reanchor_appends_only_observed_text_and_caps_context() {
+        let limits = ContextConfig {
+            informative_context_max_chars: 5,
+            ..ContextConfig::default()
+        };
+        let mut manager = SessionManager::new(limits.clone());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("abc".into()));
+        manager
+            .active_mut()
+            .unwrap()
+            .complete_without_changes(&limits);
+        manager.input(TypedInput::Text("éxyz".into()));
+        let session = manager.active_mut().unwrap();
+        session.capture_informative_context(&limits);
+        assert_eq!(session.informative_context(), "céxyz");
+        assert_eq!(session.executable_context(), "");
+    }
+
+    #[test]
+    fn backspace_beyond_new_segment_invalidates_read_only_context() {
+        let limits = ContextConfig::default();
+        let mut manager = SessionManager::new(limits.clone());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("old".into()));
+        manager
+            .active_mut()
+            .unwrap()
+            .complete_without_changes(&limits);
+        manager.input(TypedInput::Backspace);
+        assert_eq!(manager.active().unwrap().informative_context(), "");
     }
 
     #[test]
     fn stale_correction_and_undo_are_rejected() {
-        let mut manager = SessionManager::new();
+        let limits = ContextConfig::default();
+        let mut manager = SessionManager::new(ContextConfig::default());
         manager.focus(&target(1, 10, None));
         manager.input(TypedInput::Text("teh".into()));
         let session = manager.active_mut().unwrap();
         assert!(session.queue_correction("teh".into(), "the".into()));
-        session.input(TypedInput::Text("!".into()));
-        assert!(!session.apply_next_correction());
+        session.input(TypedInput::Text("!".into()), &limits);
+        assert!(!session.apply_next_correction(&limits));
         assert!(session.queue_correction("teh!".into(), "the!".into()));
-        assert!(session.apply_next_correction());
-        session.input(TypedInput::Left);
-        assert!(!session.undo_last_correction());
+        assert!(session.apply_next_correction(&limits));
+        session.input(TypedInput::Text("next".into()), &limits);
+        session.input(TypedInput::Left, &limits);
+        assert!(!session.undo_last_correction(&limits));
     }
 
     #[test]
     fn exited_process_sessions_are_removed() {
-        let mut manager = SessionManager::new();
+        let mut manager = SessionManager::new(ContextConfig::default());
         manager.focus(&target(1, 10, None));
         manager.input(TypedInput::Text("secret".into()));
         manager.focus(&target(2, 20, None));
@@ -460,7 +686,7 @@ mod tests {
 
     #[test]
     fn focused_element_ids_are_scoped_to_window() {
-        let mut manager = SessionManager::new();
+        let mut manager = SessionManager::new(ContextConfig::default());
         manager.focus(&target(1, 10, Some("Editor")));
         manager.focus(&target(1, 20, Some("Editor")));
         assert_eq!(manager.sessions.len(), 2);
@@ -468,7 +694,7 @@ mod tests {
 
     #[test]
     fn temporary_fallback_lasts_only_for_one_activation() {
-        let mut manager = SessionManager::new();
+        let mut manager = SessionManager::new(ContextConfig::default());
         let mut fallback = target(1, 0, None);
         fallback.window_title.clear();
         manager.focus(&fallback);
@@ -482,17 +708,21 @@ mod tests {
 
     #[test]
     fn undo_history_can_walk_back_multiple_corrections() {
-        let mut manager = SessionManager::new();
+        let limits = ContextConfig::default();
+        let mut manager = SessionManager::new(ContextConfig::default());
         manager.focus(&target(1, 10, None));
         manager.input(TypedInput::Text("teh".into()));
         let session = manager.active_mut().unwrap();
         assert!(session.queue_correction("teh".into(), "the".into()));
-        assert!(session.apply_next_correction());
-        assert!(session.queue_correction("the".into(), "The".into()));
-        assert!(session.apply_next_correction());
-        assert!(session.undo_last_correction());
-        assert_eq!(session.executable_context(), "the");
-        assert!(session.undo_last_correction());
-        assert_eq!(session.executable_context(), "teh");
+        assert!(session.apply_next_correction(&limits));
+        session.input(TypedInput::Text(" next".into()), &limits);
+        assert!(session.queue_correction("next".into(), "Next".into()));
+        assert!(session.apply_next_correction(&limits));
+        assert_eq!(session.informative_context(), "the Next");
+        assert!(session.undo_last_correction(&limits));
+        assert_eq!(session.informative_context(), "the next");
+        assert!(session.undo_last_correction(&limits));
+        assert_eq!(session.informative_context(), "teh next");
+        assert_eq!(session.executable_context(), "");
     }
 }
