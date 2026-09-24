@@ -37,7 +37,7 @@ use self::{
     paths::RuntimePaths,
     process_group::SiblingDisappearanceMonitor,
     security::{SecurityDecision, SecurityGate, TriggerKind},
-    session::SessionManager,
+    session::{MovementResolution, SessionManager},
     shortcuts::{GlobalShortcutListener, ShortcutAction},
     typing::MovementSignal,
 };
@@ -201,13 +201,13 @@ impl RuntimeComponents {
             match event {
                 InputEvent::FocusChange => {
                     gate_result = None;
-                    self.session_manager.deactivate(MovementSignal::FocusChange);
-                    needs_capture = true;
+                    self.session_manager
+                        .input(typing::TypedInput::Uncertain(MovementSignal::FocusChange));
                 }
                 InputEvent::MouseClick => {
                     gate_result = None;
-                    self.session_manager.deactivate(MovementSignal::MouseClick);
-                    needs_capture = true;
+                    self.session_manager
+                        .input(typing::TypedInput::Uncertain(MovementSignal::MouseClick));
                 }
                 InputEvent::Key(key) => {
                     let window = key.window;
@@ -238,7 +238,32 @@ impl RuntimeComponents {
                 }
             }
         }
-        if needs_capture {
+        if self.session_manager.needs_movement_resolution() {
+            if let SecurityDecision::Allowed { target } =
+                SecurityGate::check(TriggerKind::Character, &self.config, database)
+            {
+                self.session_manager.focus(&target);
+                let preceding = context_capture::read_before_caret(&target, &self.config.context);
+                if let MovementResolution::Reanchor {
+                    final_fix: Some(old),
+                } = self.session_manager.resolve_movement(preceding.as_deref())
+                {
+                    if self.final_fix_before_reanchor_allowed(database) {
+                        tracing::info!(
+                            typed_chars = old.chars().count(),
+                            "smart final-fix eligible at reanchor; correction pipeline is a placeholder"
+                        );
+                    }
+                }
+            } else {
+                self.session_manager.deactivate(MovementSignal::FocusChange);
+            }
+        } else if needs_capture
+            && !self
+                .session_manager
+                .active()
+                .is_some_and(|session| session.position_uncertain())
+        {
             if let SecurityDecision::Allowed { target } =
                 SecurityGate::check(TriggerKind::Character, &self.config, database)
             {

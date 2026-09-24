@@ -76,8 +76,14 @@ impl TypedSession {
             TypedInput::Delete if self.caret < self.typed.len() => {
                 self.typed.remove(self.caret);
             }
-            TypedInput::Left if self.caret > 0 => self.caret -= 1,
-            TypedInput::Right if self.caret < self.typed.len() => self.caret += 1,
+            TypedInput::Left if self.caret > 0 => {
+                self.caret -= 1;
+                self.movement = None;
+            }
+            TypedInput::Right if self.caret < self.typed.len() => {
+                self.caret += 1;
+                self.movement = None;
+            }
             TypedInput::Uncertain(reason) => self.invalidate(reason),
             _ => self.invalidate(MovementSignal::UnknownPosition),
         }
@@ -98,6 +104,14 @@ impl TypedSession {
     pub(crate) fn clear_executable(&mut self) {
         self.typed.clear();
         self.caret = 0;
+    }
+
+    pub(crate) fn set_caret(&mut self, caret: usize) -> bool {
+        if caret > self.typed.len() {
+            return false;
+        }
+        self.caret = caret;
+        true
     }
 
     pub(crate) fn latest_movement(&self) -> Option<MovementSignal> {
