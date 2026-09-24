@@ -1,14 +1,17 @@
 mod admin;
 pub(crate) mod app_identity;
 mod components;
+mod input_listener;
 mod message_loop;
 mod paths;
 mod process_group;
 mod security;
+mod session;
 mod shortcuts;
 mod target;
 #[cfg(test)]
 mod tests;
+mod typing;
 
 use std::{
     error::Error,
@@ -28,11 +31,14 @@ use crate::{
 
 use self::{
     admin::reject_elevated_process,
-    components::{CorrectionEngineRouter, NamedPipeIpcServer, ReplacementEngine, SessionManager},
+    components::{CorrectionEngineRouter, NamedPipeIpcServer, ReplacementEngine},
+    input_listener::{InputEvent, InputListener},
     paths::RuntimePaths,
     process_group::SiblingDisappearanceMonitor,
     security::{SecurityDecision, SecurityGate, TriggerKind},
+    session::SessionManager,
     shortcuts::{GlobalShortcutListener, ShortcutAction},
+    typing::MovementSignal,
 };
 
 pub(crate) struct BackgroundRuntime {
@@ -46,6 +52,7 @@ struct RuntimeComponents {
     config: AppConfig,
     ipc_server: NamedPipeIpcServer,
     global_shortcut: GlobalShortcutListener,
+    input_listener: InputListener,
     session_manager: SessionManager,
     correction_engine_router: CorrectionEngineRouter,
     replacement_engine: ReplacementEngine,
@@ -62,6 +69,7 @@ pub(crate) enum BackgroundError {
     },
     Config(crate::settings::ConfigIoError),
     Database(rusqlite::Error),
+    InputHook(u32),
 }
 
 impl fmt::Display for BackgroundError {
@@ -73,6 +81,10 @@ impl fmt::Display for BackgroundError {
             }
             Self::Config(source) => write!(formatter, "config error: {}", source),
             Self::Database(source) => write!(formatter, "database error: {}", source),
+            Self::InputHook(code) => write!(
+                formatter,
+                "failed to install input listener: Windows error {code}"
+            ),
         }
     }
 }
@@ -83,7 +95,7 @@ impl Error for BackgroundError {
             Self::CreateDirectory { source, .. } => Some(source),
             Self::Config(source) => Some(source),
             Self::Database(source) => Some(source),
-            Self::ElevatedProcess => None,
+            Self::ElevatedProcess | Self::InputHook(_) => None,
         }
     }
 }
@@ -131,6 +143,7 @@ impl RuntimeComponents {
         paths: &RuntimePaths,
         shutdown_requested: Arc<AtomicBool>,
     ) -> Result<Self, BackgroundError> {
+        let input_listener = InputListener::initialize().map_err(BackgroundError::InputHook)?;
         Ok(Self {
             config_path: paths.config_path().to_path_buf(),
             config_modified_at: modified_at(paths.config_path()),
@@ -141,7 +154,8 @@ impl RuntimeComponents {
                 Arc::clone(&shutdown_requested),
             )?,
             global_shortcut: GlobalShortcutListener::initialize(config),
-            session_manager: SessionManager::initialize(),
+            input_listener,
+            session_manager: SessionManager::new(config.context.clone()),
             correction_engine_router: CorrectionEngineRouter::initialize(config),
             replacement_engine: ReplacementEngine::initialize(),
             process_group_monitor: SiblingDisappearanceMonitor::new(),
@@ -152,7 +166,7 @@ impl RuntimeComponents {
     fn shutdown(self) {
         self.replacement_engine.shutdown();
         self.correction_engine_router.shutdown();
-        self.session_manager.shutdown();
+        drop(self.input_listener);
         self.global_shortcut.shutdown();
         self.ipc_server.shutdown();
     }
@@ -161,9 +175,10 @@ impl RuntimeComponents {
         message_loop::run_until_exit(|event| {
             match event {
                 message_loop::MessageLoopEvent::Hotkey(id) => self.process_shortcut(id, database),
-                message_loop::MessageLoopEvent::Poll => {}
+                message_loop::MessageLoopEvent::Poll => self.process_input(database),
                 message_loop::MessageLoopEvent::Tick => {
                     self.reload_shortcuts_if_config_changed();
+                    self.session_manager.prune_exited();
                     if self.process_group_monitor.shutdown_requested() {
                         self.shutdown_requested.store(true, Ordering::Relaxed);
                     }
@@ -172,6 +187,65 @@ impl RuntimeComponents {
 
             self.shutdown_requested.load(Ordering::Relaxed)
         });
+    }
+
+    fn process_input(&mut self, database: &Database) {
+        let events = self.input_listener.drain();
+        if events.is_empty() {
+            return;
+        }
+        let mut gate_result: Option<(isize, bool)> = None;
+        for event in events {
+            match event {
+                InputEvent::FocusChange => {
+                    gate_result = None;
+                    self.session_manager.deactivate(MovementSignal::FocusChange);
+                }
+                InputEvent::MouseClick => {
+                    gate_result = None;
+                    self.session_manager.deactivate(MovementSignal::MouseClick)
+                }
+                InputEvent::Key(key) => {
+                    let window = key.window;
+                    if window == 0 || window != target::active_window_handle_value() {
+                        gate_result = None;
+                        self.session_manager.deactivate(MovementSignal::FocusChange);
+                        continue;
+                    }
+                    if let Some((checked_window, allowed)) = gate_result {
+                        if checked_window == window {
+                            if allowed {
+                                self.session_manager.input(key.translate());
+                            }
+                            continue;
+                        }
+                    }
+                    match SecurityGate::check(TriggerKind::Character, &self.config, database) {
+                        SecurityDecision::Allowed { target } if target.window_handle == window => {
+                            self.session_manager.focus(&target);
+                            gate_result = Some((window, true));
+                            self.session_manager.input(key.translate());
+                        }
+                        _ => {
+                            gate_result = Some((window, false));
+                            self.session_manager.deactivate(MovementSignal::FocusChange);
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(signal) = self
+            .session_manager
+            .active()
+            .and_then(|session| session.latest_movement())
+        {
+            tracing::debug!(?signal, "typed session position changed");
+        }
+        let typed_chars = self
+            .session_manager
+            .active()
+            .map_or(0, |session| session.executable_context().chars().count());
+        tracing::debug!(typed_chars, "typed session updated");
     }
 
     fn process_shortcut(&mut self, id: usize, database: &Database) {
@@ -263,6 +337,7 @@ impl RuntimeComponents {
                 }
                 self.config = config.clone();
                 self.global_shortcut.reload(&config);
+                self.session_manager.update_limits(config.context);
             }
             Err(error) => tracing::warn!("failed to reload shortcuts from config: {}", error),
         }

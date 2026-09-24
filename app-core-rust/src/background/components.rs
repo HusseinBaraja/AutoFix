@@ -10,7 +10,6 @@ use crate::{
 };
 
 pub(crate) struct NamedPipeIpcServer(crate::ipc::NamedPipeIpcServer);
-pub(crate) struct SessionManager;
 pub(crate) struct CorrectionEngineRouter;
 pub(crate) struct ReplacementEngine;
 
@@ -41,17 +40,6 @@ impl NamedPipeIpcServer {
     pub(crate) fn shutdown(self) {
         self.0.shutdown();
         tracing::info!("named pipe IPC server shut down");
-    }
-}
-
-impl SessionManager {
-    pub(crate) fn initialize() -> Self {
-        tracing::info!("session manager placeholder initialized");
-        Self
-    }
-
-    pub(crate) fn shutdown(self) {
-        tracing::info!("session manager placeholder shut down");
     }
 }
 

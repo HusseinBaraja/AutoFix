@@ -5,7 +5,7 @@ use std::{
 
 use crate::{background::paths::RuntimePaths, settings::AppConfig};
 
-use super::{load_or_create_config, BackgroundRuntime};
+use super::{admin, load_or_create_config, BackgroundError, BackgroundRuntime};
 
 #[test]
 fn creates_default_config_when_missing() {
@@ -20,7 +20,7 @@ fn creates_default_config_when_missing() {
 }
 
 #[test]
-fn starts_background_runtime_with_user_config_and_database() {
+fn background_runtime_respects_elevation_and_initializes_files() {
     let root = unique_temp_dir();
     let config_path = root.join("settings.toml");
     let database_path = root.join("autofix.sqlite");
@@ -30,13 +30,28 @@ fn starts_background_runtime_with_user_config_and_database() {
         root.join("logs"),
     );
 
-    let runtime = BackgroundRuntime::start(paths).unwrap();
-    runtime.shutdown();
+    let elevation = admin::reject_elevated_process();
+    let result = BackgroundRuntime::start(paths);
+    match elevation {
+        Err(BackgroundError::ElevatedProcess) => {
+            assert!(matches!(result, Err(BackgroundError::ElevatedProcess)));
+            assert!(!root.exists());
+        }
+        Ok(()) => {
+            let runtime = result.unwrap();
+            #[cfg(windows)]
+            assert_ne!(runtime.components.input_listener.hook_thread_id(), unsafe {
+                windows_sys::Win32::System::Threading::GetCurrentThreadId()
+            });
+            runtime.shutdown();
 
-    assert!(config_path.exists());
-    assert!(database_path.exists());
-    assert!(root.join("logs").exists());
-    fs::remove_dir_all(root).unwrap();
+            assert!(config_path.exists());
+            assert!(database_path.exists());
+            assert!(root.join("logs").exists());
+            fs::remove_dir_all(root).unwrap();
+        }
+        Err(other) => panic!("unexpected elevation check error: {other}"),
+    }
 }
 
 fn unique_temp_dir() -> std::path::PathBuf {

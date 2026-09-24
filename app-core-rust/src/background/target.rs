@@ -51,7 +51,7 @@ pub(crate) enum FocusedElementId {
     AutomationId(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum SessionKey {
     FocusedElement(String),
     WindowHandle(isize),
@@ -157,6 +157,10 @@ pub(crate) fn detect_focused_target() -> TargetDetection {
         is_lock_screen: is_lock_screen_process(&normalized_process),
         is_credential_dialog: is_credential_context(&normalized_process, &normalized_title),
     })
+}
+
+pub(crate) fn active_window_handle_value() -> isize {
+    unsafe { GetForegroundWindow() as isize }
 }
 
 pub(crate) fn session_key_for(
