@@ -8,6 +8,38 @@ use crate::{background::paths::RuntimePaths, settings::AppConfig};
 use super::{admin, load_or_create_config, BackgroundError, BackgroundRuntime};
 
 #[test]
+fn delayed_key_from_previous_focus_cannot_enter_session() {
+    let config = AppConfig::default();
+    let mut processor = super::InputProcessor {
+        session_manager: super::SessionManager::new(config.context.clone()),
+        config,
+        database: crate::storage::Database::open_memory().unwrap(),
+    };
+    let target = super::target::FocusedTarget {
+        process_id: 1,
+        process_name: "notepad.exe".into(),
+        window_handle: 1,
+        window_title: "Notes".into(),
+        focused_element_id: None,
+        is_elevated: false,
+        is_password_or_protected: false,
+        is_hidden_or_unavailable: false,
+        field_safety_known: true,
+        is_secure_desktop: false,
+        is_lock_screen: false,
+        is_credential_dialog: false,
+    };
+    processor.session_manager.focus(&target);
+    processor
+        .session_manager
+        .input(super::typing::TypedInput::Text("typed".into()));
+    processor.process_input(vec![super::InputEvent::Key(
+        super::input_listener::stale_key_for_test(),
+    )]);
+    assert!(processor.session_manager.active().is_none());
+}
+
+#[test]
 fn slow_input_worker_discards_stale_batches_at_queue_limit() {
     let worker = super::InputWorker::start(
         AppConfig::default(),

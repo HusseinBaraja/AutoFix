@@ -1,4 +1,15 @@
 use super::typing::{MovementSignal, TypedInput};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static POSITION_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn current_position_generation() -> u64 {
+    POSITION_GENERATION.load(Ordering::Acquire)
+}
+
+fn mark_position_change() {
+    POSITION_GENERATION.fetch_add(1, Ordering::AcqRel);
+}
 
 pub(crate) enum InputEvent {
     Key(KeyStroke),
@@ -8,6 +19,7 @@ pub(crate) enum InputEvent {
 
 pub(crate) struct KeyStroke {
     pub(crate) window: isize,
+    pub(crate) position_generation: u64,
     virtual_key: u32,
     scan_code: u32,
     shift: bool,
@@ -21,6 +33,22 @@ pub(crate) struct KeyStroke {
 impl KeyStroke {
     pub(crate) fn translate(self) -> TypedInput {
         native::translate(self)
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn stale_key_for_test() -> KeyStroke {
+    KeyStroke {
+        window: 1,
+        position_generation: current_position_generation().wrapping_sub(1),
+        virtual_key: 0,
+        scan_code: 0,
+        shift: false,
+        control: false,
+        alt: false,
+        altgr: false,
+        win: false,
+        caps_lock: false,
     }
 }
 
@@ -58,7 +86,10 @@ mod native {
         },
     };
 
-    use super::{InputEvent, KeyStroke, MovementSignal, TypedInput};
+    use super::{
+        current_position_generation, mark_position_change, InputEvent, KeyStroke, MovementSignal,
+        TypedInput,
+    };
 
     const QUEUE_LIMIT: usize = 512;
     static EVENTS: OnceLock<Mutex<VecDeque<RawEvent>>> = OnceLock::new();
@@ -149,6 +180,7 @@ mod native {
                 std::mem::swap(&mut *events, &mut raw);
             } else {
                 OVERFLOWED.store(true, Ordering::Relaxed);
+                mark_position_change();
             }
             let mut result = Vec::new();
             if OVERFLOWED.swap(false, Ordering::Relaxed) {
@@ -277,10 +309,12 @@ mod native {
             if events.len() == QUEUE_LIMIT {
                 events.clear();
                 OVERFLOWED.store(true, Ordering::Relaxed);
+                mark_position_change();
             }
             events.push_back(event);
         } else {
             OVERFLOWED.store(true, Ordering::Relaxed);
+            mark_position_change();
         }
     }
 
@@ -290,6 +324,7 @@ mod native {
             if key.flags & LLKHF_INJECTED == 0 {
                 push(RawEvent::Key(KeyStroke {
                     window: GetForegroundWindow() as isize,
+                    position_generation: current_position_generation(),
                     virtual_key: key.vkCode,
                     scan_code: key.scanCode,
                     shift: held(VK_SHIFT),
@@ -313,6 +348,7 @@ mod native {
         {
             let mouse = &*(data as *const MSLLHOOKSTRUCT);
             if mouse.flags & LLMHF_INJECTED == 0 {
+                mark_position_change();
                 push(RawEvent::MouseClick);
             }
         }
@@ -328,6 +364,7 @@ mod native {
         _thread: u32,
         _time: u32,
     ) {
+        mark_position_change();
         push(RawEvent::FocusChange);
     }
 
@@ -414,6 +451,7 @@ mod native {
         fn key(virtual_key: u16) -> KeyStroke {
             KeyStroke {
                 window: 0,
+                position_generation: 0,
                 virtual_key: virtual_key.into(),
                 scan_code: 0,
                 shift: false,

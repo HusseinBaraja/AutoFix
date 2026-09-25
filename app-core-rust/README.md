@@ -22,6 +22,8 @@ The message loop forwards input batches to a dedicated processing thread; slow
 UI Automation providers cannot hold up polling or the separate input hooks.
 The work queue is bounded. If processing falls behind, stale batches are
 discarded and the typed session is invalidated before later input is handled.
+Keys carry the focus and caret generation observed by the hooks, so delayed
+keys are rejected after a focus change or mouse click, even within one window.
 Re-anchoring waits until typing resumes. The listener checks the target security
 gate before translating key codes to text. On initial focus or resumed typing
 after caret movement, the context manager attempts a read-only UI Automation TextPattern

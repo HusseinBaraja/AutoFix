@@ -357,6 +357,7 @@ impl InputProcessor {
     fn process_input(&mut self, events: Vec<InputEvent>) {
         let mut gate_result: Option<(isize, bool)> = None;
         let mut needs_capture = false;
+        let mut last_key_generation = None;
         for event in events {
             match event {
                 InputEvent::FocusChange => {
@@ -370,6 +371,13 @@ impl InputProcessor {
                         .input(typing::TypedInput::Uncertain(MovementSignal::MouseClick));
                 }
                 InputEvent::Key(key) => {
+                    let generation = key.position_generation;
+                    if generation != input_listener::current_position_generation() {
+                        gate_result = None;
+                        self.session_manager.deactivate(MovementSignal::FocusChange);
+                        continue;
+                    }
+                    last_key_generation = Some(generation);
                     let window = key.window;
                     if window == 0 || window != target::active_window_handle_value() {
                         gate_result = None;
@@ -379,13 +387,23 @@ impl InputProcessor {
                     if let Some((checked_window, allowed)) = gate_result {
                         if checked_window == window {
                             if allowed {
-                                needs_capture |= self.session_manager.input(key.translate());
+                                if generation == input_listener::current_position_generation() {
+                                    needs_capture |= self.session_manager.input(key.translate());
+                                } else {
+                                    self.session_manager.deactivate(MovementSignal::FocusChange);
+                                }
                             }
                             continue;
                         }
                     }
-                    match SecurityGate::check(TriggerKind::Character, &self.config, &self.database)
-                    {
+                    let decision =
+                        SecurityGate::check(TriggerKind::Character, &self.config, &self.database);
+                    if generation != input_listener::current_position_generation() {
+                        gate_result = None;
+                        self.session_manager.deactivate(MovementSignal::FocusChange);
+                        continue;
+                    }
+                    match decision {
                         SecurityDecision::Allowed { target } if target.window_handle == window => {
                             needs_capture |= self.session_manager.focus(&target);
                             gate_result = Some((window, true));
@@ -398,6 +416,12 @@ impl InputProcessor {
                     }
                 }
             }
+        }
+        if last_key_generation
+            .is_some_and(|generation| generation != input_listener::current_position_generation())
+        {
+            self.session_manager.deactivate(MovementSignal::FocusChange);
+            return;
         }
         if self.session_manager.needs_movement_resolution() {
             if let SecurityDecision::Allowed { target } =
@@ -449,6 +473,11 @@ impl InputProcessor {
                 );
                 self.session_manager.set_informative_context(context);
             }
+        }
+        if last_key_generation
+            .is_some_and(|generation| generation != input_listener::current_position_generation())
+        {
+            self.session_manager.deactivate(MovementSignal::FocusChange);
         }
         if let Some(signal) = self
             .session_manager
