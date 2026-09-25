@@ -70,7 +70,7 @@ enum InputWork {
     Events(Vec<InputEvent>),
     Shortcut(usize),
     Tick,
-    Config(AppConfig),
+    Config(Box<AppConfig>),
     Shutdown,
     #[cfg(test)]
     Probe(mpsc::Sender<thread::ThreadId>),
@@ -236,7 +236,7 @@ impl RuntimeComponents {
                 }
                 self.config = config.clone();
                 self.global_shortcut.reload(&config);
-                self.input_worker.send(InputWork::Config(config));
+                self.input_worker.send(InputWork::Config(Box::new(config)));
             }
             Err(error) => tracing::warn!("failed to reload shortcuts from config: {}", error),
         }
@@ -263,7 +263,7 @@ impl InputWorker {
                             processor
                                 .session_manager
                                 .update_limits(config.context.clone());
-                            processor.config = config;
+                            processor.config = *config;
                         }
                         InputWork::Shutdown => break,
                         #[cfg(test)]

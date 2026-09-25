@@ -68,12 +68,12 @@ const MIN_MOVEMENT_ANCHOR_CHARS: usize = 8;
 
 // Preserve the entire known executable prefix when a bounded capture has
 // dropped the oldest informative text.
-fn matching_anchor<'a>(
-    candidate: &'a str,
+fn matching_anchor(
+    candidate: &str,
     executable_chars: usize,
     informative_chars: usize,
     available_chars: usize,
-) -> Option<&'a str> {
+) -> Option<&str> {
     let candidate_chars = candidate.chars().count();
     let anchor_chars = candidate_chars.min(available_chars);
     let required_informative = informative_chars.min(4);
@@ -112,10 +112,8 @@ fn forward_skipped_start(before_typing: &str, informative: &str, old: &str) -> O
         ) else {
             continue;
         };
-        if prefix.ends_with(anchor) {
-            if match_end.replace(end).is_some() {
-                return None;
-            }
+        if prefix.ends_with(anchor) && match_end.replace(end).is_some() {
+            return None;
         }
     }
     match_end
