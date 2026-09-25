@@ -43,6 +43,15 @@ fn background_runtime_respects_elevation_and_initializes_files() {
             assert_ne!(runtime.components.input_listener.hook_thread_id(), unsafe {
                 windows_sys::Win32::System::Threading::GetCurrentThreadId()
             });
+            let (reply, response) = std::sync::mpsc::channel();
+            runtime
+                .components
+                .input_worker
+                .send(super::InputWork::Probe(reply));
+            let worker_id = response
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .expect("input worker did not respond");
+            assert_ne!(worker_id, std::thread::current().id());
             runtime.shutdown();
 
             assert!(config_path.exists());

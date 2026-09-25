@@ -5,7 +5,7 @@ use windows::Win32::{
     System::{
         Com::{
             CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-            COINIT_APARTMENTTHREADED, SAFEARRAY,
+            COINIT_MULTITHREADED, SAFEARRAY,
         },
         Ole::{SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetLBound, SafeArrayGetUBound},
     },
@@ -301,7 +301,7 @@ fn process_is_elevated_or_blocked(process_id: u32) -> bool {
 
 fn focused_element_context() -> Option<FocusedElementContext> {
     unsafe {
-        let initialization_result = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let initialization_result = CoInitializeEx(None, COINIT_MULTITHREADED);
         let initialization_succeeded =
             initialization_result == S_OK || initialization_result == S_FALSE;
         if !accept_com_initialization(initialization_result) {

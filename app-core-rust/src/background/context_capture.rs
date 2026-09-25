@@ -80,7 +80,7 @@ pub(super) fn read_before_caret(
         Foundation::{S_FALSE, S_OK},
         System::Com::{
             CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-            COINIT_APARTMENTTHREADED,
+            COINIT_MULTITHREADED,
         },
         UI::Accessibility::{
             CUIAutomation, IUIAutomation2, IUIAutomationTextPattern, TextPatternRangeEndpoint_End,
@@ -94,7 +94,7 @@ pub(super) fn read_before_caret(
         return None;
     }
     unsafe {
-        let initialization = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let initialization = CoInitializeEx(None, COINIT_MULTITHREADED);
         if initialization != S_OK && initialization != S_FALSE {
             return None;
         }

@@ -18,6 +18,8 @@ typed during the current engine run in memory and exposes only the known text
 before the caret as executable context. Backspace, Delete, and plain Left/Right
 update that buffer. Mouse clicks, Up/Down, Home/End, Ctrl+Arrow,
 PageUp/PageDown, and focus changes mark the caret position uncertain.
+The message loop forwards input batches to a dedicated processing thread; slow
+UI Automation providers cannot hold up polling or the separate input hooks.
 Re-anchoring waits until typing resumes. The listener checks the target security
 gate before translating key codes to text. On initial focus or resumed typing
 after caret movement, the context manager attempts a read-only UI Automation TextPattern
