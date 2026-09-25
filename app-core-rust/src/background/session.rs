@@ -48,6 +48,75 @@ pub(crate) struct Session {
     pending_corrections: VecDeque<PendingCorrection>,
     correction_undo_history: Vec<CorrectionUndo>,
     versions: ContextVersions,
+    pending_movement: Option<PendingMovement>,
+    correction_floor: usize,
+}
+
+struct PendingMovement {
+    old_executable: String,
+    typed_after: String,
+    tracked_arrows_only: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MovementResolution {
+    Continued,
+    Reanchor { final_fix: Option<String> },
+}
+
+const MIN_MOVEMENT_ANCHOR_CHARS: usize = 8;
+
+// Preserve the entire known executable prefix when a bounded capture has
+// dropped the oldest informative text.
+fn matching_anchor(
+    candidate: &str,
+    executable_chars: usize,
+    informative_chars: usize,
+    available_chars: usize,
+) -> Option<&str> {
+    let candidate_chars = candidate.chars().count();
+    let anchor_chars = candidate_chars.min(available_chars);
+    let required_informative = informative_chars.min(4);
+    if anchor_chars < executable_chars + required_informative
+        || (informative_chars > 0 && anchor_chars < MIN_MOVEMENT_ANCHOR_CHARS)
+    {
+        return None;
+    }
+    let start = candidate
+        .char_indices()
+        .nth(candidate_chars - anchor_chars)
+        .map_or(candidate.len(), |(index, _)| index);
+    Some(&candidate[start..])
+}
+
+fn forward_skipped_start(before_typing: &str, informative: &str, old: &str) -> Option<usize> {
+    if old.is_empty() {
+        return None;
+    }
+    let informative_chars = informative.chars().count();
+    let candidate = format!("{informative}{old}");
+    let mut match_end = None;
+    for (start, _) in before_typing.match_indices(old) {
+        // Without a captured prefix, an occurrence elsewhere in the field
+        // does not establish where this session's typed text began.
+        if informative.is_empty() && start != 0 {
+            continue;
+        }
+        let end = start + old.len();
+        let prefix = &before_typing[..end];
+        let Some(anchor) = matching_anchor(
+            &candidate,
+            old.chars().count(),
+            informative_chars,
+            prefix.chars().count(),
+        ) else {
+            continue;
+        };
+        if prefix.ends_with(anchor) && match_end.replace(end).is_some() {
+            return None;
+        }
+    }
+    match_end
 }
 
 impl Session {
@@ -60,6 +129,8 @@ impl Session {
             pending_corrections: VecDeque::new(),
             correction_undo_history: Vec::new(),
             versions: ContextVersions::default(),
+            pending_movement: None,
+            correction_floor: 0,
         }
     }
 
@@ -87,38 +158,214 @@ impl Session {
         self.executable.latest_movement()
     }
 
+    pub(crate) fn position_uncertain(&self) -> bool {
+        self.pending_movement.is_some()
+    }
+
+    fn needs_movement_resolution(&self) -> bool {
+        self.pending_movement
+            .as_ref()
+            .is_some_and(|pending| !pending.typed_after.is_empty())
+    }
+
+    fn movement_capture_extra_chars(&self) -> usize {
+        self.pending_movement.as_ref().map_or(0, |pending| {
+            pending.old_executable.chars().count() + pending.typed_after.chars().count()
+        })
+    }
+
+    fn mark_movement(&mut self, tracked_arrows_only: bool) {
+        let old_executable: String = self
+            .executable_context()
+            .chars()
+            .skip(self.correction_floor)
+            .collect();
+        self.pending_movement = Some(PendingMovement {
+            old_executable,
+            typed_after: String::new(),
+            tracked_arrows_only,
+        });
+        self.pending_corrections.clear();
+        self.correction_undo_history.clear();
+        self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
+    }
+
     fn input(&mut self, input: TypedInput, limits: &ContextConfig) {
+        if matches!(
+            &input,
+            TypedInput::Left | TypedInput::Right | TypedInput::Uncertain(_)
+        ) {
+            let tracked_arrows_only = matches!(&input, TypedInput::Left | TypedInput::Right)
+                && self.pending_movement.as_ref().is_none_or(|pending| {
+                    pending.tracked_arrows_only && pending.typed_after.is_empty()
+                });
+            self.mark_movement(tracked_arrows_only);
+            if matches!(&input, TypedInput::Left | TypedInput::Right) {
+                self.executable.input(input);
+                if self.executable.latest_movement() == Some(MovementSignal::UnknownPosition) {
+                    // A plain arrow crossed the known text boundary.
+                    let pending = self.pending_movement.as_mut().unwrap();
+                    pending.old_executable.clear();
+                    pending.tracked_arrows_only = false;
+                }
+            }
+            return;
+        }
+        if let Some(pending) = self.pending_movement.as_mut() {
+            if let TypedInput::Text(value) = &input {
+                pending.typed_after.push_str(value);
+                return;
+            }
+            if pending.tracked_arrows_only && pending.typed_after.is_empty() {
+                self.pending_movement = None;
+            } else {
+                // An edit before locating the caret cannot be attributed safely.
+                self.executable.invalidate(MovementSignal::UnknownPosition);
+                self.pending_movement = None;
+                self.correction_floor = 0;
+                self.informative_context.clear();
+                return;
+            }
+        }
+        if matches!(input, TypedInput::Backspace)
+            && self.correction_floor > 0
+            && self.executable_context().chars().count() <= self.correction_floor
+        {
+            self.executable.invalidate(MovementSignal::UnknownPosition);
+            self.correction_floor = 0;
+            self.informative_context.clear();
+            self.pending_corrections.clear();
+            return;
+        }
         if matches!(&input, TypedInput::Backspace) && self.executable_context().is_empty() {
             // The user may have deleted text we only keep as read-only context.
             self.informative_context.clear();
             self.correction_undo_history.clear();
         }
-        if matches!(&input, TypedInput::Uncertain(_)) {
-            // This text was observed in the current control before the caret
-            // became uncertain. Keep it for context, never for replacement.
-            let observed = self.executable.executable_context();
-            self.append_informative(&observed, limits);
-        }
         let is_text_edit = matches!(&input, TypedInput::Text(value) if !value.is_empty())
             || matches!(&input, TypedInput::Backspace | TypedInput::Delete);
-        let is_anchor_change = matches!(
-            &input,
-            TypedInput::Left | TypedInput::Right | TypedInput::Uncertain(_)
-        );
         self.executable.input(input);
-        if is_text_edit || is_anchor_change {
+        if is_text_edit {
             self.versions.context = self.versions.context.wrapping_add(1);
             self.versions.executable = self.versions.executable.wrapping_add(1);
             self.pending_corrections.clear();
-        }
-        if is_anchor_change {
-            self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
-            self.correction_undo_history.clear();
         }
         if self.executable_context().split_whitespace().count()
             > usize::from(limits.executable_context_max_words)
         {
             self.commit_executable(limits);
+        }
+    }
+
+    fn resolve_movement(
+        &mut self,
+        preceding: Option<&str>,
+        limits: &ContextConfig,
+    ) -> MovementResolution {
+        let Some(pending) = self.pending_movement.take() else {
+            return MovementResolution::Continued;
+        };
+        if pending.tracked_arrows_only && pending.typed_after.is_empty() {
+            return MovementResolution::Continued;
+        }
+        if preceding.is_none() && pending.tracked_arrows_only {
+            self.executable.input(TypedInput::Text(pending.typed_after));
+            self.versions.context = self.versions.context.wrapping_add(1);
+            self.versions.executable = self.versions.executable.wrapping_add(1);
+            return MovementResolution::Continued;
+        }
+        let before_typing = preceding.and_then(|text| text.strip_suffix(&pending.typed_after));
+        let old = pending.old_executable.as_str();
+        if let Some(before_typing) = before_typing {
+            // Only a prefix of the known editable text can prove a backward move.
+            if !old.is_empty() {
+                let mut matching_caret = None;
+                let mut ambiguous = false;
+                for (offset, _) in old.char_indices().rev() {
+                    let candidate = format!("{}{}", self.informative_context, &old[..offset]);
+                    let anchored = if self.informative_context.is_empty() {
+                        before_typing == candidate
+                    } else {
+                        matching_anchor(
+                            &candidate,
+                            old[..offset].chars().count(),
+                            self.informative_context.chars().count(),
+                            before_typing.chars().count(),
+                        )
+                        .is_some_and(|anchor| before_typing.ends_with(anchor))
+                    };
+                    if anchored {
+                        let caret = self.correction_floor + old[..offset].chars().count();
+                        if matching_caret.replace(caret).is_some() {
+                            ambiguous = true;
+                            break;
+                        }
+                    }
+                }
+                if ambiguous {
+                    return self.reanchor_after_movement(
+                        Some(before_typing),
+                        pending.typed_after,
+                        None,
+                        limits,
+                    );
+                }
+                if let Some(caret) = matching_caret {
+                    if self.executable.set_caret(caret) {
+                        self.executable.input(TypedInput::Text(pending.typed_after));
+                        self.versions.context = self.versions.context.wrapping_add(1);
+                        self.versions.executable = self.versions.executable.wrapping_add(1);
+                        return MovementResolution::Continued;
+                    }
+                }
+            }
+            if let Some(end) = forward_skipped_start(before_typing, &self.informative_context, old)
+            {
+                let skipped = &before_typing[end..];
+                if skipped.split_whitespace().count()
+                    <= usize::from(limits.forward_movement_word_limit)
+                {
+                    self.append_informative(old, limits);
+                    self.append_informative(skipped, limits);
+                    // The old suffix was behind the previous caret. It is not
+                    // proven to be adjacent to the new caret.
+                    self.executable.clear_executable();
+                    self.executable.input(TypedInput::Text(pending.typed_after));
+                    self.correction_floor = 0;
+                    self.versions.context = self.versions.context.wrapping_add(1);
+                    self.versions.executable = self.versions.executable.wrapping_add(1);
+                    return MovementResolution::Continued;
+                }
+                return self.reanchor_after_movement(
+                    Some(before_typing),
+                    pending.typed_after,
+                    Some(old.to_owned()),
+                    limits,
+                );
+            }
+        }
+        self.reanchor_after_movement(before_typing, pending.typed_after, None, limits)
+    }
+
+    fn reanchor_after_movement(
+        &mut self,
+        before_typing: Option<&str>,
+        typed_after: String,
+        final_fix: Option<String>,
+        limits: &ContextConfig,
+    ) -> MovementResolution {
+        self.executable.clear_executable();
+        self.correction_floor = 0;
+        self.informative_context = before_typing
+            .map(|text| super::context_capture::trim_before_caret(text, limits).to_owned())
+            .unwrap_or_default();
+        self.trim_informative(limits);
+        self.executable.input(TypedInput::Text(typed_after));
+        self.pending_corrections.clear();
+        self.versions.context = self.versions.context.wrapping_add(1);
+        self.versions.executable = self.versions.executable.wrapping_add(1);
+        MovementResolution::Reanchor {
+            final_fix: final_fix.filter(|text| !text.is_empty()),
         }
     }
 
@@ -146,12 +393,21 @@ impl Session {
 
     /// Move only known text before the caret into read-only context.
     fn commit_executable(&mut self, limits: &ContextConfig) {
-        let observed = self.executable.executable_context();
+        let observed: String = self
+            .executable_context()
+            .chars()
+            .skip(self.correction_floor)
+            .collect();
         if observed.is_empty() {
+            if self.correction_floor > 0 {
+                self.executable.clear_executable();
+                self.correction_floor = 0;
+            }
             return;
         }
         self.append_informative(&observed, limits);
         self.executable.clear_executable();
+        self.correction_floor = 0;
         self.pending_corrections.clear();
         self.versions.context = self.versions.context.wrapping_add(1);
         self.versions.executable = self.versions.executable.wrapping_add(1);
@@ -163,12 +419,16 @@ impl Session {
         expect(dead_code, reason = "called by the upcoming correction router")
     )]
     pub(crate) fn complete_without_changes(&mut self, limits: &ContextConfig) {
-        self.commit_executable(limits);
+        if !self.position_uncertain() {
+            self.commit_executable(limits);
+        }
     }
 
     fn deactivate(&mut self, reason: MovementSignal) {
         self.executable.focus(None);
         self.executable.invalidate(reason);
+        self.pending_movement = None;
+        self.correction_floor = 0;
         self.pending_corrections.clear();
         // A window key may stand for multiple fields. Context and undo from
         // the prior field must not survive a focus or mouse transition.
@@ -183,23 +443,14 @@ impl Session {
         self.executable.focus(Some((window, key)));
     }
 
-    /// Explicitly reanchor after verified same-field movement. Only observed
-    /// current-session text can become informative context.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "called after a verified reanchor in the correction router"
-        )
-    )]
-    pub(crate) fn capture_informative_context(&mut self, limits: &ContextConfig) {
-        let observed = self.executable.executable_context();
-        self.append_informative(&observed, limits);
-        self.executable.invalidate(MovementSignal::UnknownPosition);
+    /// Reanchor the read-only prefix at the current caret. Executable typing
+    /// already observed in this input batch remains a separate segment.
+    fn set_informative_context(&mut self, context: String, limits: &ContextConfig) {
+        self.informative_context = context;
+        self.trim_informative(limits);
         self.pending_corrections.clear();
         self.correction_undo_history.clear();
         self.versions.context = self.versions.context.wrapping_add(1);
-        self.versions.executable = self.versions.executable.wrapping_add(1);
         self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
     }
 
@@ -208,7 +459,16 @@ impl Session {
         expect(dead_code, reason = "called by the upcoming correction router")
     )]
     pub(crate) fn queue_correction(&mut self, original: String, replacement: String) -> bool {
-        if original.is_empty() || !self.executable_context().ends_with(&original) {
+        if original.is_empty()
+            || !self.executable_context().ends_with(&original)
+            || original.chars().count()
+                > self
+                    .executable_context()
+                    .chars()
+                    .count()
+                    .saturating_sub(self.correction_floor)
+            || self.position_uncertain()
+        {
             return false;
         }
         self.pending_corrections.push_back(PendingCorrection {
@@ -312,15 +572,16 @@ impl SessionManager {
         let active_limits = self.limits.clone();
         if let Some(session) = self.active_mut() {
             session.trim_informative(&active_limits);
-            if session.executable_context().split_whitespace().count()
-                > usize::from(active_limits.executable_context_max_words)
+            if !session.position_uncertain()
+                && session.executable_context().split_whitespace().count()
+                    > usize::from(active_limits.executable_context_max_words)
             {
                 session.commit_executable(&active_limits);
             }
         }
     }
 
-    pub(crate) fn focus(&mut self, target: &FocusedTarget) {
+    pub(crate) fn focus(&mut self, target: &FocusedTarget) -> bool {
         let identity = SessionIdentity {
             process_id: target.process_id,
             key: target.session_key(),
@@ -331,7 +592,7 @@ impl SessionManager {
                 .filter(|window| *window != 0),
         };
         if self.active.as_ref() == Some(&identity) {
-            return;
+            return false;
         }
         self.deactivate(MovementSignal::FocusChange);
         let session = self
@@ -340,6 +601,7 @@ impl SessionManager {
             .or_insert_with(|| Session::new(target.window_handle, identity.key.clone()));
         session.reactivate(target.window_handle, identity.key.clone());
         self.active = Some(identity);
+        true
     }
 
     pub(crate) fn deactivate(&mut self, reason: MovementSignal) {
@@ -350,11 +612,40 @@ impl SessionManager {
         }
     }
 
-    pub(crate) fn input(&mut self, input: TypedInput) {
+    pub(crate) fn input(&mut self, input: TypedInput) -> bool {
         if let Some(identity) = self.active.as_ref() {
             if let Some(session) = self.sessions.get_mut(identity) {
+                let backspace_into_informative = matches!(input, TypedInput::Backspace)
+                    && session.executable_context().is_empty();
                 session.input(input, &self.limits);
+                return backspace_into_informative;
             }
+        }
+        false
+    }
+
+    pub(crate) fn needs_movement_resolution(&self) -> bool {
+        self.active()
+            .is_some_and(Session::needs_movement_resolution)
+    }
+
+    pub(crate) fn movement_capture_extra_chars(&self) -> usize {
+        self.active()
+            .map_or(0, Session::movement_capture_extra_chars)
+    }
+
+    pub(crate) fn resolve_movement(&mut self, preceding: Option<&str>) -> MovementResolution {
+        let limits = self.limits.clone();
+        self.active_mut()
+            .map_or(MovementResolution::Continued, |session| {
+                session.resolve_movement(preceding, &limits)
+            })
+    }
+
+    pub(crate) fn set_informative_context(&mut self, context: String) {
+        let limits = self.limits.clone();
+        if let Some(session) = self.active_mut() {
+            session.set_informative_context(context, &limits);
         }
     }
 
@@ -472,19 +763,380 @@ mod tests {
     }
 
     #[test]
-    fn uncertain_navigation_keeps_typed_text_as_read_only_context() {
+    fn uncertain_navigation_waits_for_typing_then_reanchors_if_capture_fails() {
         let mut manager = SessionManager::new(ContextConfig::default());
         manager.focus(&target(1, 10, None));
         manager.input(TypedInput::Text("earlier".into()));
         manager.input(TypedInput::Uncertain(MovementSignal::VerticalArrow));
         let active = manager.active().unwrap();
-        assert_eq!(active.informative_context(), "earlier");
-        assert!(active.executable_context().is_empty());
+        assert!(active.position_uncertain());
+        assert_eq!(active.executable_context(), "earlier");
         manager.input(TypedInput::Text("new".into()));
-        assert_eq!(manager.active().unwrap().informative_context(), "earlier");
+        assert!(manager.needs_movement_resolution());
+        assert_eq!(
+            manager.resolve_movement(None),
+            MovementResolution::Reanchor { final_fix: None }
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "new");
+        assert_eq!(manager.active().unwrap().informative_context(), "");
         manager.deactivate(MovementSignal::FocusChange);
         manager.focus(&target(1, 10, None));
         assert_eq!(manager.active().unwrap().informative_context(), "");
+    }
+
+    #[test]
+    fn tracked_arrows_keep_known_caret_when_capture_fails() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Left);
+        manager.input(TypedInput::Left);
+        manager.input(TypedInput::Right);
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(None),
+            MovementResolution::Continued
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "typeX");
+        manager.input(TypedInput::Right);
+        assert_eq!(manager.active().unwrap().executable_context(), "typeXd");
+    }
+
+    #[test]
+    fn backspace_after_tracked_arrow_keeps_known_prefix() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("abcd".into()));
+        manager.input(TypedInput::Left);
+        manager.input(TypedInput::Backspace);
+        assert_eq!(manager.active().unwrap().executable_context(), "ab");
+        assert!(!manager.active().unwrap().position_uncertain());
+        assert!(manager
+            .active_mut()
+            .unwrap()
+            .queue_correction("ab".into(), "AB".into()));
+    }
+
+    #[test]
+    fn delete_after_tracked_arrow_keeps_known_prefix() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("abcd".into()));
+        manager.input(TypedInput::Left);
+        manager.input(TypedInput::Delete);
+        assert_eq!(manager.active().unwrap().executable_context(), "abc");
+        assert!(!manager.active().unwrap().position_uncertain());
+    }
+
+    #[test]
+    fn deletion_after_uncertain_movement_invalidates_context() {
+        for input in [TypedInput::Backspace, TypedInput::Delete] {
+            let mut manager = SessionManager::new(ContextConfig::default());
+            manager.focus(&target(1, 10, None));
+            manager.input(TypedInput::Text("abcd".into()));
+            manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+            manager.input(input);
+            assert_eq!(manager.active().unwrap().executable_context(), "");
+            assert_eq!(manager.active().unwrap().informative_context(), "");
+        }
+    }
+
+    #[test]
+    fn uncertain_signal_after_arrow_still_reanchors_without_capture() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Left);
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Right);
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(None),
+            MovementResolution::Reanchor { final_fix: None }
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "X");
+    }
+
+    #[test]
+    fn arrow_past_known_text_does_not_reuse_tracked_caret() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Right);
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(None),
+            MovementResolution::Reanchor { final_fix: None }
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "X");
+    }
+
+    #[test]
+    fn backward_movement_resumes_inside_same_executable_context() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("alpha beta".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::ControlArrow));
+        assert!(manager.active().unwrap().position_uncertain());
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(manager.active().unwrap().executable_context(), "alpha beta");
+        assert_eq!(
+            manager.resolve_movement(Some("alpha X")),
+            MovementResolution::Continued
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "alpha X");
+        assert_eq!(manager.active().unwrap().informative_context(), "");
+    }
+
+    #[test]
+    fn weak_backward_suffix_does_not_prove_a_new_caret() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("unrelatX")),
+            MovementResolution::Reanchor { final_fix: None }
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "X");
+    }
+
+    #[test]
+    fn ambiguous_backward_anchor_reanchors() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.set_informative_context("aaaaaaaa".into());
+        manager.input(TypedInput::Text("aa".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("aaaaaaaaaX")),
+            MovementResolution::Reanchor { final_fix: None }
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "X");
+    }
+
+    #[test]
+    fn capped_informative_context_still_proves_backward_move() {
+        let mut manager = SessionManager::new(ContextConfig {
+            informative_context_max_chars: 16,
+            ..ContextConfig::default()
+        });
+        manager.focus(&target(1, 10, None));
+        manager.set_informative_context("abcdefghijklmnop".into());
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("efghijklmnoptypX")),
+            MovementResolution::Continued
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "typX");
+    }
+
+    #[test]
+    fn movement_capture_budget_covers_old_text_and_new_typing() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("more".into()));
+        assert_eq!(manager.movement_capture_extra_chars(), 9);
+        assert_eq!(
+            manager.resolve_movement(Some("typedmore")),
+            MovementResolution::Continued
+        );
+        assert_eq!(manager.movement_capture_extra_chars(), 0);
+    }
+
+    #[test]
+    fn capped_informative_context_still_proves_forward_move() {
+        let mut manager = SessionManager::new(ContextConfig {
+            informative_context_max_chars: 16,
+            ..ContextConfig::default()
+        });
+        manager.focus(&target(1, 10, None));
+        manager.set_informative_context("abcdefghijklmnop".into());
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("klmnoptyped oneX")),
+            MovementResolution::Continued
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "X");
+        assert_eq!(
+            manager.active().unwrap().informative_context(),
+            "jklmnoptyped one"
+        );
+    }
+
+    #[test]
+    fn capped_informative_context_still_requests_long_forward_fix() {
+        let mut manager = SessionManager::new(ContextConfig {
+            informative_context_max_chars: 64,
+            ..ContextConfig::default()
+        });
+        manager.focus(&target(1, 10, None));
+        manager.set_informative_context("a".repeat(64));
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("X".into()));
+        let full = format!("{}typed one two three four five six X", "a".repeat(64));
+        let captured: String = full.chars().skip(full.chars().count() - 64).collect();
+        assert_eq!(
+            manager.resolve_movement(Some(&captured)),
+            MovementResolution::Reanchor {
+                final_fix: Some("typed".into())
+            }
+        );
+    }
+
+    #[test]
+    fn backward_movement_to_start_keeps_known_suffix_after_caret() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("tail".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::HomeEnd));
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("X")),
+            MovementResolution::Continued
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "X");
+        manager.input(TypedInput::Right);
+        assert_eq!(
+            manager.resolve_movement(Some("Xt")),
+            MovementResolution::Continued
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "Xt");
+    }
+
+    #[test]
+    fn short_forward_movement_preserves_context_and_protects_skipped_text() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("typed one two three four five X")),
+            MovementResolution::Continued
+        );
+        let session = manager.active_mut().unwrap();
+        assert_eq!(
+            session.informative_context(),
+            "typed one two three four five "
+        );
+        assert_eq!(session.executable_context(), "X");
+        assert!(!session.queue_correction("typedX".into(), "bad".into()));
+        assert!(session.queue_correction("X".into(), "Y".into()));
+        session.complete_without_changes(&ContextConfig::default());
+        assert_eq!(
+            session.informative_context(),
+            "typed one two three four five X"
+        );
+        assert_eq!(session.executable_context(), "");
+        session.input(TypedInput::Text("next".into()), &ContextConfig::default());
+        assert!(session.queue_correction("next".into(), "Next".into()));
+    }
+
+    #[test]
+    fn forward_move_discards_old_suffix_before_arrow_fallback() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("abcd".into()));
+        manager.input(TypedInput::Left);
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("abcX")),
+            MovementResolution::Continued
+        );
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("Y".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("abcXd gap Y")),
+            MovementResolution::Continued
+        );
+        manager.input(TypedInput::Right);
+        manager.input(TypedInput::Text("Z".into()));
+        manager.resolve_movement(None);
+        assert!(!manager
+            .active_mut()
+            .unwrap()
+            .queue_correction("dZ".into(), "bad".into()));
+    }
+
+    #[test]
+    fn forward_limit_uses_configured_word_count() {
+        let mut manager = SessionManager::new(ContextConfig {
+            forward_movement_word_limit: 1,
+            ..ContextConfig::default()
+        });
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("typed one two X")),
+            MovementResolution::Reanchor {
+                final_fix: Some("typed".into())
+            }
+        );
+    }
+
+    #[test]
+    fn long_forward_movement_requests_final_fix_and_reanchors() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("typed one two three four five six X")),
+            MovementResolution::Reanchor {
+                final_fix: Some("typed".into())
+            }
+        );
+        let session = manager.active().unwrap();
+        assert_eq!(session.executable_context(), "X");
+        assert_eq!(
+            session.informative_context(),
+            "typed one two three four five six "
+        );
+    }
+
+    #[test]
+    fn different_area_reanchors_without_unsafe_final_fix() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::VerticalArrow));
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("unrelated area X")),
+            MovementResolution::Reanchor { final_fix: None }
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "X");
+        assert_eq!(
+            manager.active().unwrap().informative_context(),
+            "unrelated area "
+        );
+    }
+
+    #[test]
+    fn repeated_old_text_elsewhere_does_not_prove_forward_move() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("other typed words X")),
+            MovementResolution::Reanchor { final_fix: None }
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "X");
     }
 
     #[test]
@@ -601,6 +1253,11 @@ mod tests {
         for _ in 0..5 {
             manager.input(TypedInput::Left);
         }
+        manager.input(TypedInput::Text(String::new()));
+        assert_eq!(
+            manager.resolve_movement(Some("teh")),
+            MovementResolution::Continued
+        );
         let session = manager.active_mut().unwrap();
         assert_eq!(session.executable_context(), "teh");
         assert!(session.queue_correction("teh".into(), "the".into()));
@@ -610,7 +1267,7 @@ mod tests {
     }
 
     #[test]
-    fn reanchor_appends_only_observed_text_and_caps_context() {
+    fn reanchor_replaces_read_only_context_and_preserves_new_typing() {
         let limits = ContextConfig {
             informative_context_max_chars: 5,
             ..ContextConfig::default()
@@ -624,9 +1281,9 @@ mod tests {
             .complete_without_changes(&limits);
         manager.input(TypedInput::Text("éxyz".into()));
         let session = manager.active_mut().unwrap();
-        session.capture_informative_context(&limits);
-        assert_eq!(session.informative_context(), "céxyz");
-        assert_eq!(session.executable_context(), "");
+        session.set_informative_context("old cé".into(), &limits);
+        assert_eq!(session.informative_context(), "ld cé");
+        assert_eq!(session.executable_context(), "éxyz");
     }
 
     #[test]
@@ -639,7 +1296,7 @@ mod tests {
             .active_mut()
             .unwrap()
             .complete_without_changes(&limits);
-        manager.input(TypedInput::Backspace);
+        assert!(manager.input(TypedInput::Backspace));
         assert_eq!(manager.active().unwrap().informative_context(), "");
     }
 

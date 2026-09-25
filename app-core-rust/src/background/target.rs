@@ -5,11 +5,11 @@ use windows::Win32::{
     System::{
         Com::{
             CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-            COINIT_APARTMENTTHREADED, SAFEARRAY,
+            COINIT_MULTITHREADED, SAFEARRAY,
         },
         Ole::{SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetLBound, SafeArrayGetUBound},
     },
-    UI::Accessibility::{CUIAutomation, IUIAutomation},
+    UI::Accessibility::{CUIAutomation8, IUIAutomation2},
 };
 use windows_sys::Win32::{
     Foundation::{CloseHandle, GetLastError, ERROR_ACCESS_DENIED, HWND},
@@ -301,7 +301,7 @@ fn process_is_elevated_or_blocked(process_id: u32) -> bool {
 
 fn focused_element_context() -> Option<FocusedElementContext> {
     unsafe {
-        let initialization_result = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let initialization_result = CoInitializeEx(None, COINIT_MULTITHREADED);
         let initialization_succeeded =
             initialization_result == S_OK || initialization_result == S_FALSE;
         if !accept_com_initialization(initialization_result) {
@@ -309,8 +309,7 @@ fn focused_element_context() -> Option<FocusedElementContext> {
         }
 
         let context = (|| {
-            let automation: IUIAutomation =
-                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            let automation = create_automation().ok()?;
             let element = automation.GetFocusedElement().ok()?;
 
             let focused_element_id = runtime_id(&element)
@@ -341,6 +340,16 @@ fn focused_element_context() -> Option<FocusedElementContext> {
         }
 
         context
+    }
+}
+
+pub(super) fn create_automation() -> windows::core::Result<IUIAutomation2> {
+    unsafe {
+        let automation: IUIAutomation2 =
+            CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)?;
+        automation.SetConnectionTimeout(250)?;
+        automation.SetTransactionTimeout(250)?;
+        Ok(automation)
     }
 }
 
@@ -658,6 +667,22 @@ mod tests {
     #[test]
     fn com_initialization_rejects_unexpected_success_result() {
         assert!(!accept_com_initialization(HRESULT(2)));
+    }
+
+    #[test]
+    fn native_automation_initialization_supports_timeouts() {
+        std::thread::spawn(|| unsafe {
+            let initialization = CoInitializeEx(None, COINIT_MULTITHREADED);
+            assert!(accept_com_initialization(initialization));
+            let automation = create_automation().map(|_| ());
+            CoUninitialize();
+            assert!(
+                automation.is_ok(),
+                "UI Automation initialization: {automation:?}"
+            );
+        })
+        .join()
+        .unwrap();
     }
 
     #[test]

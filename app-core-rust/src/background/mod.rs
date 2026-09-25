@@ -1,6 +1,7 @@
 mod admin;
 pub(crate) mod app_identity;
 mod components;
+mod context_capture;
 mod input_listener;
 mod message_loop;
 mod paths;
@@ -14,14 +15,16 @@ mod tests;
 mod typing;
 
 use std::{
+    collections::VecDeque,
     error::Error,
     fmt, fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        mpsc, Arc, Condvar, Mutex,
     },
-    time::SystemTime,
+    thread::{self, JoinHandle},
+    time::{Duration, SystemTime},
 };
 
 use crate::{
@@ -36,13 +39,12 @@ use self::{
     paths::RuntimePaths,
     process_group::SiblingDisappearanceMonitor,
     security::{SecurityDecision, SecurityGate, TriggerKind},
-    session::SessionManager,
+    session::{MovementResolution, SessionManager},
     shortcuts::{GlobalShortcutListener, ShortcutAction},
     typing::MovementSignal,
 };
 
 pub(crate) struct BackgroundRuntime {
-    database: Database,
     components: RuntimeComponents,
 }
 
@@ -53,11 +55,50 @@ struct RuntimeComponents {
     ipc_server: NamedPipeIpcServer,
     global_shortcut: GlobalShortcutListener,
     input_listener: InputListener,
-    session_manager: SessionManager,
+    input_worker: InputWorker,
     correction_engine_router: CorrectionEngineRouter,
     replacement_engine: ReplacementEngine,
     process_group_monitor: SiblingDisappearanceMonitor,
     shutdown_requested: Arc<AtomicBool>,
+}
+
+struct InputWorker {
+    queue: Arc<(Mutex<VecDeque<InputWork>>, Condvar)>,
+    done: mpsc::Receiver<()>,
+    thread: Option<JoinHandle<()>>,
+}
+
+enum InputWork {
+    Events(Vec<InputEvent>),
+    Shortcut(usize),
+    Tick,
+    Config(Box<AppConfig>),
+    Reset,
+    Shutdown,
+    #[cfg(test)]
+    Probe(mpsc::Sender<thread::ThreadId>),
+    #[cfg(test)]
+    Pause(mpsc::Sender<()>, mpsc::Receiver<()>),
+}
+
+const INPUT_WORK_QUEUE_LIMIT: usize = 8;
+
+fn capture_if_current<T>(
+    expected: u64,
+    current: impl Fn() -> u64,
+    capture: impl FnOnce() -> T,
+) -> Option<T> {
+    if current() != expected {
+        return None;
+    }
+    let result = capture();
+    (current() == expected).then_some(result)
+}
+
+struct InputProcessor {
+    config: AppConfig,
+    session_manager: SessionManager,
+    database: Database,
 }
 
 #[derive(Debug)]
@@ -70,6 +111,7 @@ pub(crate) enum BackgroundError {
     Config(crate::settings::ConfigIoError),
     Database(rusqlite::Error),
     InputHook(u32),
+    InputWorker(std::io::Error),
 }
 
 impl fmt::Display for BackgroundError {
@@ -85,6 +127,9 @@ impl fmt::Display for BackgroundError {
                 formatter,
                 "failed to install input listener: Windows error {code}"
             ),
+            Self::InputWorker(source) => {
+                write!(formatter, "failed to start input worker: {source}")
+            }
         }
     }
 }
@@ -95,6 +140,7 @@ impl Error for BackgroundError {
             Self::CreateDirectory { source, .. } => Some(source),
             Self::Config(source) => Some(source),
             Self::Database(source) => Some(source),
+            Self::InputWorker(source) => Some(source),
             Self::ElevatedProcess | Self::InputHook(_) => None,
         }
     }
@@ -117,23 +163,19 @@ impl BackgroundRuntime {
         let config = load_or_create_config(paths.config_path())?;
         let database = Database::open(paths.database_path()).map_err(BackgroundError::Database)?;
         let shutdown_requested = Arc::new(AtomicBool::new(false));
-        let components = RuntimeComponents::start(&config, &paths, shutdown_requested)?;
+        let components = RuntimeComponents::start(&config, &paths, shutdown_requested, database)?;
 
         tracing::info!("AutoFix background process started");
-        Ok(Self {
-            database,
-            components,
-        })
+        Ok(Self { components })
     }
 
     fn shutdown(self) {
         self.components.shutdown();
-        drop(self.database);
         tracing::info!("AutoFix background process exited cleanly");
     }
 
     fn run_until_exit(&mut self) {
-        self.components.run_until_exit(&self.database);
+        self.components.run_until_exit();
     }
 }
 
@@ -142,8 +184,10 @@ impl RuntimeComponents {
         config: &AppConfig,
         paths: &RuntimePaths,
         shutdown_requested: Arc<AtomicBool>,
+        database: Database,
     ) -> Result<Self, BackgroundError> {
         let input_listener = InputListener::initialize().map_err(BackgroundError::InputHook)?;
+        let input_worker = InputWorker::start(config.clone(), database)?;
         Ok(Self {
             config_path: paths.config_path().to_path_buf(),
             config_modified_at: modified_at(paths.config_path()),
@@ -155,7 +199,7 @@ impl RuntimeComponents {
             )?,
             global_shortcut: GlobalShortcutListener::initialize(config),
             input_listener,
-            session_manager: SessionManager::new(config.context.clone()),
+            input_worker,
             correction_engine_router: CorrectionEngineRouter::initialize(config),
             replacement_engine: ReplacementEngine::initialize(),
             process_group_monitor: SiblingDisappearanceMonitor::new(),
@@ -164,6 +208,7 @@ impl RuntimeComponents {
     }
 
     fn shutdown(self) {
+        self.input_worker.shutdown();
         self.replacement_engine.shutdown();
         self.correction_engine_router.shutdown();
         drop(self.input_listener);
@@ -171,14 +216,21 @@ impl RuntimeComponents {
         self.ipc_server.shutdown();
     }
 
-    fn run_until_exit(&mut self, database: &Database) {
+    fn run_until_exit(&mut self) {
         message_loop::run_until_exit(|event| {
             match event {
-                message_loop::MessageLoopEvent::Hotkey(id) => self.process_shortcut(id, database),
-                message_loop::MessageLoopEvent::Poll => self.process_input(database),
+                message_loop::MessageLoopEvent::Hotkey(id) => {
+                    self.input_worker.send(InputWork::Shortcut(id))
+                }
+                message_loop::MessageLoopEvent::Poll => {
+                    let events = self.input_listener.drain();
+                    if !events.is_empty() {
+                        self.input_worker.send(InputWork::Events(events));
+                    }
+                }
                 message_loop::MessageLoopEvent::Tick => {
                     self.reload_shortcuts_if_config_changed();
-                    self.session_manager.prune_exited();
+                    self.input_worker.send(InputWork::Tick);
                     if self.process_group_monitor.shutdown_requested() {
                         self.shutdown_requested.store(true, Ordering::Relaxed);
                     }
@@ -189,23 +241,157 @@ impl RuntimeComponents {
         });
     }
 
-    fn process_input(&mut self, database: &Database) {
-        let events = self.input_listener.drain();
-        if events.is_empty() {
+    fn reload_shortcuts_if_config_changed(&mut self) {
+        let modified_at = modified_at(&self.config_path);
+        if modified_at == self.config_modified_at {
             return;
         }
+
+        self.config_modified_at = modified_at;
+        match crate::settings::load_config(&self.config_path) {
+            Ok(config) => {
+                if shortcuts::detect_conflict(&config) {
+                    tracing::warn!("shortcut conflict detected while reloading config");
+                }
+                self.config = config.clone();
+                self.global_shortcut.reload(&config);
+                self.input_worker.send(InputWork::Config(Box::new(config)));
+            }
+            Err(error) => tracing::warn!("failed to reload shortcuts from config: {}", error),
+        }
+    }
+}
+
+impl InputWorker {
+    fn start(config: AppConfig, database: Database) -> Result<Self, BackgroundError> {
+        let queue = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
+        let worker_queue = Arc::clone(&queue);
+        let (done_sender, done) = mpsc::channel();
+        let thread = thread::Builder::new()
+            .name("autofix-input-processing".into())
+            .spawn(move || {
+                let mut processor = InputProcessor {
+                    session_manager: SessionManager::new(config.context.clone()),
+                    config,
+                    database,
+                };
+                loop {
+                    let work = {
+                        let (lock, ready) = &*worker_queue;
+                        let mut pending = lock.lock().unwrap();
+                        while pending.is_empty() {
+                            pending = ready.wait(pending).unwrap();
+                        }
+                        pending.pop_front().unwrap()
+                    };
+                    match work {
+                        InputWork::Events(events) => processor.process_input(events),
+                        InputWork::Shortcut(id) => processor.process_shortcut(id),
+                        InputWork::Tick => processor.session_manager.prune_exited(),
+                        InputWork::Config(config) => {
+                            processor
+                                .session_manager
+                                .update_limits(config.context.clone());
+                            processor.config = *config;
+                        }
+                        InputWork::Reset => {
+                            processor
+                                .session_manager
+                                .deactivate(MovementSignal::UnknownPosition);
+                        }
+                        InputWork::Shutdown => break,
+                        #[cfg(test)]
+                        InputWork::Probe(reply) => {
+                            let _ = reply.send(thread::current().id());
+                        }
+                        #[cfg(test)]
+                        InputWork::Pause(ready, release) => {
+                            let _ = ready.send(());
+                            let _ = release.recv();
+                        }
+                    }
+                }
+                let _ = done_sender.send(());
+            })
+            .map_err(BackgroundError::InputWorker)?;
+        Ok(Self {
+            queue,
+            done,
+            thread: Some(thread),
+        })
+    }
+
+    fn send(&self, work: InputWork) {
+        let (lock, ready) = &*self.queue;
+        let mut pending = lock.lock().unwrap();
+        if pending.len() >= INPUT_WORK_QUEUE_LIMIT {
+            if matches!(work, InputWork::Tick) {
+                return;
+            }
+            let latest_config = pending.iter().rev().find_map(|queued| match queued {
+                InputWork::Config(config) => Some(config.clone()),
+                _ => None,
+            });
+            pending.clear();
+            pending.push_back(InputWork::Reset);
+            if let Some(config) = latest_config {
+                pending.push_back(InputWork::Config(config));
+            }
+            if matches!(work, InputWork::Events(_) | InputWork::Shortcut(_)) {
+                tracing::warn!("discarded queued input after slow processing");
+                ready.notify_one();
+                return;
+            }
+        }
+        pending.push_back(work);
+        ready.notify_one();
+    }
+
+    fn shutdown(mut self) {
+        let (lock, ready) = &*self.queue;
+        {
+            let mut pending = lock.lock().unwrap();
+            pending.clear();
+            pending.push_back(InputWork::Shutdown);
+            ready.notify_one();
+        }
+        if self.done.recv_timeout(Duration::from_millis(500)).is_ok() {
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        } else {
+            tracing::warn!("input processor still waiting on UI Automation during shutdown");
+        }
+    }
+}
+
+impl InputProcessor {
+    fn process_input(&mut self, events: Vec<InputEvent>) {
         let mut gate_result: Option<(isize, bool)> = None;
+        let mut needs_capture = false;
+        let mut last_key_generation = None;
+        let mut last_key_sequence = None;
         for event in events {
             match event {
                 InputEvent::FocusChange => {
                     gate_result = None;
-                    self.session_manager.deactivate(MovementSignal::FocusChange);
+                    self.session_manager
+                        .input(typing::TypedInput::Uncertain(MovementSignal::FocusChange));
                 }
                 InputEvent::MouseClick => {
                     gate_result = None;
-                    self.session_manager.deactivate(MovementSignal::MouseClick)
+                    self.session_manager
+                        .input(typing::TypedInput::Uncertain(MovementSignal::MouseClick));
                 }
                 InputEvent::Key(key) => {
+                    let generation = key.position_generation;
+                    if generation != input_listener::current_position_generation() {
+                        gate_result = None;
+                        self.session_manager.deactivate(MovementSignal::FocusChange);
+                        continue;
+                    }
+                    last_key_generation = Some(generation);
+                    last_key_sequence = Some(key.input_sequence);
                     let window = key.window;
                     if window == 0 || window != target::active_window_handle_value() {
                         gate_result = None;
@@ -215,16 +401,27 @@ impl RuntimeComponents {
                     if let Some((checked_window, allowed)) = gate_result {
                         if checked_window == window {
                             if allowed {
-                                self.session_manager.input(key.translate());
+                                if generation == input_listener::current_position_generation() {
+                                    needs_capture |= self.session_manager.input(key.translate());
+                                } else {
+                                    self.session_manager.deactivate(MovementSignal::FocusChange);
+                                }
                             }
                             continue;
                         }
                     }
-                    match SecurityGate::check(TriggerKind::Character, &self.config, database) {
+                    let decision =
+                        SecurityGate::check(TriggerKind::Character, &self.config, &self.database);
+                    if generation != input_listener::current_position_generation() {
+                        gate_result = None;
+                        self.session_manager.deactivate(MovementSignal::FocusChange);
+                        continue;
+                    }
+                    match decision {
                         SecurityDecision::Allowed { target } if target.window_handle == window => {
-                            self.session_manager.focus(&target);
+                            needs_capture |= self.session_manager.focus(&target);
                             gate_result = Some((window, true));
-                            self.session_manager.input(key.translate());
+                            needs_capture |= self.session_manager.input(key.translate());
                         }
                         _ => {
                             gate_result = Some((window, false));
@@ -233,6 +430,84 @@ impl RuntimeComponents {
                     }
                 }
             }
+        }
+        if last_key_generation
+            .is_some_and(|generation| generation != input_listener::current_position_generation())
+        {
+            self.session_manager.deactivate(MovementSignal::FocusChange);
+            return;
+        }
+        let capture_sequence =
+            last_key_sequence.unwrap_or_else(input_listener::current_input_sequence);
+        if self.session_manager.needs_movement_resolution() {
+            if let SecurityDecision::Allowed { target } =
+                SecurityGate::check(TriggerKind::Character, &self.config, &self.database)
+            {
+                self.session_manager.focus(&target);
+                if let Some(preceding) = capture_if_current(
+                    capture_sequence,
+                    input_listener::current_input_sequence,
+                    || {
+                        context_capture::read_before_caret(
+                            &target,
+                            &self.config.context,
+                            self.session_manager.movement_capture_extra_chars(),
+                        )
+                    },
+                ) {
+                    if let MovementResolution::Reanchor {
+                        final_fix: Some(old),
+                    } = self.session_manager.resolve_movement(preceding.as_deref())
+                    {
+                        if self.final_fix_before_reanchor_allowed(&self.database) {
+                            tracing::info!(
+                                typed_chars = old.chars().count(),
+                                "smart final-fix eligible at reanchor; correction pipeline is a placeholder"
+                            );
+                        }
+                    }
+                }
+            } else {
+                self.session_manager.deactivate(MovementSignal::FocusChange);
+            }
+        } else if needs_capture
+            && !self
+                .session_manager
+                .active()
+                .is_some_and(|session| session.position_uncertain())
+        {
+            if let SecurityDecision::Allowed { target } =
+                SecurityGate::check(TriggerKind::Character, &self.config, &self.database)
+            {
+                self.session_manager.focus(&target);
+                let executable = self
+                    .session_manager
+                    .active()
+                    .map_or_else(String::new, |session| session.executable_context());
+                if let Some(preceding) = capture_if_current(
+                    capture_sequence,
+                    input_listener::current_input_sequence,
+                    || {
+                        context_capture::read_before_caret(
+                            &target,
+                            &self.config.context,
+                            executable.chars().count(),
+                        )
+                    },
+                ) {
+                    let context = context_capture::captured_context(
+                        preceding.as_deref(),
+                        &executable,
+                        &self.config.context,
+                    );
+                    self.session_manager.set_informative_context(context);
+                }
+            }
+        }
+        if last_key_generation
+            .is_some_and(|generation| generation != input_listener::current_position_generation())
+        {
+            self.session_manager.deactivate(MovementSignal::FocusChange);
         }
         if let Some(signal) = self
             .session_manager
@@ -248,17 +523,17 @@ impl RuntimeComponents {
         tracing::debug!(typed_chars, "typed session updated");
     }
 
-    fn process_shortcut(&mut self, id: usize, database: &Database) {
+    fn process_shortcut(&mut self, id: usize) {
         match GlobalShortcutListener::action_for_id(id) {
             Some(ShortcutAction::Correct) => {
-                if self.security_allows(TriggerKind::ManualShortcut, database) {
+                if self.security_allows(TriggerKind::ManualShortcut, &self.database) {
                     tracing::info!("correction pipeline placeholder triggered by shortcut");
                 } else {
                     tracing::info!("correction shortcut ignored because context is blocked");
                 }
             }
             Some(ShortcutAction::Undo) => {
-                if self.security_allows(TriggerKind::Undo, database) {
+                if self.security_allows(TriggerKind::Undo, &self.database) {
                     tracing::info!("undo pipeline placeholder triggered by shortcut");
                 } else {
                     tracing::info!("undo shortcut ignored because context is blocked");
@@ -321,26 +596,6 @@ impl RuntimeComponents {
     #[allow(dead_code)]
     fn final_fix_before_reanchor_allowed(&self, database: &Database) -> bool {
         self.security_allows(TriggerKind::FinalFixBeforeReanchor, database)
-    }
-
-    fn reload_shortcuts_if_config_changed(&mut self) {
-        let modified_at = modified_at(&self.config_path);
-        if modified_at == self.config_modified_at {
-            return;
-        }
-
-        self.config_modified_at = modified_at;
-        match crate::settings::load_config(&self.config_path) {
-            Ok(config) => {
-                if shortcuts::detect_conflict(&config) {
-                    tracing::warn!("shortcut conflict detected while reloading config");
-                }
-                self.config = config.clone();
-                self.global_shortcut.reload(&config);
-                self.session_manager.update_limits(config.context);
-            }
-            Err(error) => tracing::warn!("failed to reload shortcuts from config: {}", error),
-        }
     }
 }
 
