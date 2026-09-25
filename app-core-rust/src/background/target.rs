@@ -9,7 +9,7 @@ use windows::Win32::{
         },
         Ole::{SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetLBound, SafeArrayGetUBound},
     },
-    UI::Accessibility::{CUIAutomation, IUIAutomation},
+    UI::Accessibility::{CUIAutomation, IUIAutomation2},
 };
 use windows_sys::Win32::{
     Foundation::{CloseHandle, GetLastError, ERROR_ACCESS_DENIED, HWND},
@@ -309,8 +309,10 @@ fn focused_element_context() -> Option<FocusedElementContext> {
         }
 
         let context = (|| {
-            let automation: IUIAutomation =
+            let automation: IUIAutomation2 =
                 CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            automation.SetConnectionTimeout(250).ok()?;
+            automation.SetTransactionTimeout(250).ok()?;
             let element = automation.GetFocusedElement().ok()?;
 
             let focused_element_id = runtime_id(&element)
