@@ -78,13 +78,10 @@ pub(super) fn read_before_caret(
 ) -> Option<String> {
     use windows::Win32::{
         Foundation::{S_FALSE, S_OK},
-        System::Com::{
-            CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-            COINIT_MULTITHREADED,
-        },
+        System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED},
         UI::Accessibility::{
-            CUIAutomation, IUIAutomation2, IUIAutomationTextPattern, TextPatternRangeEndpoint_End,
-            TextPatternRangeEndpoint_Start, TextUnit_Character, UIA_TextPatternId,
+            IUIAutomationTextPattern, TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start,
+            TextUnit_Character, UIA_TextPatternId,
         },
     };
 
@@ -99,12 +96,7 @@ pub(super) fn read_before_caret(
             return None;
         }
         let result = (|| {
-            let automation: IUIAutomation2 =
-                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
-            // A provider can be slow or unresponsive. Bound cross-process UIA
-            // calls so context capture cannot hold the input loop indefinitely.
-            automation.SetConnectionTimeout(250).ok()?;
-            automation.SetTransactionTimeout(250).ok()?;
+            let automation = super::target::create_automation().ok()?;
             let element = automation.GetFocusedElement().ok()?;
             if element.CurrentIsPassword().ok()?.as_bool()
                 || element.CurrentIsOffscreen().ok()?.as_bool()

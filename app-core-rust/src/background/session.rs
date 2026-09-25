@@ -216,12 +216,16 @@ impl Session {
                 pending.typed_after.push_str(value);
                 return;
             }
-            // An edit before locating the caret cannot be attributed safely.
-            self.executable.invalidate(MovementSignal::UnknownPosition);
-            self.pending_movement = None;
-            self.correction_floor = 0;
-            self.informative_context.clear();
-            return;
+            if pending.tracked_arrows_only && pending.typed_after.is_empty() {
+                self.pending_movement = None;
+            } else {
+                // An edit before locating the caret cannot be attributed safely.
+                self.executable.invalidate(MovementSignal::UnknownPosition);
+                self.pending_movement = None;
+                self.correction_floor = 0;
+                self.informative_context.clear();
+                return;
+            }
         }
         if matches!(input, TypedInput::Backspace)
             && self.correction_floor > 0
@@ -261,6 +265,9 @@ impl Session {
         let Some(pending) = self.pending_movement.take() else {
             return MovementResolution::Continued;
         };
+        if pending.tracked_arrows_only && pending.typed_after.is_empty() {
+            return MovementResolution::Continued;
+        }
         if preceding.is_none() && pending.tracked_arrows_only {
             self.executable.input(TypedInput::Text(pending.typed_after));
             self.versions.context = self.versions.context.wrapping_add(1);
@@ -320,9 +327,11 @@ impl Session {
                 {
                     self.append_informative(old, limits);
                     self.append_informative(skipped, limits);
-                    let floor = self.executable_context().chars().count();
+                    // The old suffix was behind the previous caret. It is not
+                    // proven to be adjacent to the new caret.
+                    self.executable.clear_executable();
                     self.executable.input(TypedInput::Text(pending.typed_after));
-                    self.correction_floor = floor;
+                    self.correction_floor = 0;
                     self.versions.context = self.versions.context.wrapping_add(1);
                     self.versions.executable = self.versions.executable.wrapping_add(1);
                     return MovementResolution::Continued;
@@ -794,6 +803,45 @@ mod tests {
     }
 
     #[test]
+    fn backspace_after_tracked_arrow_keeps_known_prefix() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("abcd".into()));
+        manager.input(TypedInput::Left);
+        manager.input(TypedInput::Backspace);
+        assert_eq!(manager.active().unwrap().executable_context(), "ab");
+        assert!(!manager.active().unwrap().position_uncertain());
+        assert!(manager
+            .active_mut()
+            .unwrap()
+            .queue_correction("ab".into(), "AB".into()));
+    }
+
+    #[test]
+    fn delete_after_tracked_arrow_keeps_known_prefix() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("abcd".into()));
+        manager.input(TypedInput::Left);
+        manager.input(TypedInput::Delete);
+        assert_eq!(manager.active().unwrap().executable_context(), "abc");
+        assert!(!manager.active().unwrap().position_uncertain());
+    }
+
+    #[test]
+    fn deletion_after_uncertain_movement_invalidates_context() {
+        for input in [TypedInput::Backspace, TypedInput::Delete] {
+            let mut manager = SessionManager::new(ContextConfig::default());
+            manager.focus(&target(1, 10, None));
+            manager.input(TypedInput::Text("abcd".into()));
+            manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+            manager.input(input);
+            assert_eq!(manager.active().unwrap().executable_context(), "");
+            assert_eq!(manager.active().unwrap().informative_context(), "");
+        }
+    }
+
+    #[test]
     fn uncertain_signal_after_arrow_still_reanchors_without_capture() {
         let mut manager = SessionManager::new(ContextConfig::default());
         manager.focus(&target(1, 10, None));
@@ -917,7 +965,7 @@ mod tests {
             manager.resolve_movement(Some("klmnoptyped oneX")),
             MovementResolution::Continued
         );
-        assert_eq!(manager.active().unwrap().executable_context(), "typedX");
+        assert_eq!(manager.active().unwrap().executable_context(), "X");
         assert_eq!(
             manager.active().unwrap().informative_context(),
             "jklmnoptyped one"
@@ -981,7 +1029,7 @@ mod tests {
             session.informative_context(),
             "typed one two three four five "
         );
-        assert_eq!(session.executable_context(), "typedX");
+        assert_eq!(session.executable_context(), "X");
         assert!(!session.queue_correction("typedX".into(), "bad".into()));
         assert!(session.queue_correction("X".into(), "Y".into()));
         session.complete_without_changes(&ContextConfig::default());
@@ -992,6 +1040,32 @@ mod tests {
         assert_eq!(session.executable_context(), "");
         session.input(TypedInput::Text("next".into()), &ContextConfig::default());
         assert!(session.queue_correction("next".into(), "Next".into()));
+    }
+
+    #[test]
+    fn forward_move_discards_old_suffix_before_arrow_fallback() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("abcd".into()));
+        manager.input(TypedInput::Left);
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("abcX")),
+            MovementResolution::Continued
+        );
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("Y".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("abcXd gap Y")),
+            MovementResolution::Continued
+        );
+        manager.input(TypedInput::Right);
+        manager.input(TypedInput::Text("Z".into()));
+        manager.resolve_movement(None);
+        assert!(!manager
+            .active_mut()
+            .unwrap()
+            .queue_correction("dZ".into(), "bad".into()));
     }
 
     #[test]

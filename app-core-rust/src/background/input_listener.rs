@@ -2,9 +2,14 @@ use super::typing::{MovementSignal, TypedInput};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static POSITION_GENERATION: AtomicU64 = AtomicU64::new(0);
+static INPUT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn current_position_generation() -> u64 {
     POSITION_GENERATION.load(Ordering::Acquire)
+}
+
+pub(crate) fn current_input_sequence() -> u64 {
+    INPUT_SEQUENCE.load(Ordering::Acquire)
 }
 
 fn mark_position_change() {
@@ -20,6 +25,7 @@ pub(crate) enum InputEvent {
 pub(crate) struct KeyStroke {
     pub(crate) window: isize,
     pub(crate) position_generation: u64,
+    pub(crate) input_sequence: u64,
     virtual_key: u32,
     scan_code: u32,
     shift: bool,
@@ -41,6 +47,7 @@ pub(crate) fn stale_key_for_test() -> KeyStroke {
     KeyStroke {
         window: 1,
         position_generation: current_position_generation().wrapping_sub(1),
+        input_sequence: current_input_sequence(),
         virtual_key: 0,
         scan_code: 0,
         shift: false,
@@ -88,7 +95,7 @@ mod native {
 
     use super::{
         current_position_generation, mark_position_change, InputEvent, KeyStroke, MovementSignal,
-        TypedInput,
+        TypedInput, INPUT_SEQUENCE,
     };
 
     const QUEUE_LIMIT: usize = 512;
@@ -325,6 +332,9 @@ mod native {
                 push(RawEvent::Key(KeyStroke {
                     window: GetForegroundWindow() as isize,
                     position_generation: current_position_generation(),
+                    input_sequence: INPUT_SEQUENCE
+                        .fetch_add(1, Ordering::AcqRel)
+                        .wrapping_add(1),
                     virtual_key: key.vkCode,
                     scan_code: key.scanCode,
                     shift: held(VK_SHIFT),
@@ -452,6 +462,7 @@ mod native {
             KeyStroke {
                 window: 0,
                 position_generation: 0,
+                input_sequence: 0,
                 virtual_key: virtual_key.into(),
                 scan_code: 0,
                 shift: false,

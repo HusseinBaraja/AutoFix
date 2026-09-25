@@ -83,6 +83,18 @@ enum InputWork {
 
 const INPUT_WORK_QUEUE_LIMIT: usize = 8;
 
+fn capture_if_current<T>(
+    expected: u64,
+    current: impl Fn() -> u64,
+    capture: impl FnOnce() -> T,
+) -> Option<T> {
+    if current() != expected {
+        return None;
+    }
+    let result = capture();
+    (current() == expected).then_some(result)
+}
+
 struct InputProcessor {
     config: AppConfig,
     session_manager: SessionManager,
@@ -358,6 +370,7 @@ impl InputProcessor {
         let mut gate_result: Option<(isize, bool)> = None;
         let mut needs_capture = false;
         let mut last_key_generation = None;
+        let mut last_key_sequence = None;
         for event in events {
             match event {
                 InputEvent::FocusChange => {
@@ -378,6 +391,7 @@ impl InputProcessor {
                         continue;
                     }
                     last_key_generation = Some(generation);
+                    last_key_sequence = Some(key.input_sequence);
                     let window = key.window;
                     if window == 0 || window != target::active_window_handle_value() {
                         gate_result = None;
@@ -423,25 +437,34 @@ impl InputProcessor {
             self.session_manager.deactivate(MovementSignal::FocusChange);
             return;
         }
+        let capture_sequence =
+            last_key_sequence.unwrap_or_else(input_listener::current_input_sequence);
         if self.session_manager.needs_movement_resolution() {
             if let SecurityDecision::Allowed { target } =
                 SecurityGate::check(TriggerKind::Character, &self.config, &self.database)
             {
                 self.session_manager.focus(&target);
-                let preceding = context_capture::read_before_caret(
-                    &target,
-                    &self.config.context,
-                    self.session_manager.movement_capture_extra_chars(),
-                );
-                if let MovementResolution::Reanchor {
-                    final_fix: Some(old),
-                } = self.session_manager.resolve_movement(preceding.as_deref())
-                {
-                    if self.final_fix_before_reanchor_allowed(&self.database) {
-                        tracing::info!(
-                            typed_chars = old.chars().count(),
-                            "smart final-fix eligible at reanchor; correction pipeline is a placeholder"
-                        );
+                if let Some(preceding) = capture_if_current(
+                    capture_sequence,
+                    input_listener::current_input_sequence,
+                    || {
+                        context_capture::read_before_caret(
+                            &target,
+                            &self.config.context,
+                            self.session_manager.movement_capture_extra_chars(),
+                        )
+                    },
+                ) {
+                    if let MovementResolution::Reanchor {
+                        final_fix: Some(old),
+                    } = self.session_manager.resolve_movement(preceding.as_deref())
+                    {
+                        if self.final_fix_before_reanchor_allowed(&self.database) {
+                            tracing::info!(
+                                typed_chars = old.chars().count(),
+                                "smart final-fix eligible at reanchor; correction pipeline is a placeholder"
+                            );
+                        }
                     }
                 }
             } else {
@@ -461,17 +484,24 @@ impl InputProcessor {
                     .session_manager
                     .active()
                     .map_or_else(String::new, |session| session.executable_context());
-                let preceding = context_capture::read_before_caret(
-                    &target,
-                    &self.config.context,
-                    executable.chars().count(),
-                );
-                let context = context_capture::captured_context(
-                    preceding.as_deref(),
-                    &executable,
-                    &self.config.context,
-                );
-                self.session_manager.set_informative_context(context);
+                if let Some(preceding) = capture_if_current(
+                    capture_sequence,
+                    input_listener::current_input_sequence,
+                    || {
+                        context_capture::read_before_caret(
+                            &target,
+                            &self.config.context,
+                            executable.chars().count(),
+                        )
+                    },
+                ) {
+                    let context = context_capture::captured_context(
+                        preceding.as_deref(),
+                        &executable,
+                        &self.config.context,
+                    );
+                    self.session_manager.set_informative_context(context);
+                }
             }
         }
         if last_key_generation

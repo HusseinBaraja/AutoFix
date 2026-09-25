@@ -24,6 +24,8 @@ The work queue is bounded. If processing falls behind, stale batches are
 discarded and the typed session is invalidated before later input is handled.
 Keys carry the focus and caret generation observed by the hooks, so delayed
 keys are rejected after a focus change or mouse click, even within one window.
+Live captures are accepted only while the keyboard event sequence remains
+unchanged, so typing still queued for processing cannot enter informative context.
 Re-anchoring waits until typing resumes. The listener checks the target security
 gate before translating key codes to text. On initial focus or resumed typing
 after caret movement, the context manager attempts a read-only UI Automation TextPattern
@@ -55,7 +57,9 @@ original text and leaves newer executable text intact. Informative context is
 bounded by the configured character limit. Backward movement within known typed
 text keeps the executable context. Forward movement of at most the configured
 word limit (five by default) keeps the context, adds skipped text to informative
-context, and protects that text from replacement. Longer forward movement and
+context, and starts a fresh executable segment at the new caret. The old typed
+suffix is discarded because it has not been verified at the new position.
+Longer forward movement and
 unmatched positions re-anchor at the new caret. A longer forward move requests
 the final-fix security gate for the old executable text. The correction pipeline
 is still a placeholder, so no final fix is applied to target text yet. Pending

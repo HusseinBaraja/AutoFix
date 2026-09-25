@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     fs,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -6,6 +7,51 @@ use std::{
 use crate::{background::paths::RuntimePaths, settings::AppConfig};
 
 use super::{admin, load_or_create_config, BackgroundError, BackgroundRuntime};
+
+#[test]
+fn queued_typing_before_or_during_capture_never_enters_informative_context() {
+    for arrives_during_capture in [false, true] {
+        let sequence = Cell::new(1_u64);
+        let limits = AppConfig::default().context;
+        let mut manager = super::SessionManager::new(limits.clone());
+        let target = super::target::FocusedTarget {
+            process_id: 1,
+            process_name: "notepad.exe".into(),
+            window_handle: 1,
+            window_title: "Notes".into(),
+            focused_element_id: None,
+            is_elevated: false,
+            is_password_or_protected: false,
+            is_hidden_or_unavailable: false,
+            field_safety_known: true,
+            is_secure_desktop: false,
+            is_lock_screen: false,
+            is_credential_dialog: false,
+        };
+        manager.focus(&target);
+        manager.input(super::typing::TypedInput::Text("a".into()));
+        if !arrives_during_capture {
+            sequence.set(2);
+        }
+        let preceding = super::capture_if_current(
+            1,
+            || sequence.get(),
+            || {
+                sequence.set(2);
+                Some("aa".to_owned())
+            },
+        );
+        if let Some(preceding) = preceding {
+            let context =
+                super::context_capture::captured_context(preceding.as_deref(), "a", &limits);
+            manager.set_informative_context(context);
+        }
+        manager.input(super::typing::TypedInput::Text("a".into()));
+        let session = manager.active().unwrap();
+        assert_eq!(session.informative_context(), "");
+        assert_eq!(session.executable_context(), "aa");
+    }
+}
 
 #[test]
 fn delayed_key_from_previous_focus_cannot_enter_session() {
