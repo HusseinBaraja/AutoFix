@@ -2,6 +2,7 @@ mod admin;
 pub(crate) mod app_identity;
 mod components;
 mod context_capture;
+mod informative_context;
 mod input_listener;
 mod message_loop;
 mod paths;

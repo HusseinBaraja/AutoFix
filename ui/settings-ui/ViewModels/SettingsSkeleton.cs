@@ -79,10 +79,10 @@ public static class SettingsSkeleton
         Section("Context", "Editable and informative context limits",
         [
             Text("Initial context words", "Words read before correction.", "context.initial_context_words", config.Context.InitialContextWords.ToString(CultureInfo.InvariantCulture)),
-            Text("Initial context boundary chars", "Comma-separated boundary characters.", "context.initial_context_boundary_chars", ConfigValue.Join(config.Context.InitialContextBoundaryChars)),
+            Text("Initial context boundary chars", "Comma-separated sentence boundaries used for capture and shrinking.", "context.initial_context_boundary_chars", ConfigValue.Join(config.Context.InitialContextBoundaryChars)),
             Text("Forward movement word limit", "Maximum words after caret movement.", "context.forward_movement_word_limit", config.Context.ForwardMovementWordLimit.ToString(CultureInfo.InvariantCulture)),
             Text("Informative context max chars", "Maximum read-only context characters.", "context.informative_context_max_chars", config.Context.InformativeContextMaxChars.ToString(CultureInfo.InvariantCulture)),
-            Text("Informative context min words", "Minimum informative words.", "context.informative_context_min_words", config.Context.InformativeContextMinWords.ToString(CultureInfo.InvariantCulture)),
+            Text("Informative context min words", "Recent words preserved during shrinking when they fit the character budget.", "context.informative_context_min_words", config.Context.InformativeContextMinWords.ToString(CultureInfo.InvariantCulture)),
             Text("Executable context max words", "Maximum editable words in correction scope.", "context.executable_context_max_words", config.Context.ExecutableContextMaxWords.ToString(CultureInfo.InvariantCulture)),
         ]),
         Section("Feedback", "Tray notices and correction feedback",
