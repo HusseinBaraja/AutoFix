@@ -359,7 +359,7 @@ impl Session {
         self.informative_context = before_typing
             .map(|text| super::context_capture::trim_before_caret(text, limits).to_owned())
             .unwrap_or_default();
-        self.trim_informative(limits);
+        self.shrink_informative(limits);
         self.executable.input(TypedInput::Text(typed_after));
         self.pending_corrections.clear();
         self.versions.context = self.versions.context.wrapping_add(1);
@@ -374,19 +374,11 @@ impl Session {
             return;
         }
         self.informative_context.push_str(text);
-        self.trim_informative(limits);
+        self.shrink_informative(limits);
     }
 
-    fn trim_informative(&mut self, limits: &ContextConfig) {
-        let max = limits.informative_context_max_chars as usize;
-        let excess = self.informative_context.chars().count().saturating_sub(max);
-        if excess > 0 {
-            let boundary = self
-                .informative_context
-                .char_indices()
-                .nth(excess)
-                .map_or(self.informative_context.len(), |(index, _)| index);
-            self.informative_context.drain(..boundary);
+    fn shrink_informative(&mut self, limits: &ContextConfig) {
+        if super::informative_context::shrink(&mut self.informative_context, limits) {
             self.correction_undo_history.clear();
         }
     }
@@ -403,6 +395,7 @@ impl Session {
                 self.executable.clear_executable();
                 self.correction_floor = 0;
             }
+            self.shrink_informative(limits);
             return;
         }
         self.append_informative(&observed, limits);
@@ -447,7 +440,7 @@ impl Session {
     /// already observed in this input batch remains a separate segment.
     fn set_informative_context(&mut self, context: String, limits: &ContextConfig) {
         self.informative_context = context;
-        self.trim_informative(limits);
+        self.shrink_informative(limits);
         self.pending_corrections.clear();
         self.correction_undo_history.clear();
         self.versions.context = self.versions.context.wrapping_add(1);
@@ -501,15 +494,17 @@ impl Session {
             self.versions.context = self.versions.context.wrapping_add(1);
             self.versions.executable = self.versions.executable.wrapping_add(1);
         }
-        let replacement: String = correction
+        let retained_chars = correction
             .replacement
             .chars()
-            .rev()
-            .take(limits.informative_context_max_chars as usize)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
+            .count()
+            .min(self.informative_context.chars().count());
+        let replacement_start = correction
+            .replacement
+            .char_indices()
+            .nth(correction.replacement.chars().count() - retained_chars)
+            .map_or(correction.replacement.len(), |(index, _)| index);
+        let replacement = correction.replacement[replacement_start..].to_owned();
         if let Some(informative_start) = self
             .informative_context
             .len()
@@ -545,7 +540,7 @@ impl Session {
         self.informative_context
             .replace_range(start..end, &last.original);
         self.correction_undo_history.pop();
-        self.trim_informative(limits);
+        self.shrink_informative(limits);
         self.pending_corrections.clear();
         self.versions.context = self.versions.context.wrapping_add(1);
         true
@@ -571,7 +566,7 @@ impl SessionManager {
         self.limits = limits;
         let active_limits = self.limits.clone();
         if let Some(session) = self.active_mut() {
-            session.trim_informative(&active_limits);
+            session.shrink_informative(&active_limits);
             if !session.position_uncertain()
                 && session.executable_context().split_whitespace().count()
                     > usize::from(active_limits.executable_context_max_words)
@@ -724,6 +719,77 @@ mod tests {
             is_lock_screen: false,
             is_credential_dialog: false,
         }
+    }
+
+    fn shrinking_limits(max_chars: u32, min_words: u16) -> ContextConfig {
+        ContextConfig {
+            informative_context_max_chars: max_chars,
+            informative_context_min_words: min_words,
+            ..ContextConfig::default()
+        }
+    }
+
+    #[test]
+    fn correction_commit_shrinks_only_informative_memory() {
+        let limits = shrinking_limits(24, 3);
+        let mut manager = SessionManager::new(limits.clone());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text(
+            "Discard this sentence. Keep these three teh".into(),
+        ));
+        let session = manager.active_mut().unwrap();
+        assert!(session.queue_correction("teh".into(), "the".into()));
+
+        assert!(session.apply_next_correction(&limits));
+
+        assert_eq!(session.informative_context(), " Keep these three the");
+        assert_eq!(session.executable_context(), "");
+    }
+
+    #[test]
+    fn no_change_and_final_fix_commits_shrink_informative_memory() {
+        let limits = shrinking_limits(24, 3);
+        let mut manager = SessionManager::new(limits.clone());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("Discard this sentence.".into()));
+
+        manager
+            .active_mut()
+            .unwrap()
+            .complete_without_changes(&limits);
+        assert_eq!(
+            manager.active().unwrap().informative_context(),
+            "Discard this sentence."
+        );
+
+        manager.input(TypedInput::Text(" Keep these three words".into()));
+        manager
+            .active_mut()
+            .unwrap()
+            .complete_without_changes(&limits);
+
+        let session = manager.active().unwrap();
+        assert_eq!(session.informative_context(), " Keep these three words");
+        assert_eq!(session.executable_context(), "");
+    }
+
+    #[test]
+    fn forward_context_extension_shrinks_informative_memory() {
+        let limits = shrinking_limits(24, 3);
+        let mut manager = SessionManager::new(limits);
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("Discard this sentence.".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("X".into()));
+
+        assert_eq!(
+            manager.resolve_movement(Some("Discard this sentence. Keep these three words X")),
+            MovementResolution::Continued
+        );
+
+        let session = manager.active().unwrap();
+        assert_eq!(session.informative_context(), " Keep these three words ");
+        assert_eq!(session.executable_context(), "X");
     }
 
     #[test]

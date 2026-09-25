@@ -54,7 +54,10 @@ does the same with the original text. Exceeding the configured executable word
 limit also commits the current segment. New typing starts a fresh executable
 segment. Undo restores the corrected span in informative context to its
 original text and leaves newer executable text intact. Informative context is
-bounded by the configured character limit. Backward movement within known typed
+shrunk in app memory after every append and commit. Shrinking stays within the
+configured character budget, prefers configured sentence boundaries, and
+preserves the configured minimum number of recent words when they fit. It never
+edits or deletes target-application text. Backward movement within known typed
 text keeps the executable context. Forward movement of at most the configured
 word limit (five by default) keeps the context, adds skipped text to informative
 context, and starts a fresh executable segment at the new caret. The old typed
