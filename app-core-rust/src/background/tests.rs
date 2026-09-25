@@ -8,6 +8,33 @@ use crate::{background::paths::RuntimePaths, settings::AppConfig};
 use super::{admin, load_or_create_config, BackgroundError, BackgroundRuntime};
 
 #[test]
+fn slow_input_worker_discards_stale_batches_at_queue_limit() {
+    let worker = super::InputWorker::start(
+        AppConfig::default(),
+        crate::storage::Database::open_memory().unwrap(),
+    )
+    .unwrap();
+    let (ready_sender, ready) = std::sync::mpsc::channel();
+    let (release, release_receiver) = std::sync::mpsc::channel();
+    worker.send(super::InputWork::Pause(ready_sender, release_receiver));
+    ready
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+
+    for _ in 0..=super::INPUT_WORK_QUEUE_LIMIT {
+        worker.send(super::InputWork::Events(Vec::new()));
+    }
+    let (lock, _) = &*worker.queue;
+    let queued = lock.lock().unwrap();
+    assert_eq!(queued.len(), 1);
+    assert!(matches!(queued.front(), Some(super::InputWork::Reset)));
+    drop(queued);
+
+    release.send(()).unwrap();
+    worker.shutdown();
+}
+
+#[test]
 fn creates_default_config_when_missing() {
     let root = unique_temp_dir();
     let config_path = root.join("settings.toml");

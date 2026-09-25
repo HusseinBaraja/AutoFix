@@ -15,15 +15,16 @@ mod tests;
 mod typing;
 
 use std::{
+    collections::VecDeque,
     error::Error,
     fmt, fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
+        mpsc, Arc, Condvar, Mutex,
     },
     thread::{self, JoinHandle},
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use crate::{
@@ -62,7 +63,8 @@ struct RuntimeComponents {
 }
 
 struct InputWorker {
-    sender: mpsc::Sender<InputWork>,
+    queue: Arc<(Mutex<VecDeque<InputWork>>, Condvar)>,
+    done: mpsc::Receiver<()>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -71,10 +73,15 @@ enum InputWork {
     Shortcut(usize),
     Tick,
     Config(Box<AppConfig>),
+    Reset,
     Shutdown,
     #[cfg(test)]
     Probe(mpsc::Sender<thread::ThreadId>),
+    #[cfg(test)]
+    Pause(mpsc::Sender<()>, mpsc::Receiver<()>),
 }
+
+const INPUT_WORK_QUEUE_LIMIT: usize = 8;
 
 struct InputProcessor {
     config: AppConfig,
@@ -245,7 +252,9 @@ impl RuntimeComponents {
 
 impl InputWorker {
     fn start(config: AppConfig, database: Database) -> Result<Self, BackgroundError> {
-        let (sender, receiver) = mpsc::channel();
+        let queue = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
+        let worker_queue = Arc::clone(&queue);
+        let (done_sender, done) = mpsc::channel();
         let thread = thread::Builder::new()
             .name("autofix-input-processing".into())
             .spawn(move || {
@@ -254,7 +263,15 @@ impl InputWorker {
                     config,
                     database,
                 };
-                while let Ok(work) = receiver.recv() {
+                loop {
+                    let work = {
+                        let (lock, ready) = &*worker_queue;
+                        let mut pending = lock.lock().unwrap();
+                        while pending.is_empty() {
+                            pending = ready.wait(pending).unwrap();
+                        }
+                        pending.pop_front().unwrap()
+                    };
                     match work {
                         InputWork::Events(events) => processor.process_input(events),
                         InputWork::Shortcut(id) => processor.process_shortcut(id),
@@ -265,31 +282,73 @@ impl InputWorker {
                                 .update_limits(config.context.clone());
                             processor.config = *config;
                         }
+                        InputWork::Reset => {
+                            processor
+                                .session_manager
+                                .deactivate(MovementSignal::UnknownPosition);
+                        }
                         InputWork::Shutdown => break,
                         #[cfg(test)]
                         InputWork::Probe(reply) => {
                             let _ = reply.send(thread::current().id());
                         }
+                        #[cfg(test)]
+                        InputWork::Pause(ready, release) => {
+                            let _ = ready.send(());
+                            let _ = release.recv();
+                        }
                     }
                 }
+                let _ = done_sender.send(());
             })
             .map_err(BackgroundError::InputWorker)?;
         Ok(Self {
-            sender,
+            queue,
+            done,
             thread: Some(thread),
         })
     }
 
     fn send(&self, work: InputWork) {
-        if self.sender.send(work).is_err() {
-            tracing::error!("input processor stopped unexpectedly");
+        let (lock, ready) = &*self.queue;
+        let mut pending = lock.lock().unwrap();
+        if pending.len() >= INPUT_WORK_QUEUE_LIMIT {
+            if matches!(work, InputWork::Tick) {
+                return;
+            }
+            let latest_config = pending.iter().rev().find_map(|queued| match queued {
+                InputWork::Config(config) => Some(config.clone()),
+                _ => None,
+            });
+            pending.clear();
+            pending.push_back(InputWork::Reset);
+            if let Some(config) = latest_config {
+                pending.push_back(InputWork::Config(config));
+            }
+            if matches!(work, InputWork::Events(_) | InputWork::Shortcut(_)) {
+                tracing::warn!("discarded queued input after slow processing");
+                ready.notify_one();
+                return;
+            }
         }
+        pending.push_back(work);
+        ready.notify_one();
     }
 
     fn shutdown(mut self) {
-        self.send(InputWork::Shutdown);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+        let (lock, ready) = &*self.queue;
+        {
+            let mut pending = lock.lock().unwrap();
+            pending.clear();
+            pending.push_back(InputWork::Shutdown);
+            ready.notify_one();
+        }
+        if self.done.recv_timeout(Duration::from_millis(500)).is_ok() {
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        } else {
+            tracing::warn!("input processor still waiting on UI Automation during shutdown");
         }
     }
 }
