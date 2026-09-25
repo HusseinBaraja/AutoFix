@@ -24,7 +24,9 @@ after caret movement, the context manager attempts a read-only UI Automation Tex
 capture ending at a collapsed caret. It keeps text after the nearest configured
 boundary (default `.`), up to the previous configured number of words (default
 25), and stops at the start of the text provider's document range. The capture
-is limited by the informative character cap. It is never used as a replacement
+reads the informative character cap plus the known typed segment so that new
+typing cannot crowd the anchor out. Stored informative context remains capped.
+It is never used as a replacement
 target; only newly typed text enters executable context. If the provider cannot
 read before the caret, informative context is empty and typing continues.
 Selections, protected fields, and unavailable targets are never read. Paste and

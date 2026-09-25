@@ -97,6 +97,11 @@ fn forward_skipped_start(before_typing: &str, informative: &str, old: &str) -> O
     let candidate = format!("{informative}{old}");
     let mut match_end = None;
     for (start, _) in before_typing.match_indices(old) {
+        // Without a captured prefix, an occurrence elsewhere in the field
+        // does not establish where this session's typed text began.
+        if informative.is_empty() && start != 0 {
+            continue;
+        }
         let end = start + old.len();
         let prefix = &before_typing[..end];
         let Some(anchor) = matching_anchor(
@@ -163,6 +168,12 @@ impl Session {
         self.pending_movement
             .as_ref()
             .is_some_and(|pending| !pending.typed_after.is_empty())
+    }
+
+    fn movement_capture_extra_chars(&self) -> usize {
+        self.pending_movement.as_ref().map_or(0, |pending| {
+            pending.old_executable.chars().count() + pending.typed_after.chars().count()
+        })
     }
 
     fn mark_movement(&mut self, tracked_arrows_only: bool) {
@@ -611,6 +622,11 @@ impl SessionManager {
             .is_some_and(Session::needs_movement_resolution)
     }
 
+    pub(crate) fn movement_capture_extra_chars(&self) -> usize {
+        self.active()
+            .map_or(0, Session::movement_capture_extra_chars)
+    }
+
     pub(crate) fn resolve_movement(&mut self, preceding: Option<&str>) -> MovementResolution {
         let limits = self.limits.clone();
         self.active_mut()
@@ -874,6 +890,21 @@ mod tests {
     }
 
     #[test]
+    fn movement_capture_budget_covers_old_text_and_new_typing() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("more".into()));
+        assert_eq!(manager.movement_capture_extra_chars(), 9);
+        assert_eq!(
+            manager.resolve_movement(Some("typedmore")),
+            MovementResolution::Continued
+        );
+        assert_eq!(manager.movement_capture_extra_chars(), 0);
+    }
+
+    #[test]
     fn capped_informative_context_still_proves_forward_move() {
         let mut manager = SessionManager::new(ContextConfig {
             informative_context_max_chars: 16,
@@ -1020,6 +1051,20 @@ mod tests {
             manager.active().unwrap().informative_context(),
             "unrelated area "
         );
+    }
+
+    #[test]
+    fn repeated_old_text_elsewhere_does_not_prove_forward_move() {
+        let mut manager = SessionManager::new(ContextConfig::default());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("typed".into()));
+        manager.input(TypedInput::Uncertain(MovementSignal::MouseClick));
+        manager.input(TypedInput::Text("X".into()));
+        assert_eq!(
+            manager.resolve_movement(Some("other typed words X")),
+            MovementResolution::Reanchor { final_fix: None }
+        );
+        assert_eq!(manager.active().unwrap().executable_context(), "X");
     }
 
     #[test]

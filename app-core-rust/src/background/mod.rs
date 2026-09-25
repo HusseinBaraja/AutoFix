@@ -243,7 +243,11 @@ impl RuntimeComponents {
                 SecurityGate::check(TriggerKind::Character, &self.config, database)
             {
                 self.session_manager.focus(&target);
-                let preceding = context_capture::read_before_caret(&target, &self.config.context);
+                let preceding = context_capture::read_before_caret(
+                    &target,
+                    &self.config.context,
+                    self.session_manager.movement_capture_extra_chars(),
+                );
                 if let MovementResolution::Reanchor {
                     final_fix: Some(old),
                 } = self.session_manager.resolve_movement(preceding.as_deref())
@@ -268,11 +272,15 @@ impl RuntimeComponents {
                 SecurityGate::check(TriggerKind::Character, &self.config, database)
             {
                 self.session_manager.focus(&target);
-                let preceding = context_capture::read_before_caret(&target, &self.config.context);
                 let executable = self
                     .session_manager
                     .active()
                     .map_or_else(String::new, |session| session.executable_context());
+                let preceding = context_capture::read_before_caret(
+                    &target,
+                    &self.config.context,
+                    executable.chars().count(),
+                );
                 let context = context_capture::captured_context(
                     preceding.as_deref(),
                     &executable,

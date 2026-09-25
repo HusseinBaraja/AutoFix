@@ -64,8 +64,18 @@ pub(super) fn captured_context(
     trim_before_caret(preceding, limits).to_owned()
 }
 
+fn capture_char_limit(limits: &ContextConfig, known_typed_chars: usize) -> i32 {
+    (limits.informative_context_max_chars as usize)
+        .saturating_add(known_typed_chars)
+        .min(i32::MAX as usize) as i32
+}
+
 #[cfg(windows)]
-pub(super) fn read_before_caret(target: &FocusedTarget, limits: &ContextConfig) -> Option<String> {
+pub(super) fn read_before_caret(
+    target: &FocusedTarget,
+    limits: &ContextConfig,
+    known_typed_chars: usize,
+) -> Option<String> {
     use windows::Win32::{
         Foundation::{S_FALSE, S_OK},
         System::Com::{
@@ -121,7 +131,9 @@ pub(super) fn read_before_caret(target: &FocusedTarget, limits: &ContextConfig) 
                 return None;
             }
             let preceding = caret.Clone().ok()?;
-            let max_chars = limits.informative_context_max_chars.min(i32::MAX as u32) as i32;
+            // The stored context is capped separately. Read enough to include
+            // the known typed suffix, otherwise it can crowd the anchor out.
+            let max_chars = capture_char_limit(limits, known_typed_chars);
             preceding
                 .MoveEndpointByUnit(
                     TextPatternRangeEndpoint_Start,
@@ -161,6 +173,7 @@ pub(super) fn read_before_caret(target: &FocusedTarget, limits: &ContextConfig) 
 pub(super) fn read_before_caret(
     _target: &FocusedTarget,
     _limits: &ContextConfig,
+    _known_typed_chars: usize,
 ) -> Option<String> {
     None
 }
@@ -202,5 +215,18 @@ mod tests {
         assert_eq!(captured_context(Some("Old. New"), "New", &limits), " ");
         assert_eq!(captured_context(Some("Old"), "New", &limits), "");
         assert_eq!(captured_context(None, "New", &limits), "");
+    }
+
+    #[test]
+    fn capture_budget_includes_known_typing() {
+        let limits = ContextConfig {
+            informative_context_max_chars: 4,
+            ..ContextConfig::default()
+        };
+        assert_eq!(capture_char_limit(&limits, 5), 9);
+        assert_eq!(
+            captured_context(Some("beforetyped"), "typed", &limits),
+            "before"
+        );
     }
 }
