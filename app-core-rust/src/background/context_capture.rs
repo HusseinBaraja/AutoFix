@@ -73,7 +73,7 @@ pub(super) fn read_before_caret(target: &FocusedTarget, limits: &ContextConfig) 
             COINIT_APARTMENTTHREADED,
         },
         UI::Accessibility::{
-            CUIAutomation, IUIAutomation, IUIAutomationTextPattern, TextPatternRangeEndpoint_End,
+            CUIAutomation, IUIAutomation2, IUIAutomationTextPattern, TextPatternRangeEndpoint_End,
             TextPatternRangeEndpoint_Start, TextUnit_Character, UIA_TextPatternId,
         },
     };
@@ -89,8 +89,12 @@ pub(super) fn read_before_caret(target: &FocusedTarget, limits: &ContextConfig) 
             return None;
         }
         let result = (|| {
-            let automation: IUIAutomation =
+            let automation: IUIAutomation2 =
                 CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            // A provider can be slow or unresponsive. Bound cross-process UIA
+            // calls so context capture cannot hold the input loop indefinitely.
+            automation.SetConnectionTimeout(250).ok()?;
+            automation.SetTransactionTimeout(250).ok()?;
             let element = automation.GetFocusedElement().ok()?;
             if element.CurrentIsPassword().ok()?.as_bool()
                 || element.CurrentIsOffscreen().ok()?.as_bool()
