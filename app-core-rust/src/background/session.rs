@@ -134,10 +134,6 @@ impl Session {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the upcoming correction router")
-    )]
     pub(crate) fn informative_context(&self) -> &str {
         &self.informative_context
     }
@@ -146,10 +142,13 @@ impl Session {
         self.executable.executable_context()
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the upcoming correction router")
-    )]
+    pub(crate) fn editable_context(&self) -> String {
+        self.executable_context()
+            .chars()
+            .skip(self.correction_floor)
+            .collect()
+    }
+
     pub(crate) fn versions(&self) -> ContextVersions {
         self.versions
     }
@@ -648,6 +647,19 @@ impl SessionManager {
         self.active
             .as_ref()
             .and_then(|identity| self.sessions.get(identity))
+    }
+
+    pub(crate) fn active_matches(&self, target: &FocusedTarget) -> bool {
+        self.active.as_ref().is_some_and(|active| {
+            active.process_id == target.process_id
+                && active.key == target.session_key()
+                && active.element_window
+                    == target
+                        .focused_element_id
+                        .as_ref()
+                        .map(|_| target.window_handle)
+                        .filter(|window| *window != 0)
+        })
     }
 
     pub(crate) fn active_mut(&mut self) -> Option<&mut Session> {

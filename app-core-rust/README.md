@@ -34,6 +34,15 @@ boundary (default `.`), up to the previous configured number of words (default
 25), and stops at the start of the text provider's document range. The capture
 reads the informative character cap plus the known typed segment so that new
 typing cannot crowd the anchor out. Stored informative context remains capped.
+
+The trigger manager now builds correction requests for the configured manual
+shortcut, completed word-count thresholds, and configured characters. Each
+request carries read-only informative context and only known executable text
+before the caret. Character triggers scope the request to the latest completed
+segment. A selected suffix is used for manual correction only when UI Automation
+proves it belongs to the typed segment. App rules and the hard security gate are
+checked before routing. The correction router still only logs request metadata;
+it does not yet apply corrections to target text.
 It is never used as a replacement
 target; only newly typed text enters executable context. If the provider cannot
 read before the caret, informative context is empty and typing continues.

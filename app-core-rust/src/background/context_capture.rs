@@ -64,6 +64,19 @@ pub(super) fn captured_context(
     trim_before_caret(preceding, limits).to_owned()
 }
 
+fn selection_belongs_to_executable(
+    informative: &str,
+    executable: &str,
+    selected: &str,
+    preceding: &str,
+) -> bool {
+    let Some(typed_before) = executable.strip_suffix(selected) else {
+        return false;
+    };
+    let expected = format!("{informative}{typed_before}");
+    !selected.is_empty() && !expected.is_empty() && preceding.ends_with(&expected)
+}
+
 fn capture_char_limit(limits: &ContextConfig, known_typed_chars: usize) -> i32 {
     (limits.informative_context_max_chars as usize)
         .saturating_add(known_typed_chars)
@@ -161,6 +174,126 @@ pub(super) fn read_before_caret(
     }
 }
 
+/// Reads a selected suffix only when its preceding text proves that it sits
+/// inside the current typed segment. Never uses selection text as an anchor.
+#[cfg(windows)]
+pub(super) fn read_selected_suffix(
+    target: &FocusedTarget,
+    informative: &str,
+    executable: &str,
+) -> Option<String> {
+    use windows::Win32::{
+        Foundation::{S_FALSE, S_OK},
+        System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED},
+        UI::Accessibility::{
+            IUIAutomationTextPattern, TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start,
+            TextUnit_Character, UIA_TextPatternId,
+        },
+    };
+    if target.correction_eligibility() != CorrectionEligibility::Allowed
+        || super::target::active_window_handle_value() != target.window_handle
+    {
+        return None;
+    }
+    unsafe {
+        let initialization = CoInitializeEx(None, COINIT_MULTITHREADED);
+        if initialization != S_OK && initialization != S_FALSE {
+            return None;
+        }
+        let selected = (|| {
+            let automation = super::target::create_automation().ok()?;
+            let element = automation.GetFocusedElement().ok()?;
+            if element.CurrentIsPassword().ok()?.as_bool()
+                || element.CurrentIsOffscreen().ok()?.as_bool()
+                || !element.CurrentIsEnabled().ok()?.as_bool()
+            {
+                return None;
+            }
+            let pattern: IUIAutomationTextPattern =
+                element.GetCurrentPatternAs(UIA_TextPatternId).ok()?;
+            let selections = pattern.GetSelection().ok()?;
+            if selections.Length().ok()? != 1 {
+                return None;
+            }
+            let selection = selections.GetElement(0).ok()?;
+            if selection
+                .CompareEndpoints(
+                    TextPatternRangeEndpoint_Start,
+                    &selection,
+                    TextPatternRangeEndpoint_End,
+                )
+                .ok()?
+                == 0
+            {
+                return None;
+            }
+            let selected = selection
+                .GetText(
+                    executable
+                        .chars()
+                        .count()
+                        .saturating_add(1)
+                        .min(i32::MAX as usize) as i32,
+                )
+                .ok()?
+                .to_string();
+            if selected.is_empty() || !executable.ends_with(&selected) {
+                return None;
+            }
+            let typed_before = &executable[..executable.len() - selected.len()];
+            let expected = format!("{informative}{typed_before}");
+            let preceding = selection.Clone().ok()?;
+            preceding
+                .MoveEndpointByRange(
+                    TextPatternRangeEndpoint_End,
+                    &selection,
+                    TextPatternRangeEndpoint_Start,
+                )
+                .ok()?;
+            preceding
+                .MoveEndpointByUnit(
+                    TextPatternRangeEndpoint_Start,
+                    TextUnit_Character,
+                    -(expected.chars().count().min(i32::MAX as usize) as i32),
+                )
+                .ok()?;
+            let text = preceding
+                .GetText(expected.chars().count().min(i32::MAX as usize) as i32)
+                .ok()?
+                .to_string();
+            if !selection_belongs_to_executable(informative, executable, &selected, &text) {
+                return None;
+            }
+            let still_focused = automation.GetFocusedElement().ok()?;
+            automation
+                .CompareElements(&element, &still_focused)
+                .ok()?
+                .as_bool()
+                .then_some(selected)
+        })();
+        CoUninitialize();
+        match super::target::detect_focused_target() {
+            TargetDetection::Available(current)
+                if current.process_id == target.process_id
+                    && current.session_key() == target.session_key()
+                    && current.correction_eligibility() == CorrectionEligibility::Allowed =>
+            {
+                selected
+            }
+            _ => None,
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub(super) fn read_selected_suffix(
+    _target: &FocusedTarget,
+    _informative: &str,
+    _executable: &str,
+) -> Option<String> {
+    None
+}
+
 #[cfg(not(windows))]
 pub(super) fn read_before_caret(
     _target: &FocusedTarget,
@@ -220,5 +353,28 @@ mod tests {
             captured_context(Some("beforetyped"), "typed", &limits),
             "before"
         );
+    }
+
+    #[test]
+    fn selected_text_needs_typed_suffix_and_preceding_anchor() {
+        assert!(selection_belongs_to_executable(
+            "old ",
+            "typed text",
+            "text",
+            "old typed "
+        ));
+        assert!(!selection_belongs_to_executable(
+            "old ",
+            "typed text",
+            "text",
+            "foreign typed "
+        ));
+        assert!(!selection_belongs_to_executable(
+            "old ",
+            "typed text",
+            "foreign",
+            "old typed "
+        ));
+        assert!(!selection_belongs_to_executable("", "typed", "typed", ""));
     }
 }

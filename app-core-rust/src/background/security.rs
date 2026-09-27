@@ -7,6 +7,7 @@ use super::target::{self, CorrectionEligibility, FocusedTarget, TargetDetection}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TriggerKind {
+    Tracking,
     ManualShortcut,
     WordCount,
     Character,
@@ -126,6 +127,7 @@ pub(crate) fn check_detection(
 impl TriggerKind {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
+            Self::Tracking => "tracking",
             Self::ManualShortcut => "manual_shortcut",
             Self::WordCount => "word_count",
             Self::Character => "character",
@@ -196,6 +198,11 @@ fn trigger_allowed(rule: &AppRule, trigger: TriggerKind) -> bool {
     }
 
     match trigger {
+        TriggerKind::Tracking => {
+            rule.manual_shortcut_allowed
+                || rule.word_count_trigger_allowed
+                || rule.character_trigger_allowed
+        }
         TriggerKind::ManualShortcut => rule.manual_shortcut_allowed,
         TriggerKind::WordCount => rule.word_count_trigger_allowed,
         TriggerKind::Character => rule.character_trigger_allowed,
