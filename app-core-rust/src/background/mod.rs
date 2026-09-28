@@ -104,6 +104,18 @@ struct InputProcessor {
     database: Database,
 }
 
+struct PendingTrigger {
+    editable_snapshot: String,
+    request: CorrectionRequest,
+}
+
+impl PendingTrigger {
+    /// Reject a request if later input changed its original editable scope.
+    fn matches_session(&self, session: &session::Session) -> bool {
+        self.editable_snapshot == session.editable_context()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum BackgroundError {
     ElevatedProcess,
@@ -523,11 +535,12 @@ impl InputProcessor {
         }
         if let Some(session) = self.session_manager.active() {
             if !session.position_uncertain() {
-                for mut request in pending_requests {
-                    if request.executable_context == session.editable_context() {
+                for mut pending in pending_requests {
+                    if pending.matches_session(session) {
+                        let request = &mut pending.request;
                         request.informative_context = session.informative_context().to_owned();
                         request.versions = session.versions();
-                        self.dispatch_trigger(request);
+                        self.dispatch_trigger(pending.request);
                     }
                 }
             }
@@ -606,10 +619,11 @@ impl InputProcessor {
         }
     }
 
+    /// Update the typed session and retain trigger requests with their full scope.
     fn track_input(
         &mut self,
         input: typing::TypedInput,
-        pending: &mut Vec<CorrectionRequest>,
+        pending: &mut Vec<PendingTrigger>,
     ) -> bool {
         let before = self
             .session_manager
@@ -624,21 +638,26 @@ impl InputProcessor {
             (before, inserted, self.session_manager.active())
         {
             if !session.position_uncertain() {
+                let editable_snapshot = session.editable_context();
                 if let Some(request) = triggers::automatic(
                     &before,
-                    &session.editable_context(),
+                    &editable_snapshot,
                     &inserted,
                     session.informative_context(),
                     session.versions(),
                     &self.config,
                 ) {
-                    pending.push(request);
+                    pending.push(PendingTrigger {
+                        editable_snapshot,
+                        request,
+                    });
                 }
             }
         }
         needs_capture
     }
 
+    /// Recheck the focused target and trigger permission before routing.
     fn dispatch_trigger(&self, request: CorrectionRequest) {
         if let SecurityDecision::Allowed { target } =
             SecurityGate::check(request.trigger, &self.config, &self.database)

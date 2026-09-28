@@ -142,6 +142,7 @@ impl Session {
         self.executable.executable_context()
     }
 
+    /// Return only the known typed prefix before the caret.
     pub(crate) fn editable_context(&self) -> String {
         self.executable_context()
             .chars()
@@ -376,6 +377,7 @@ impl Session {
         self.shrink_informative(limits);
     }
 
+    /// Bound read-only context in memory after an append or commit.
     fn shrink_informative(&mut self, limits: &ContextConfig) {
         if super::informative_context::shrink(&mut self.informative_context, limits) {
             self.correction_undo_history.clear();
@@ -707,6 +709,7 @@ impl SessionManager {
             .and_then(|identity| self.sessions.get(identity))
     }
 
+    /// Check that the target still owns the active typed session.
     pub(crate) fn active_matches(&self, target: &FocusedTarget) -> bool {
         self.active.as_ref().is_some_and(|active| {
             active.process_id == target.process_id
@@ -791,6 +794,7 @@ mod tests {
         }
     }
 
+    /// Build bounded informative-context settings for session tests.
     fn shrinking_limits(max_chars: u32, min_words: u16) -> ContextConfig {
         ContextConfig {
             informative_context_max_chars: max_chars,
@@ -799,6 +803,7 @@ mod tests {
         }
     }
 
+    /// Committing a correction trims only the read-only context in memory.
     #[test]
     fn correction_commit_shrinks_only_informative_memory() {
         let limits = shrinking_limits(24, 3);
@@ -816,6 +821,7 @@ mod tests {
         assert_eq!(session.executable_context(), "");
     }
 
+    /// Unchanged and final-fix commits obey the same context budget.
     #[test]
     fn no_change_and_final_fix_commits_shrink_informative_memory() {
         let limits = shrinking_limits(24, 3);
@@ -843,6 +849,7 @@ mod tests {
         assert_eq!(session.executable_context(), "");
     }
 
+    /// Skipped text from a short forward move also follows the context cap.
     #[test]
     fn forward_context_extension_shrinks_informative_memory() {
         let limits = shrinking_limits(24, 3);
@@ -1299,6 +1306,7 @@ mod tests {
         assert_eq!(session.executable_context(), " next");
     }
 
+    /// A selected edit enters history only after successful replacement.
     #[test]
     fn selected_correction_commits_only_after_success_and_records_undo() {
         let limits = ContextConfig::default();

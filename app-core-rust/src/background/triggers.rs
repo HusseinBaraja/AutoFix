@@ -14,6 +14,7 @@ pub(super) struct CorrectionRequest {
     pub(super) versions: ContextVersions,
 }
 
+/// Build a manual request only when its selected span is authorized.
 pub(super) fn manual(
     informative: &str,
     executable: &str,
@@ -58,6 +59,7 @@ pub(super) fn manual(
     }
 }
 
+/// Scope a configured automatic trigger to known text before the caret.
 pub(super) fn automatic(
     before: &str,
     after: &str,
@@ -113,6 +115,7 @@ pub(super) fn automatic(
     None
 }
 
+/// Reject empty executable spans and initialize common request metadata.
 fn request(
     trigger: TriggerKind,
     informative: &str,
@@ -134,6 +137,7 @@ fn request(
 mod tests {
     use super::*;
 
+    /// Known selections stay bounded; foreign selections need explicit opt-in.
     #[test]
     fn manual_uses_known_selected_suffix_or_prefix() {
         let v = ContextVersions::default();
@@ -166,6 +170,7 @@ mod tests {
         assert!(manual("old", "", v, &SelectionCapture::NoSelection, false).is_none());
     }
 
+    /// Word thresholds and punctuation use their configured request scopes.
     #[test]
     fn automatic_uses_configured_threshold_and_completed_segment() {
         let mut config = AppConfig::default();
@@ -188,6 +193,7 @@ mod tests {
         assert!(automatic("One", "One.", ".", "", v, &config).is_none());
     }
 
+    /// Character triggers exclude known text after the caret.
     #[test]
     fn configurable_character_and_caret_prefix_exclude_known_suffix() {
         use crate::background::{

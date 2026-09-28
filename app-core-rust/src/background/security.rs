@@ -198,11 +198,8 @@ fn trigger_allowed(rule: &AppRule, trigger: TriggerKind) -> bool {
     }
 
     match trigger {
-        TriggerKind::Tracking => {
-            rule.manual_shortcut_allowed
-                || rule.word_count_trigger_allowed
-                || rule.character_trigger_allowed
-        }
+        // Manual invocation does not authorize continuous typed-input capture.
+        TriggerKind::Tracking => rule.word_count_trigger_allowed || rule.character_trigger_allowed,
         TriggerKind::ManualShortcut => rule.manual_shortcut_allowed,
         TriggerKind::WordCount => rule.word_count_trigger_allowed,
         TriggerKind::Character => rule.character_trigger_allowed,
@@ -593,6 +590,37 @@ mod tests {
                 TargetDetection::Available(target("cmd.exe"))
             ),
             SecurityDecision::Allowed { .. }
+        ));
+    }
+
+    /// Manual permission alone never enables continuous input capture.
+    #[test]
+    fn manual_only_rule_does_not_allow_continuous_tracking() {
+        let mut rule = allow_rule("notepad.exe");
+        rule.word_count_trigger_allowed = false;
+        rule.character_trigger_allowed = false;
+        let detection = || TargetDetection::Available(target("notepad.exe"));
+
+        assert!(matches!(
+            check_detection(
+                TriggerKind::ManualShortcut,
+                &AppConfig::default(),
+                std::slice::from_ref(&rule),
+                detection()
+            ),
+            SecurityDecision::Allowed { .. }
+        ));
+        assert!(matches!(
+            check_detection(
+                TriggerKind::Tracking,
+                &AppConfig::default(),
+                &[rule],
+                detection()
+            ),
+            SecurityDecision::Blocked {
+                reason: BlockReason::AppRuleBlocked,
+                ..
+            }
         ));
     }
 

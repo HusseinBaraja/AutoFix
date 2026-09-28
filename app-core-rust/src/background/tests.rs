@@ -85,6 +85,47 @@ fn delayed_key_from_previous_focus_cannot_enter_session() {
     assert!(processor.session_manager.active().is_none());
 }
 
+/// A later punctuation request keeps its full editable snapshot for validation.
+#[test]
+fn later_character_trigger_keeps_full_editable_snapshot() {
+    let config = AppConfig::default();
+    let mut processor = super::InputProcessor {
+        session_manager: super::SessionManager::new(config.context.clone()),
+        config,
+        database: crate::storage::Database::open_memory().unwrap(),
+    };
+    let target = super::target::FocusedTarget {
+        process_id: 1,
+        process_name: "notepad.exe".into(),
+        window_handle: 1,
+        window_title: "Notes".into(),
+        focused_element_id: None,
+        is_elevated: false,
+        is_password_or_protected: false,
+        is_hidden_or_unavailable: false,
+        field_safety_known: true,
+        is_secure_desktop: false,
+        is_lock_screen: false,
+        is_credential_dialog: false,
+    };
+    processor.session_manager.focus(&target);
+    processor
+        .session_manager
+        .input(super::typing::TypedInput::Text("First. Next".into()));
+    let mut pending = Vec::new();
+    processor.track_input(super::typing::TypedInput::Text(".".into()), &mut pending);
+
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].request.executable_context, " Next.");
+    assert_eq!(pending[0].editable_snapshot, "First. Next.");
+    assert!(pending[0].matches_session(processor.session_manager.active().unwrap()));
+
+    processor
+        .session_manager
+        .input(super::typing::TypedInput::Text(" More".into()));
+    assert!(!pending[0].matches_session(processor.session_manager.active().unwrap()));
+}
+
 #[test]
 fn slow_input_worker_discards_stale_batches_at_queue_limit() {
     let worker = super::InputWorker::start(

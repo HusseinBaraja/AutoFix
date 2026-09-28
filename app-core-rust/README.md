@@ -47,10 +47,14 @@ off by default; when enabled, a selected span outside the typed segment becomes
 temporary executable context for that request, while text before and after it
 stays informative. The session has a completion path to commit corrected selected
 text into informative context and record undo after target replacement succeeds.
-App rules and the hard security gate are checked before routing. The correction
-router still only logs request metadata; it does not yet apply corrections to
-target text or call the completion path. If the provider cannot read before the
-caret, informative context is empty and typing continues. Protected fields and
+App rules and the hard security gate are checked before routing. A matching app
+rule permits typed-input tracking only when it allows a word-count or character
+trigger. Manual-shortcut permission alone does not enable continuous capture.
+Manual-only rules can still use the opt-in arbitrary-selection shortcut path.
+The correction router still only logs request metadata; it does not yet apply
+corrections to target text or call the completion path. If the provider cannot
+read before the caret, informative context is empty and typing continues.
+Protected fields and
 unavailable targets are never read. Paste and
 other input that cannot be mapped safely invalidate the known position rather
 than importing document text. IME composition is not yet supported.

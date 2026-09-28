@@ -11,6 +11,7 @@ pub(super) fn shrink(text: &mut String, limits: &ContextConfig) -> bool {
     true
 }
 
+/// Find a boundary that satisfies the character cap and recent-word floor.
 fn shrink_cutoff(text: &str, limits: &ContextConfig) -> Option<usize> {
     let character_count = text.chars().count();
     let excess = character_count.saturating_sub(limits.informative_context_max_chars as usize);
@@ -44,6 +45,7 @@ fn shrink_cutoff(text: &str, limits: &ContextConfig) -> Option<usize> {
     (cutoff > 0).then_some(cutoff)
 }
 
+/// Return the byte offset of the oldest word in the preserved suffix.
 fn minimum_word_start(text: &str, minimum_words: usize) -> Option<usize> {
     if minimum_words == 0 {
         return Some(text.len());
@@ -75,6 +77,7 @@ fn minimum_word_start(text: &str, minimum_words: usize) -> Option<usize> {
 mod tests {
     use super::*;
 
+    /// Build limits with the sentence boundaries used by these tests.
     fn limits(max_chars: u32, min_words: u16) -> ContextConfig {
         ContextConfig {
             informative_context_max_chars: max_chars,
@@ -83,6 +86,7 @@ mod tests {
         }
     }
 
+    /// A complete sentence boundary takes priority over a raw character cut.
     #[test]
     fn prefers_sentence_boundaries() {
         let mut text = "Discard this sentence. Keep these three words".to_owned();
@@ -92,6 +96,7 @@ mod tests {
         assert_eq!(text, " Keep these three words");
     }
 
+    /// Keep recent whole words when they fit inside the hard cap.
     #[test]
     fn preserves_word_floor_when_it_fits() {
         let mut text = "zero one two three four".to_owned();
@@ -102,6 +107,7 @@ mod tests {
         assert!(text.split_whitespace().count() >= 4);
     }
 
+    /// The character cap wins when the requested word floor cannot fit.
     #[test]
     fn keeps_hard_budget_when_word_floor_cannot_fit() {
         let mut text = "alpha beta gamma".to_owned();
@@ -112,6 +118,7 @@ mod tests {
         assert_eq!(text.chars().count(), 10);
     }
 
+    /// Trimming follows character boundaries and never splits a code point.
     #[test]
     fn is_unicode_safe() {
         let mut text = "old. café 世界".to_owned();

@@ -64,6 +64,7 @@ pub(super) fn captured_context(
     trim_before_caret(preceding, limits).to_owned()
 }
 
+/// Locate the selected span within text proved to be typed in this session.
 fn selected_executable_prefix<'a>(
     informative: &str,
     executable: &'a str,
@@ -355,6 +356,7 @@ pub(super) fn read_selection(
     }
 }
 
+/// Selection capture is unavailable outside the Windows runtime.
 #[cfg(not(windows))]
 pub(super) fn read_selection(
     _target: &FocusedTarget,
@@ -426,6 +428,7 @@ mod tests {
         );
     }
 
+    /// Matching selected text without its surrounding anchor is insufficient.
     #[test]
     fn selected_text_needs_surrounding_anchor_in_executable() {
         assert_eq!(

@@ -45,6 +45,7 @@ impl NamedPipeIpcServer {
 }
 
 impl CorrectionEngineRouter {
+    /// Record request metadata while the correction engine is still a placeholder.
     pub(crate) fn submit(request: CorrectionRequest) {
         tracing::info!(
             trigger = request.trigger.as_str(),

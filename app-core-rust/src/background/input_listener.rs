@@ -37,6 +37,7 @@ pub(crate) struct KeyStroke {
 }
 
 impl KeyStroke {
+    /// Match a configured shortcut without treating it as typed text.
     pub(crate) fn matches_shortcut(&self, value: &str) -> bool {
         use crate::settings::{Shortcut, ShortcutKey};
         let Ok(shortcut) = Shortcut::parse(value) else {
@@ -80,6 +81,7 @@ pub(crate) fn stale_key_for_test() -> KeyStroke {
 mod shortcut_tests {
     use super::*;
 
+    /// A correction hotkey must leave the current typed segment intact.
     #[test]
     fn configured_shortcut_does_not_invalidate_typed_session() {
         let mut key = stale_key_for_test();
