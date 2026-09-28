@@ -37,16 +37,21 @@ typing cannot crowd the anchor out. Stored informative context remains capped.
 
 The trigger manager now builds correction requests for the configured manual
 shortcut, completed word-count thresholds, and configured characters. Each
-request carries read-only informative context and only known executable text
-before the caret. Character triggers scope the request to the latest completed
-segment. A selected suffix is used for manual correction only when UI Automation
-proves it belongs to the typed segment. App rules and the hard security gate are
-checked before routing. The correction router still only logs request metadata;
-it does not yet apply corrections to target text.
-It is never used as a replacement
-target; only newly typed text enters executable context. If the provider cannot
-read before the caret, informative context is empty and typing continues.
-Selections, protected fields, and unavailable targets are never read. Paste and
+request carries read-only informative context and known executable text before
+the caret, except for the explicit selected-text option below. Character triggers
+scope the request to the latest completed segment. The manual shortcut accepts
+a selected span when UI Automation proves it belongs to the typed segment.
+An outside or unreadable selection blocks
+the shortcut by default. The `shortcuts.correct_arbitrary_selection` setting is
+off by default; when enabled, a selected span outside the typed segment becomes
+temporary executable context for that request, while text before and after it
+stays informative. The session has a completion path to commit corrected selected
+text into informative context and record undo after target replacement succeeds.
+App rules and the hard security gate are checked before routing. The correction
+router still only logs request metadata; it does not yet apply corrections to
+target text or call the completion path. If the provider cannot read before the
+caret, informative context is empty and typing continues. Protected fields and
+unavailable targets are never read. Paste and
 other input that cannot be mapped safely invalidate the known position rather
 than importing document text. IME composition is not yet supported.
 

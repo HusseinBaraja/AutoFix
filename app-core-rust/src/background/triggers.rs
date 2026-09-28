@@ -1,6 +1,6 @@
 //! Selects correction work from text known to have been typed in this run.
 
-use super::{security::TriggerKind, session::ContextVersions};
+use super::{context_capture::SelectionCapture, security::TriggerKind, session::ContextVersions};
 use crate::settings::AppConfig;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8,6 +8,9 @@ pub(super) struct CorrectionRequest {
     pub(super) trigger: TriggerKind,
     pub(super) informative_context: String,
     pub(super) executable_context: String,
+    pub(super) following_context: String,
+    pub(super) selected_text: bool,
+    pub(super) temporary_selection: bool,
     pub(super) versions: ContextVersions,
 }
 
@@ -15,14 +18,44 @@ pub(super) fn manual(
     informative: &str,
     executable: &str,
     versions: ContextVersions,
-    selected: Option<&str>,
+    selection: &SelectionCapture,
+    allow_arbitrary_selection: bool,
 ) -> Option<CorrectionRequest> {
-    // A selection is executable only when it is a known suffix ending at the
-    // tracked caret. A foreign or unverified selection falls back to the prefix.
-    let scope = selected
-        .filter(|text| !text.is_empty() && executable.ends_with(text))
-        .unwrap_or(executable);
-    request(TriggerKind::ManualShortcut, informative, scope, versions)
+    match selection {
+        SelectionCapture::NoSelection => request(
+            TriggerKind::ManualShortcut,
+            informative,
+            executable,
+            versions,
+        ),
+        SelectionCapture::Selected {
+            text,
+            preceding,
+            following,
+            executable_prefix: Some(typed_before),
+        } => {
+            let context = format!("{informative}{typed_before}");
+            let mut request = request(TriggerKind::ManualShortcut, &context, text, versions)?;
+            request.following_context = following.clone();
+            request.selected_text = true;
+            // The live capture is the proof of position; it is never editable.
+            debug_assert!(preceding.ends_with(&context));
+            Some(request)
+        }
+        SelectionCapture::Selected {
+            text,
+            preceding,
+            following,
+            executable_prefix: None,
+        } if allow_arbitrary_selection => {
+            let mut request = request(TriggerKind::ManualShortcut, preceding, text, versions)?;
+            request.following_context = following.clone();
+            request.selected_text = true;
+            request.temporary_selection = true;
+            Some(request)
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn automatic(
@@ -90,6 +123,9 @@ fn request(
         trigger,
         informative_context: informative.to_owned(),
         executable_context: executable.to_owned(),
+        following_context: String::new(),
+        selected_text: false,
+        temporary_selection: false,
         versions,
     })
 }
@@ -101,19 +137,33 @@ mod tests {
     #[test]
     fn manual_uses_known_selected_suffix_or_prefix() {
         let v = ContextVersions::default();
-        assert_eq!(
-            manual("old", "typed text", v, Some("text"))
-                .unwrap()
-                .executable_context,
-            "text"
-        );
-        assert_eq!(
-            manual("old", "typed text", v, Some("foreign"))
-                .unwrap()
-                .executable_context,
-            "typed text"
-        );
-        assert!(manual("old", "", v, None).is_none());
+        let known = SelectionCapture::Selected {
+            text: "ped".into(),
+            preceding: "oldty".into(),
+            following: " text later".into(),
+            executable_prefix: Some("ty".into()),
+        };
+        let within = manual("old", "typed text", v, &known, false).unwrap();
+        assert_eq!(within.executable_context, "ped");
+        assert_eq!(within.informative_context, "oldty");
+        assert_eq!(within.following_context, " text later");
+        assert!(within.selected_text);
+        assert!(!within.temporary_selection);
+        let foreign = SelectionCapture::Selected {
+            text: "foreign".into(),
+            preceding: "elsewhere ".into(),
+            following: " later".into(),
+            executable_prefix: None,
+        };
+        assert!(manual("old", "typed text", v, &foreign, false).is_none());
+        let arbitrary = manual("old", "typed text", v, &foreign, true).unwrap();
+        assert_eq!(arbitrary.executable_context, "foreign");
+        assert_eq!(arbitrary.informative_context, "elsewhere ");
+        assert_eq!(arbitrary.following_context, " later");
+        assert!(arbitrary.selected_text);
+        assert!(arbitrary.temporary_selection);
+        assert!(manual("old", "typed text", v, &SelectionCapture::Unavailable, true).is_none());
+        assert!(manual("old", "", v, &SelectionCapture::NoSelection, false).is_none());
     }
 
     #[test]

@@ -16,7 +16,19 @@ public sealed class ConfigStorageTests
         var text = File.ReadAllText(fixture.Path);
         Assert.IsTrue(text.Contains("[general]"));
         Assert.IsTrue(text.Contains("start_with_windows = false"));
+        Assert.IsTrue(text.Contains("correct_arbitrary_selection = false"));
         Assert.IsFalse(text.Contains("api_key"));
+    }
+
+    [TestMethod]
+    public void ArbitrarySelectionSettingRoundTrips()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var config = AppConfig.Default();
+        config.Shortcuts.CorrectArbitrarySelection = true;
+        fixture.Storage.Save(config);
+
+        Assert.IsTrue(fixture.Storage.Load(fixture.Path).Shortcuts.CorrectArbitrarySelection);
     }
 
     [TestMethod]
@@ -88,6 +100,7 @@ public sealed class ConfigStorageTests
         Assert.AreEqual(12, config.Triggers.WordCount);
         Assert.IsFalse(config.Onboarding.Completed);
         Assert.IsTrue(config.Correction.Enabled);
+        Assert.IsFalse(config.Shortcuts.CorrectArbitrarySelection);
     }
 
     [TestMethod]

@@ -48,6 +48,7 @@ public static class SettingsSkeleton
         [
             Hotkey("Correction shortcut", "Manual correction shortcut.", "shortcuts.correct", config.Shortcuts.Correct, DefaultShortcuts.Correct),
             Hotkey("Undo shortcut", "App-level undo shortcut.", "shortcuts.undo", config.Shortcuts.Undo, DefaultShortcuts.Undo),
+            Toggle("Correct arbitrary selection", "Allow the manual shortcut to correct selected text outside text typed in this session.", "shortcuts.correct_arbitrary_selection", config.Shortcuts.CorrectArbitrarySelection),
         ]),
         Section("Triggers", "Word-count and character-triggered correction",
         [

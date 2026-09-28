@@ -64,18 +64,48 @@ pub(super) fn captured_context(
     trim_before_caret(preceding, limits).to_owned()
 }
 
-fn selection_belongs_to_executable(
+fn selected_executable_prefix<'a>(
     informative: &str,
-    executable: &str,
+    executable: &'a str,
     selected: &str,
     preceding: &str,
-) -> bool {
-    let Some(typed_before) = executable.strip_suffix(selected) else {
-        return false;
-    };
-    let expected = format!("{informative}{typed_before}");
-    !selected.is_empty() && !expected.is_empty() && preceding.ends_with(&expected)
+    following: &str,
+    selection_at_document_start: bool,
+) -> Option<&'a str> {
+    if selected.is_empty() {
+        return None;
+    }
+    let mut found = None;
+    for (index, _) in executable.match_indices(selected) {
+        let before = &executable[..index];
+        let after = &executable[index + selected.len()..];
+        let expected = format!("{informative}{before}");
+        let anchored = if expected.is_empty() {
+            selection_at_document_start && preceding.is_empty()
+        } else {
+            preceding.ends_with(&expected)
+        };
+        if anchored && following.starts_with(after) {
+            if found.replace(before).is_some() {
+                return None;
+            }
+        }
+    }
+    found
 }
+
+pub(super) enum SelectionCapture {
+    NoSelection,
+    Selected {
+        text: String,
+        preceding: String,
+        following: String,
+        executable_prefix: Option<String>,
+    },
+    Unavailable,
+}
+
+const MAX_SELECTED_CHARS: i32 = 4096;
 
 fn capture_char_limit(limits: &ContextConfig, known_typed_chars: usize) -> i32 {
     (limits.informative_context_max_chars as usize)
@@ -174,14 +204,16 @@ pub(super) fn read_before_caret(
     }
 }
 
-/// Reads a selected suffix only when its preceding text proves that it sits
-/// inside the current typed segment. Never uses selection text as an anchor.
+/// Reads a selection without treating its contents as proof of ownership.
+/// A selected span is trusted only when surrounding text anchors it to the
+/// current typed segment. Other selections stay separate from that segment.
 #[cfg(windows)]
-pub(super) fn read_selected_suffix(
+pub(super) fn read_selection(
     target: &FocusedTarget,
     informative: &str,
     executable: &str,
-) -> Option<String> {
+    limits: &ContextConfig,
+) -> SelectionCapture {
     use windows::Win32::{
         Foundation::{S_FALSE, S_OK},
         System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED},
@@ -193,12 +225,12 @@ pub(super) fn read_selected_suffix(
     if target.correction_eligibility() != CorrectionEligibility::Allowed
         || super::target::active_window_handle_value() != target.window_handle
     {
-        return None;
+        return SelectionCapture::Unavailable;
     }
     unsafe {
         let initialization = CoInitializeEx(None, COINIT_MULTITHREADED);
         if initialization != S_OK && initialization != S_FALSE {
-            return None;
+            return SelectionCapture::Unavailable;
         }
         let selected = (|| {
             let automation = super::target::create_automation().ok()?;
@@ -225,23 +257,37 @@ pub(super) fn read_selected_suffix(
                 .ok()?
                 == 0
             {
+                return Some(SelectionCapture::NoSelection);
+            }
+            let selected = selection.GetText(MAX_SELECTED_CHARS + 1).ok()?.to_string();
+            if selected.is_empty() || selected.chars().count() > MAX_SELECTED_CHARS as usize {
                 return None;
             }
-            let selected = selection
-                .GetText(
-                    executable
+            let selection_at_document_start =
+                pattern.DocumentRange().ok().is_some_and(|document| {
+                    selection
+                        .CompareEndpoints(
+                            TextPatternRangeEndpoint_Start,
+                            &document,
+                            TextPatternRangeEndpoint_Start,
+                        )
+                        .ok()
+                        == Some(0)
+                });
+            let preceding_budget = limits
+                .informative_context_max_chars
+                .max(
+                    informative
                         .chars()
                         .count()
-                        .saturating_add(1)
-                        .min(i32::MAX as usize) as i32,
+                        .saturating_add(executable.chars().count())
+                        .min(i32::MAX as usize) as u32,
                 )
-                .ok()?
-                .to_string();
-            if selected.is_empty() || !executable.ends_with(&selected) {
-                return None;
-            }
-            let typed_before = &executable[..executable.len() - selected.len()];
-            let expected = format!("{informative}{typed_before}");
+                .min(i32::MAX as u32) as i32;
+            let following_budget = limits
+                .informative_context_max_chars
+                .max(executable.chars().count().min(i32::MAX as usize) as u32)
+                .min(i32::MAX as u32) as i32;
             let preceding = selection.Clone().ok()?;
             preceding
                 .MoveEndpointByRange(
@@ -254,22 +300,46 @@ pub(super) fn read_selected_suffix(
                 .MoveEndpointByUnit(
                     TextPatternRangeEndpoint_Start,
                     TextUnit_Character,
-                    -(expected.chars().count().min(i32::MAX as usize) as i32),
+                    -preceding_budget,
                 )
                 .ok()?;
-            let text = preceding
-                .GetText(expected.chars().count().min(i32::MAX as usize) as i32)
-                .ok()?
-                .to_string();
-            if !selection_belongs_to_executable(informative, executable, &selected, &text) {
-                return None;
-            }
+            let text = preceding.GetText(preceding_budget).ok()?.to_string();
+            let following = selection.Clone().ok()?;
+            following
+                .MoveEndpointByRange(
+                    TextPatternRangeEndpoint_Start,
+                    &selection,
+                    TextPatternRangeEndpoint_End,
+                )
+                .ok()?;
+            following
+                .MoveEndpointByUnit(
+                    TextPatternRangeEndpoint_End,
+                    TextUnit_Character,
+                    following_budget,
+                )
+                .ok()?;
+            let following = following.GetText(following_budget).ok()?.to_string();
+            let executable_prefix = selected_executable_prefix(
+                informative,
+                executable,
+                &selected,
+                &text,
+                &following,
+                selection_at_document_start,
+            )
+            .map(str::to_owned);
             let still_focused = automation.GetFocusedElement().ok()?;
             automation
                 .CompareElements(&element, &still_focused)
                 .ok()?
                 .as_bool()
-                .then_some(selected)
+                .then_some(SelectionCapture::Selected {
+                    text: selected,
+                    preceding: text,
+                    following,
+                    executable_prefix,
+                })
         })();
         CoUninitialize();
         match super::target::detect_focused_target() {
@@ -278,20 +348,21 @@ pub(super) fn read_selected_suffix(
                     && current.session_key() == target.session_key()
                     && current.correction_eligibility() == CorrectionEligibility::Allowed =>
             {
-                selected
+                selected.unwrap_or(SelectionCapture::Unavailable)
             }
-            _ => None,
+            _ => SelectionCapture::Unavailable,
         }
     }
 }
 
 #[cfg(not(windows))]
-pub(super) fn read_selected_suffix(
+pub(super) fn read_selection(
     _target: &FocusedTarget,
     _informative: &str,
     _executable: &str,
-) -> Option<String> {
-    None
+    _limits: &ContextConfig,
+) -> SelectionCapture {
+    SelectionCapture::Unavailable
 }
 
 #[cfg(not(windows))]
@@ -356,25 +427,30 @@ mod tests {
     }
 
     #[test]
-    fn selected_text_needs_typed_suffix_and_preceding_anchor() {
-        assert!(selection_belongs_to_executable(
-            "old ",
-            "typed text",
-            "text",
-            "old typed "
-        ));
-        assert!(!selection_belongs_to_executable(
-            "old ",
-            "typed text",
-            "text",
-            "foreign typed "
-        ));
-        assert!(!selection_belongs_to_executable(
-            "old ",
-            "typed text",
-            "foreign",
-            "old typed "
-        ));
-        assert!(!selection_belongs_to_executable("", "typed", "typed", ""));
+    fn selected_text_needs_surrounding_anchor_in_executable() {
+        assert_eq!(
+            selected_executable_prefix("old ", "typed text", "text", "old typed ", "", false),
+            Some("typed ")
+        );
+        assert_eq!(
+            selected_executable_prefix("old ", "typed text", "ped", "old ty", " text", false),
+            Some("ty")
+        );
+        assert_eq!(
+            selected_executable_prefix("old ", "typed text", "text", "foreign typed ", "", false),
+            None
+        );
+        assert_eq!(
+            selected_executable_prefix("old ", "typed text", "foreign", "old typed ", "", false),
+            None
+        );
+        assert_eq!(
+            selected_executable_prefix("", "typed", "typed", "", "", false),
+            None
+        );
+        assert_eq!(
+            selected_executable_prefix("", "typed", "typed", "", "", true),
+            Some("")
+        );
     }
 }

@@ -12,6 +12,7 @@ public sealed class ConfigFormMapperTests
         var sections = SettingsSkeleton.CreateSections();
         Card(sections, "general.run_mode").SelectedValue = "allowlist";
         Card(sections, "shortcuts.correct").Hotkey = "Ctrl+Shift+Space";
+        Card(sections, "shortcuts.correct_arbitrary_selection").IsEnabled = true;
         Card(sections, "triggers.characters").TextValue = "., ?, !";
         Card(sections, "api.timeout_auto_ms").TextValue = "900";
         Card(sections, "feedback.show_timeout_notice").IsEnabled = false;
@@ -20,6 +21,7 @@ public sealed class ConfigFormMapperTests
 
         Assert.AreEqual("allowlist", config.General.RunMode);
         Assert.AreEqual("Ctrl+Shift+Space", config.Shortcuts.Correct);
+        Assert.IsTrue(config.Shortcuts.CorrectArbitrarySelection);
         CollectionAssert.AreEqual(new[] { ".", "?", "!" }, config.Triggers.Characters);
         Assert.AreEqual(900, config.Api.TimeoutAutoMs);
         Assert.IsFalse(config.Feedback.ShowTimeoutNotice);

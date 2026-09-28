@@ -15,6 +15,7 @@ fn default_config_has_requested_values() {
     assert_eq!(config.general.run_mode, RunMode::Blocklist);
     assert_eq!(config.shortcuts.correct, "Ctrl+Alt+Space");
     assert_eq!(config.shortcuts.undo, "Ctrl+Alt+Z");
+    assert!(!config.shortcuts.correct_arbitrary_selection);
     assert_eq!(config.triggers.word_count, 10);
     assert_eq!(config.triggers.characters, vec!["."]);
     assert_eq!(config.context.initial_context_words, 25);
@@ -53,8 +54,29 @@ fn generated_toml_has_comments_and_no_api_key_field() {
 
     assert!(output.contains("# AutoFix user configuration."));
     assert!(output.contains("[general]"));
+    assert!(output.contains("correct_arbitrary_selection = false"));
     assert!(output.contains("[api]"));
     assert!(!output.to_lowercase().contains("api_key"));
+}
+
+#[test]
+fn arbitrary_selection_setting_round_trips_and_legacy_config_stays_strict() {
+    let mut config = AppConfig::default();
+    config.shortcuts.correct_arbitrary_selection = true;
+    let encoded = config_to_toml(&config).unwrap();
+    assert!(
+        super::toml_io::parse_config(&encoded)
+            .unwrap()
+            .shortcuts
+            .correct_arbitrary_selection
+    );
+    let legacy = encoded.replace("correct_arbitrary_selection = true\n", "");
+    assert!(
+        !super::toml_io::parse_config(&legacy)
+            .unwrap()
+            .shortcuts
+            .correct_arbitrary_selection
+    );
 }
 
 #[test]

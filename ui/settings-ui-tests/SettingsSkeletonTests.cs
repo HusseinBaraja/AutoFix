@@ -45,6 +45,7 @@ public sealed class SettingsSkeletonTests
                 "general.run_mode",
                 "shortcuts.correct",
                 "shortcuts.undo",
+                "shortcuts.correct_arbitrary_selection",
                 "triggers.word_count_enabled",
                 "triggers.word_count",
                 "triggers.character_trigger_enabled",

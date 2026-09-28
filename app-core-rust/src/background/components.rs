@@ -50,6 +50,9 @@ impl CorrectionEngineRouter {
             trigger = request.trigger.as_str(),
             executable_chars = request.executable_context.chars().count(),
             informative_chars = request.informative_context.chars().count(),
+            following_chars = request.following_context.chars().count(),
+            selected_text = request.selected_text,
+            temporary_selection = request.temporary_selection,
             ?request.versions,
             "correction request accepted by placeholder router"
         );

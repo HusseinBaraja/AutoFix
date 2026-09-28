@@ -520,6 +520,64 @@ impl Session {
         true
     }
 
+    /// Record a selected-text replacement after the target confirms it.
+    /// Only the text up to the selection end enters informative context.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "called after the replacement engine is implemented"
+        )
+    )]
+    pub(crate) fn complete_selected_correction(
+        &mut self,
+        original: &str,
+        replacement: &str,
+        preceding: &str,
+        versions: ContextVersions,
+        limits: &ContextConfig,
+    ) -> bool {
+        if original.is_empty() || versions != self.versions {
+            return false;
+        }
+        self.informative_context.clear();
+        self.informative_context.push_str(preceding);
+        self.informative_context.push_str(replacement);
+        self.executable.clear_executable();
+        self.pending_movement = None;
+        self.correction_floor = 0;
+        self.pending_corrections.clear();
+        self.correction_undo_history.clear();
+        self.versions.context = self.versions.context.wrapping_add(1);
+        self.versions.executable = self.versions.executable.wrapping_add(1);
+        self.shrink_informative(limits);
+        if original != replacement {
+            let retained_chars = replacement
+                .chars()
+                .count()
+                .min(self.informative_context.chars().count());
+            let replacement_start = replacement
+                .char_indices()
+                .nth(replacement.chars().count() - retained_chars)
+                .map_or(replacement.len(), |(index, _)| index);
+            let retained = &replacement[replacement_start..];
+            if let Some(informative_start) = self
+                .informative_context
+                .len()
+                .checked_sub(retained.len())
+                .filter(|start| self.informative_context.get(*start..) == Some(retained))
+            {
+                self.correction_undo_history.push(CorrectionUndo {
+                    original: original.to_owned(),
+                    replacement: retained.to_owned(),
+                    informative_start,
+                    caret_anchor: self.versions.caret_anchor,
+                });
+            }
+        }
+        true
+    }
+
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "called after target undo succeeds")
@@ -1238,6 +1296,34 @@ mod tests {
         session.input(TypedInput::Text(" next".into()), &limits);
         assert!(session.undo_last_correction(&limits));
         assert_eq!(session.informative_context(), "old teh");
+        assert_eq!(session.executable_context(), " next");
+    }
+
+    #[test]
+    fn selected_correction_commits_only_after_success_and_records_undo() {
+        let limits = ContextConfig::default();
+        let mut manager = SessionManager::new(limits.clone());
+        manager.focus(&target(1, 10, None));
+        manager.input(TypedInput::Text("stale typing".into()));
+        let session = manager.active_mut().unwrap();
+        let versions = session.versions();
+        assert!(!session.complete_selected_correction(
+            "teh",
+            "the",
+            "earlier ",
+            ContextVersions {
+                context: versions.context + 1,
+                ..versions
+            },
+            &limits,
+        ));
+        assert_eq!(session.executable_context(), "stale typing");
+        assert!(session.complete_selected_correction("teh", "the", "earlier ", versions, &limits));
+        assert_eq!(session.executable_context(), "");
+        assert_eq!(session.informative_context(), "earlier the");
+        session.input(TypedInput::Text(" next".into()), &limits);
+        assert!(session.undo_last_correction(&limits));
+        assert_eq!(session.informative_context(), "earlier teh");
         assert_eq!(session.executable_context(), " next");
     }
 

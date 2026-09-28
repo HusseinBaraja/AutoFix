@@ -552,20 +552,41 @@ impl InputProcessor {
                 if let SecurityDecision::Allowed { target } =
                     SecurityGate::check(TriggerKind::ManualShortcut, &self.config, &self.database)
                 {
+                    if self.config.shortcuts.correct_arbitrary_selection
+                        && !self.session_manager.active_matches(&target)
+                    {
+                        self.session_manager.focus(&target);
+                    }
                     if self.session_manager.active_matches(&target) {
                         if let Some(session) = self.session_manager.active() {
                             let executable = session.editable_context();
-                            let selected = context_capture::read_selected_suffix(
-                                &target,
-                                session.informative_context(),
-                                &executable,
+                            let sequence = input_listener::current_input_sequence();
+                            let selected = capture_if_current(
+                                sequence,
+                                input_listener::current_input_sequence,
+                                || {
+                                    context_capture::read_selection(
+                                        &target,
+                                        session.informative_context(),
+                                        &executable,
+                                        &self.config.context,
+                                    )
+                                },
                             );
-                            if selected.is_some() || !session.position_uncertain() {
+                            if let Some(selected) = selected {
+                                if matches!(
+                                    selected,
+                                    context_capture::SelectionCapture::NoSelection
+                                ) && session.position_uncertain()
+                                {
+                                    return;
+                                }
                                 if let Some(request) = triggers::manual(
                                     session.informative_context(),
                                     &executable,
                                     session.versions(),
-                                    selected.as_deref(),
+                                    &selected,
+                                    self.config.shortcuts.correct_arbitrary_selection,
                                 ) {
                                     self.dispatch_trigger(request);
                                 }

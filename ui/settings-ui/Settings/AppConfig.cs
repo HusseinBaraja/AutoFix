@@ -56,6 +56,9 @@ public sealed class ShortcutsConfig
 
     [JsonPropertyName("undo")]
     public string Undo { get; set; } = "Ctrl+Alt+Z";
+
+    [JsonPropertyName("correct_arbitrary_selection")]
+    public bool CorrectArbitrarySelection { get; set; }
 }
 
 public sealed class TriggersConfig
