@@ -5,6 +5,7 @@
 
 mod contract;
 mod engines;
+mod local_rule;
 
 pub use contract::{
     ConfidenceBehavior, ConfidenceBehaviorSettings, ConfidenceTier, CorrectionChange,

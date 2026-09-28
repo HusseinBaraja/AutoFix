@@ -20,7 +20,13 @@ policy, dictionary and protected terms, trigger, and confidence behavior. Its
 result includes corrected executable text, change need and optional details,
 confidence, no-change reason, latency, and completion/error/timeout status.
 `LocalRuleEngine`, `LocalMlEngine`, `OpenAiCompatibleApiEngine`, and
-`CustomApiEngine` implement the same interface. They are currently placeholders.
+`CustomApiEngine` implement the same interface. `LocalRuleEngine` provides fast,
+deterministic English correction for a conservative list of clear misspellings.
+In grammar mode it also supports enabled capitalization, punctuation, agreement,
+and tense rules; clarity and word-order rules are not implemented. It preserves
+custom-dictionary entries, explicit protected terms, and detectable names,
+emails, URLs, paths, handles, hashtags, code identifiers, and product names.
+The other engines remain placeholders.
 Engine selection is explicit per request; neither local nor API routing depends
 on task difficulty, and both correction modes are accepted by every engine.
 

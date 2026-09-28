@@ -1,3 +1,4 @@
+use super::local_rule;
 use super::{CorrectionInput, CorrectionOutput, EngineFailure, EngineFailureKind, EngineKind};
 
 /// Common interface for local and API-backed correction engines.
@@ -21,6 +22,16 @@ pub struct OpenAiCompatibleApiEngine;
 #[derive(Debug, Default)]
 pub struct CustomApiEngine;
 
+impl CorrectionEngine for LocalRuleEngine {
+    fn kind(&self) -> EngineKind {
+        EngineKind::LocalRule
+    }
+
+    fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {
+        local_rule::correct(input)
+    }
+}
+
 macro_rules! placeholder_engine {
     ($engine:ty, $kind:expr) => {
         impl CorrectionEngine for $engine {
@@ -43,7 +54,6 @@ macro_rules! placeholder_engine {
     };
 }
 
-placeholder_engine!(LocalRuleEngine, EngineKind::LocalRule);
 placeholder_engine!(LocalMlEngine, EngineKind::LocalMl);
 placeholder_engine!(OpenAiCompatibleApiEngine, EngineKind::OpenAiCompatibleApi);
 placeholder_engine!(CustomApiEngine, EngineKind::CustomApi);

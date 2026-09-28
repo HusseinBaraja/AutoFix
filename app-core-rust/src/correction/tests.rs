@@ -28,11 +28,10 @@ fn input(mode: CorrectionMode) -> CorrectionInput {
 }
 
 #[test]
-fn every_engine_accepts_every_correction_mode_without_difficulty_routing() {
+fn placeholder_engines_accept_every_correction_mode_without_difficulty_routing() {
     let engines = CorrectionEngines::default();
 
     for kind in [
-        EngineKind::LocalRule,
         EngineKind::LocalMl,
         EngineKind::OpenAiCompatibleApi,
         EngineKind::CustomApi,
@@ -51,6 +50,18 @@ fn every_engine_accepts_every_correction_mode_without_difficulty_routing() {
                 })
             ));
         }
+    }
+}
+
+#[test]
+fn local_rule_engine_accepts_every_correction_mode() {
+    let engines = CorrectionEngines::default();
+
+    for mode in [CorrectionMode::TyposOnly, CorrectionMode::TyposPlusGrammar] {
+        let output = engines.correct_with(EngineKind::LocalRule, &input(mode));
+        assert_eq!(output.corrected_executable_text, "the text");
+        assert_eq!(output.status, EngineStatus::Completed);
+        assert_eq!(output.confidence, ConfidenceTier::High);
     }
 }
 
