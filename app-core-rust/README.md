@@ -13,6 +13,17 @@ This component owns the installed product's background mode:
 - Replacement engine.
 - App rules and security layer.
 
+The correction engine contract is defined in `src/correction`. It keeps
+read-only informative context separate from editable executable text and carries
+the correction mode, enabled grammar categories, language and mixed-language
+policy, dictionary and protected terms, trigger, and confidence behavior. Its
+result includes corrected executable text, change need and optional details,
+confidence, no-change reason, latency, and completion/error/timeout status.
+`LocalRuleEngine`, `LocalMlEngine`, `OpenAiCompatibleApiEngine`, and
+`CustomApiEngine` implement the same interface. They are currently placeholders.
+Engine selection is explicit per request; neither local nor API routing depends
+on task difficulty, and both correction modes are accepted by every engine.
+
 The keyboard session tracker is implemented. It keeps up to 4,096 characters
 typed during the current engine run in memory and exposes only the known text
 before the caret as executable context. Backspace, Delete, and plain Left/Right

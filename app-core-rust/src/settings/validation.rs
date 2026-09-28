@@ -1,7 +1,9 @@
 use std::{error::Error, fmt};
 
+use crate::correction::{ConfidenceBehavior, CorrectionMode, GrammarCategory};
+
 use super::{
-    model::{ConfidenceBehavior, CorrectionEngine, CorrectionMode, GrammarCategory, RunMode},
+    model::{CorrectionEngine, RunMode},
     AppConfig, Shortcut,
 };
 

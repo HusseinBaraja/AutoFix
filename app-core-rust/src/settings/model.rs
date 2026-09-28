@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::correction::{ConfidenceBehavior, CorrectionMode, GrammarCategory};
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub(crate) struct AppConfig {
     #[serde(default)]
@@ -133,35 +135,9 @@ impl Default for CorrectionConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum CorrectionMode {
-    TyposOnly,
-    TyposPlusGrammar,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub(crate) enum CorrectionEngine {
     Local,
     Api,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ConfidenceBehavior {
-    DoNothing,
-    Suggestion,
-    Silent,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum GrammarCategory {
-    Agreement,
-    Capitalization,
-    Clarity,
-    Punctuation,
-    Tense,
-    WordOrder,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

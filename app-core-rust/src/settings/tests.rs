@@ -1,8 +1,10 @@
 use std::{fs, time::SystemTime};
 
+use crate::correction::{ConfidenceBehavior, CorrectionMode, GrammarCategory};
+
 use super::{
     load_config,
-    model::{ConfidenceBehavior, CorrectionEngine, CorrectionMode, GrammarCategory, RunMode},
+    model::{CorrectionEngine, RunMode},
     save_config,
     toml_io::config_to_toml,
     AppConfig, ValidateConfig,
