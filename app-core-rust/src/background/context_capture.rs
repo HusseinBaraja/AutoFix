@@ -86,10 +86,8 @@ fn selected_executable_prefix<'a>(
         } else {
             preceding.ends_with(&expected)
         };
-        if anchored && following.starts_with(after) {
-            if found.replace(before).is_some() {
-                return None;
-            }
+        if anchored && following.starts_with(after) && found.replace(before).is_some() {
+            return None;
         }
     }
     found
