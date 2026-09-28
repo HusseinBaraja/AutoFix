@@ -2,6 +2,7 @@ mod admin;
 pub(crate) mod app_identity;
 mod components;
 mod context_capture;
+mod informative_context;
 mod input_listener;
 mod message_loop;
 mod paths;
@@ -12,6 +13,7 @@ mod shortcuts;
 mod target;
 #[cfg(test)]
 mod tests;
+mod triggers;
 mod typing;
 
 use std::{
@@ -41,6 +43,7 @@ use self::{
     security::{SecurityDecision, SecurityGate, TriggerKind},
     session::{MovementResolution, SessionManager},
     shortcuts::{GlobalShortcutListener, ShortcutAction},
+    triggers::CorrectionRequest,
     typing::MovementSignal,
 };
 
@@ -99,6 +102,18 @@ struct InputProcessor {
     config: AppConfig,
     session_manager: SessionManager,
     database: Database,
+}
+
+struct PendingTrigger {
+    editable_snapshot: String,
+    request: CorrectionRequest,
+}
+
+impl PendingTrigger {
+    /// Reject a request if later input changed its original editable scope.
+    fn matches_session(&self, session: &session::Session) -> bool {
+        self.editable_snapshot == session.editable_context()
+    }
 }
 
 #[derive(Debug)]
@@ -367,6 +382,7 @@ impl InputWorker {
 
 impl InputProcessor {
     fn process_input(&mut self, events: Vec<InputEvent>) {
+        let mut pending_requests = Vec::new();
         let mut gate_result: Option<(isize, bool)> = None;
         let mut needs_capture = false;
         let mut last_key_generation = None;
@@ -384,6 +400,11 @@ impl InputProcessor {
                         .input(typing::TypedInput::Uncertain(MovementSignal::MouseClick));
                 }
                 InputEvent::Key(key) => {
+                    if key.matches_shortcut(&self.config.shortcuts.correct)
+                        || key.matches_shortcut(&self.config.shortcuts.undo)
+                    {
+                        continue;
+                    }
                     let generation = key.position_generation;
                     if generation != input_listener::current_position_generation() {
                         gate_result = None;
@@ -402,7 +423,8 @@ impl InputProcessor {
                         if checked_window == window {
                             if allowed {
                                 if generation == input_listener::current_position_generation() {
-                                    needs_capture |= self.session_manager.input(key.translate());
+                                    needs_capture |=
+                                        self.track_input(key.translate(), &mut pending_requests);
                                 } else {
                                     self.session_manager.deactivate(MovementSignal::FocusChange);
                                 }
@@ -411,7 +433,7 @@ impl InputProcessor {
                         }
                     }
                     let decision =
-                        SecurityGate::check(TriggerKind::Character, &self.config, &self.database);
+                        SecurityGate::check(TriggerKind::Tracking, &self.config, &self.database);
                     if generation != input_listener::current_position_generation() {
                         gate_result = None;
                         self.session_manager.deactivate(MovementSignal::FocusChange);
@@ -421,7 +443,8 @@ impl InputProcessor {
                         SecurityDecision::Allowed { target } if target.window_handle == window => {
                             needs_capture |= self.session_manager.focus(&target);
                             gate_result = Some((window, true));
-                            needs_capture |= self.session_manager.input(key.translate());
+                            needs_capture |=
+                                self.track_input(key.translate(), &mut pending_requests);
                         }
                         _ => {
                             gate_result = Some((window, false));
@@ -441,7 +464,7 @@ impl InputProcessor {
             last_key_sequence.unwrap_or_else(input_listener::current_input_sequence);
         if self.session_manager.needs_movement_resolution() {
             if let SecurityDecision::Allowed { target } =
-                SecurityGate::check(TriggerKind::Character, &self.config, &self.database)
+                SecurityGate::check(TriggerKind::Tracking, &self.config, &self.database)
             {
                 self.session_manager.focus(&target);
                 if let Some(preceding) = capture_if_current(
@@ -477,7 +500,7 @@ impl InputProcessor {
                 .is_some_and(|session| session.position_uncertain())
         {
             if let SecurityDecision::Allowed { target } =
-                SecurityGate::check(TriggerKind::Character, &self.config, &self.database)
+                SecurityGate::check(TriggerKind::Tracking, &self.config, &self.database)
             {
                 self.session_manager.focus(&target);
                 let executable = self
@@ -508,6 +531,19 @@ impl InputProcessor {
             .is_some_and(|generation| generation != input_listener::current_position_generation())
         {
             self.session_manager.deactivate(MovementSignal::FocusChange);
+            return;
+        }
+        if let Some(session) = self.session_manager.active() {
+            if !session.position_uncertain() {
+                for mut pending in pending_requests {
+                    if pending.matches_session(session) {
+                        let request = &mut pending.request;
+                        request.informative_context = session.informative_context().to_owned();
+                        request.versions = session.versions();
+                        self.dispatch_trigger(pending.request);
+                    }
+                }
+            }
         }
         if let Some(signal) = self
             .session_manager
@@ -526,10 +562,50 @@ impl InputProcessor {
     fn process_shortcut(&mut self, id: usize) {
         match GlobalShortcutListener::action_for_id(id) {
             Some(ShortcutAction::Correct) => {
-                if self.security_allows(TriggerKind::ManualShortcut, &self.database) {
-                    tracing::info!("correction pipeline placeholder triggered by shortcut");
-                } else {
-                    tracing::info!("correction shortcut ignored because context is blocked");
+                if let SecurityDecision::Allowed { target } =
+                    SecurityGate::check(TriggerKind::ManualShortcut, &self.config, &self.database)
+                {
+                    if self.config.shortcuts.correct_arbitrary_selection
+                        && !self.session_manager.active_matches(&target)
+                    {
+                        self.session_manager.focus(&target);
+                    }
+                    if self.session_manager.active_matches(&target) {
+                        if let Some(session) = self.session_manager.active() {
+                            let executable = session.editable_context();
+                            let sequence = input_listener::current_input_sequence();
+                            let selected = capture_if_current(
+                                sequence,
+                                input_listener::current_input_sequence,
+                                || {
+                                    context_capture::read_selection(
+                                        &target,
+                                        session.informative_context(),
+                                        &executable,
+                                        &self.config.context,
+                                    )
+                                },
+                            );
+                            if let Some(selected) = selected {
+                                if matches!(
+                                    selected,
+                                    context_capture::SelectionCapture::NoSelection
+                                ) && session.position_uncertain()
+                                {
+                                    return;
+                                }
+                                if let Some(request) = triggers::manual(
+                                    session.informative_context(),
+                                    &executable,
+                                    session.versions(),
+                                    &selected,
+                                    self.config.shortcuts.correct_arbitrary_selection,
+                                ) {
+                                    self.dispatch_trigger(request);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Some(ShortcutAction::Undo) => {
@@ -540,6 +616,55 @@ impl InputProcessor {
                 }
             }
             None => {}
+        }
+    }
+
+    /// Update the typed session and retain trigger requests with their full scope.
+    fn track_input(
+        &mut self,
+        input: typing::TypedInput,
+        pending: &mut Vec<PendingTrigger>,
+    ) -> bool {
+        let before = self
+            .session_manager
+            .active()
+            .map(|session| session.editable_context());
+        let inserted = match &input {
+            typing::TypedInput::Text(text) => Some(text.clone()),
+            _ => None,
+        };
+        let needs_capture = self.session_manager.input(input);
+        if let (Some(before), Some(inserted), Some(session)) =
+            (before, inserted, self.session_manager.active())
+        {
+            if !session.position_uncertain() {
+                let editable_snapshot = session.editable_context();
+                if let Some(request) = triggers::automatic(
+                    &before,
+                    &editable_snapshot,
+                    &inserted,
+                    session.informative_context(),
+                    session.versions(),
+                    &self.config,
+                ) {
+                    pending.push(PendingTrigger {
+                        editable_snapshot,
+                        request,
+                    });
+                }
+            }
+        }
+        needs_capture
+    }
+
+    /// Recheck the focused target and trigger permission before routing.
+    fn dispatch_trigger(&self, request: CorrectionRequest) {
+        if let SecurityDecision::Allowed { target } =
+            SecurityGate::check(request.trigger, &self.config, &self.database)
+        {
+            if self.session_manager.active_matches(&target) {
+                CorrectionEngineRouter::submit(request);
+            }
         }
     }
 

@@ -45,6 +45,8 @@ pub(crate) enum RunMode {
 pub(crate) struct ShortcutsConfig {
     pub(crate) correct: String,
     pub(crate) undo: String,
+    #[serde(default)]
+    pub(crate) correct_arbitrary_selection: bool,
 }
 
 impl Default for ShortcutsConfig {
@@ -52,6 +54,7 @@ impl Default for ShortcutsConfig {
         Self {
             correct: "Ctrl+Alt+Space".to_owned(),
             undo: "Ctrl+Alt+Z".to_owned(),
+            correct_arbitrary_selection: false,
         }
     }
 }

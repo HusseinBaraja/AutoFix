@@ -3,6 +3,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 
+use super::triggers::CorrectionRequest;
 use crate::{
     background::{paths::RuntimePaths, BackgroundError},
     ipc::IpcServerState,
@@ -44,6 +45,19 @@ impl NamedPipeIpcServer {
 }
 
 impl CorrectionEngineRouter {
+    /// Record request metadata while the correction engine is still a placeholder.
+    pub(crate) fn submit(request: CorrectionRequest) {
+        tracing::info!(
+            trigger = request.trigger.as_str(),
+            executable_chars = request.executable_context.chars().count(),
+            informative_chars = request.informative_context.chars().count(),
+            following_chars = request.following_context.chars().count(),
+            selected_text = request.selected_text,
+            temporary_selection = request.temporary_selection,
+            ?request.versions,
+            "correction request accepted by placeholder router"
+        );
+    }
     pub(crate) fn initialize(_config: &AppConfig) -> Self {
         tracing::info!("correction engine router placeholder initialized");
         Self

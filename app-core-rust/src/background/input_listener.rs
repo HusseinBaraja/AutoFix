@@ -37,6 +37,24 @@ pub(crate) struct KeyStroke {
 }
 
 impl KeyStroke {
+    /// Match a configured shortcut without treating it as typed text.
+    pub(crate) fn matches_shortcut(&self, value: &str) -> bool {
+        use crate::settings::{Shortcut, ShortcutKey};
+        let Ok(shortcut) = Shortcut::parse(value) else {
+            return false;
+        };
+        let key = match shortcut.key {
+            ShortcutKey::Space => 0x20,
+            ShortcutKey::Letter(character) | ShortcutKey::Digit(character) => character as u32,
+            ShortcutKey::Function(number) => 0x70 + u32::from(number - 1),
+        };
+        self.virtual_key == key
+            && self.control == shortcut.modifiers.ctrl
+            && self.alt == shortcut.modifiers.alt
+            && self.shift == shortcut.modifiers.shift
+            && self.win == shortcut.modifiers.win
+    }
+
     pub(crate) fn translate(self) -> TypedInput {
         native::translate(self)
     }
@@ -56,6 +74,23 @@ pub(crate) fn stale_key_for_test() -> KeyStroke {
         altgr: false,
         win: false,
         caps_lock: false,
+    }
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::*;
+
+    /// A correction hotkey must leave the current typed segment intact.
+    #[test]
+    fn configured_shortcut_does_not_invalidate_typed_session() {
+        let mut key = stale_key_for_test();
+        key.virtual_key = 0x20;
+        key.control = true;
+        key.alt = true;
+        assert!(key.matches_shortcut("Ctrl+Alt+Space"));
+        assert!(!key.matches_shortcut("Ctrl+Shift+Space"));
+        assert!(!key.matches_shortcut("Ctrl+Alt+Z"));
     }
 }
 

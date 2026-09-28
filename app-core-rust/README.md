@@ -34,10 +34,28 @@ boundary (default `.`), up to the previous configured number of words (default
 25), and stops at the start of the text provider's document range. The capture
 reads the informative character cap plus the known typed segment so that new
 typing cannot crowd the anchor out. Stored informative context remains capped.
-It is never used as a replacement
-target; only newly typed text enters executable context. If the provider cannot
+
+The trigger manager now builds correction requests for the configured manual
+shortcut, completed word-count thresholds, and configured characters. Each
+request carries read-only informative context and known executable text before
+the caret, except for the explicit selected-text option below. Character triggers
+scope the request to the latest completed segment. The manual shortcut accepts
+a selected span when UI Automation proves it belongs to the typed segment.
+An outside or unreadable selection blocks
+the shortcut by default. The `shortcuts.correct_arbitrary_selection` setting is
+off by default; when enabled, a selected span outside the typed segment becomes
+temporary executable context for that request, while text before and after it
+stays informative. The session has a completion path to commit corrected selected
+text into informative context and record undo after target replacement succeeds.
+App rules and the hard security gate are checked before routing. A matching app
+rule permits typed-input tracking only when it allows a word-count or character
+trigger. Manual-shortcut permission alone does not enable continuous capture.
+Manual-only rules can still use the opt-in arbitrary-selection shortcut path.
+The correction router still only logs request metadata; it does not yet apply
+corrections to target text or call the completion path. If the provider cannot
 read before the caret, informative context is empty and typing continues.
-Selections, protected fields, and unavailable targets are never read. Paste and
+Protected fields and
+unavailable targets are never read. Paste and
 other input that cannot be mapped safely invalidate the known position rather
 than importing document text. IME composition is not yet supported.
 
@@ -54,7 +72,10 @@ does the same with the original text. Exceeding the configured executable word
 limit also commits the current segment. New typing starts a fresh executable
 segment. Undo restores the corrected span in informative context to its
 original text and leaves newer executable text intact. Informative context is
-bounded by the configured character limit. Backward movement within known typed
+shrunk in app memory after every append and commit. Shrinking stays within the
+configured character budget, prefers configured sentence boundaries, and
+preserves the configured minimum number of recent words when they fit. It never
+edits or deletes target-application text. Backward movement within known typed
 text keeps the executable context. Forward movement of at most the configured
 word limit (five by default) keeps the context, adds skipped text to informative
 context, and starts a fresh executable segment at the new caret. The old typed
