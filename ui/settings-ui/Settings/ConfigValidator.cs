@@ -8,6 +8,7 @@ public static class ConfigValidator
     private static readonly HashSet<string> Modes = ["typos_only", "typos_plus_grammar"];
     private static readonly HashSet<string> Engines = ["local", "api"];
     private static readonly HashSet<string> Confidence = ["do_nothing", "suggestion", "silent"];
+    private static readonly HashSet<string> UncertainLanguagePolicies = ["high_confidence_typos_only", "do_nothing", "correct_normally"];
 
     /// <summary>Validates settings before they are saved or applied.</summary>
     public static void Validate(AppConfig config)
@@ -37,6 +38,21 @@ public static class ConfigValidator
     {
         RequireChoice("correction.mode", config.Correction.Mode, Modes);
         RequireChoice("correction.engine", config.Correction.Engine, Engines);
+        RequireChoice("correction.uncertain_language_policy", config.Correction.UncertainLanguagePolicy, UncertainLanguagePolicies);
+        if (config.Correction.PreferredLanguage is { } tag && !ValidLanguageTag(tag))
+        {
+            throw Invalid("correction.preferred_language", "must be a BCP 47 language tag");
+        }
+        var apps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in config.Correction.AppLanguageOverrides)
+        {
+            var parts = entry.Split('=', 2);
+            if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0])
+                || !ValidLanguageTag(parts[1].Trim()) || !apps.Add(parts[0].Trim()))
+            {
+                throw Invalid("correction.app_language_overrides", "must contain unique process names and valid language tags");
+            }
+        }
         RequireChoice(
             "correction.high_confidence_behavior",
             config.Correction.HighConfidenceBehavior,
@@ -60,6 +76,14 @@ public static class ConfigValidator
         {
             throw Invalid("correction.enabled_grammar_categories", "contains an unknown or duplicate category");
         }
+    }
+
+    private static bool ValidLanguageTag(string tag)
+    {
+        var parts = tag.Split('-');
+        return parts[0].Length is >= 2 and <= 8
+            && parts[0].All(char.IsAsciiLetter)
+            && parts.Skip(1).All(part => part.Length is >= 1 and <= 8 && part.All(char.IsAsciiLetterOrDigit));
     }
 
     /// <summary>Restricts API providers, endpoints, and request settings.</summary>

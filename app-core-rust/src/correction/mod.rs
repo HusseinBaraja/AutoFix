@@ -6,6 +6,7 @@
 mod api;
 mod contract;
 mod engines;
+pub(crate) mod language;
 mod local_rule;
 
 pub(crate) use api::valid_base_url;
@@ -14,7 +15,7 @@ pub use contract::{
     ConfidenceBehavior, ConfidenceBehaviorSettings, ConfidenceTier, CorrectionChange,
     CorrectionChangeKind, CorrectionInput, CorrectionMode, CorrectionOutput, EngineBackend,
     EngineFailure, EngineFailureKind, EngineKind, EngineStatus, GrammarCategory, LanguageInfo,
-    MixedLanguagePolicy, NoChangeReason, TriggerType,
+    MixedLanguagePolicy, NoChangeReason, TriggerType, UncertainLanguagePolicy,
 };
 pub use engines::{
     CorrectionEngine, CorrectionEngines, CustomApiEngine, LocalMlEngine, LocalRuleEngine,

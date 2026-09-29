@@ -47,6 +47,23 @@ public sealed class ConfigStorageTests
     }
 
     [TestMethod]
+    public void LanguageSettingsRoundTripAndRejectDuplicateApp()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var config = AppConfig.Default();
+        config.Correction.PreferredLanguage = "en-US";
+        config.Correction.AppLanguageOverrides = ["notepad.exe=fr-FR"];
+        config.Correction.UncertainLanguagePolicy = "do_nothing";
+        fixture.Storage.Save(config);
+        var loaded = fixture.Storage.Load(fixture.Path);
+        Assert.AreEqual("en-US", loaded.Correction.PreferredLanguage);
+        CollectionAssert.AreEqual(config.Correction.AppLanguageOverrides, loaded.Correction.AppLanguageOverrides);
+        Assert.AreEqual("do_nothing", loaded.Correction.UncertainLanguagePolicy);
+        loaded.Correction.AppLanguageOverrides.Add("NOTEPAD.EXE=de");
+        Assert.ThrowsException<InvalidDataException>(() => ConfigValidator.Validate(loaded));
+    }
+
+    [TestMethod]
     public void LegacyPunctuationCategoryLoadsAsSpacing()
     {
         using var fixture = TempConfigFixture.Create();

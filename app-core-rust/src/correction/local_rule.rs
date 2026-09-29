@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use super::{
     ConfidenceBehavior, ConfidenceTier, CorrectionChange, CorrectionChangeKind, CorrectionInput,
-    CorrectionMode, CorrectionOutput, GrammarCategory, NoChangeReason,
+    CorrectionMode, CorrectionOutput, GrammarCategory, NoChangeReason, UncertainLanguagePolicy,
 };
 
 #[derive(Debug)]
@@ -30,6 +30,17 @@ pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
     let started = Instant::now();
     let original = &input.executable_context;
 
+    if input.language_info.is_uncertain()
+        && input.uncertain_language_policy == UncertainLanguagePolicy::DoNothing
+    {
+        return CorrectionOutput::unchanged(
+            original.clone(),
+            ConfidenceTier::Low,
+            NoChangeReason::UncertainLanguage,
+            elapsed_ms(started),
+        );
+    }
+
     if !supports_english(input) {
         return CorrectionOutput::unchanged(
             original.clone(),
@@ -43,7 +54,10 @@ pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
     let protected = protected_ranges(input, &words);
     let mut candidates = typo_candidates(&words);
 
-    if input.mode == CorrectionMode::TyposPlusGrammar {
+    if input.mode == CorrectionMode::TyposPlusGrammar
+        && (!input.language_info.is_uncertain()
+            || input.uncertain_language_policy == UncertainLanguagePolicy::CorrectNormally)
+    {
         grammar_candidates(input, &words, &mut candidates);
     }
 
@@ -67,6 +81,14 @@ pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
     let mut blocked_confidence = None;
 
     for candidate in candidates {
+        if input.language_info.is_uncertain()
+            && input.uncertain_language_policy == UncertainLanguagePolicy::HighConfidenceTyposOnly
+            && (candidate.kind != CorrectionChangeKind::Typo
+                || candidate.confidence != ConfidenceTier::High)
+        {
+            suppressed_count += 1;
+            continue;
+        }
         if intersects_any(candidate.start_byte, candidate.end_byte, &protected) {
             protected_count += 1;
             lower_confidence(&mut blocked_confidence, candidate.confidence);
@@ -156,7 +178,7 @@ fn supports_english(input: &CorrectionInput) -> bool {
 }
 
 /// Recognizes English BCP 47 tags without treating other languages as English.
-fn is_english_tag(language: &str) -> bool {
+pub(super) fn is_english_tag(language: &str) -> bool {
     language.eq_ignore_ascii_case("en")
         || language
             .get(..3)
@@ -258,6 +280,13 @@ fn typo_replacement(word: &str) -> Option<(&'static str, ConfidenceTier)> {
 /// Accepts only a known spelling replacement when an API labels an edit a typo.
 pub(super) fn is_known_typo_change(original: &str, replacement: &str) -> bool {
     typo_replacement(&original.to_ascii_lowercase())
+        .and_then(|(expected, _)| preserve_case(original, expected))
+        .is_some_and(|expected| expected == replacement)
+}
+
+pub(super) fn is_high_confidence_typo_change(original: &str, replacement: &str) -> bool {
+    typo_replacement(&original.to_ascii_lowercase())
+        .filter(|(_, confidence)| *confidence == ConfidenceTier::High)
         .and_then(|(expected, _)| preserve_case(original, expected))
         .is_some_and(|expected| expected == replacement)
 }
@@ -890,6 +919,7 @@ mod tests {
                 detected_languages: vec!["en-US".to_owned()],
             },
             mixed_language_policy: MixedLanguagePolicy::PreserveNonPrimary,
+            uncertain_language_policy: UncertainLanguagePolicy::default(),
             custom_dictionary: Vec::new(),
             protected_terms: Vec::new(),
             trigger_type: TriggerType::ManualShortcut,
@@ -1071,6 +1101,21 @@ mod tests {
             output.no_change_reason,
             Some(NoChangeReason::UnsupportedLanguage)
         );
+    }
+
+    #[test]
+    fn unknown_language_defaults_to_high_confidence_typos_only() {
+        let mut request = input("teh alot i", CorrectionMode::TyposPlusGrammar);
+        request.language_info.detected_languages.clear();
+        request.enabled_grammar_categories = vec![GrammarCategory::Capitalization];
+        assert_eq!(correct(&request).corrected_executable_text, "the alot i");
+        request.uncertain_language_policy = UncertainLanguagePolicy::DoNothing;
+        assert_eq!(
+            correct(&request).no_change_reason,
+            Some(NoChangeReason::UncertainLanguage)
+        );
+        request.uncertain_language_policy = UncertainLanguagePolicy::CorrectNormally;
+        assert_eq!(correct(&request).corrected_executable_text, "the a lot I");
     }
 
     #[test]

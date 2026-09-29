@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::correction::{ConfidenceBehavior, CorrectionMode, GrammarCategory};
+use crate::correction::{
+    ConfidenceBehavior, CorrectionMode, GrammarCategory, UncertainLanguagePolicy,
+};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub(crate) struct AppConfig {
@@ -113,6 +115,12 @@ pub(crate) struct CorrectionConfig {
     pub(crate) medium_confidence_behavior: ConfidenceBehavior,
     pub(crate) low_confidence_behavior: ConfidenceBehavior,
     pub(crate) enabled_grammar_categories: Vec<GrammarCategory>,
+    #[serde(default)]
+    pub(crate) preferred_language: Option<String>,
+    #[serde(default)]
+    pub(crate) app_language_overrides: Vec<String>,
+    #[serde(default)]
+    pub(crate) uncertain_language_policy: UncertainLanguagePolicy,
 }
 
 fn default_true() -> bool {
@@ -129,6 +137,9 @@ impl Default for CorrectionConfig {
             medium_confidence_behavior: ConfidenceBehavior::Suggestion,
             low_confidence_behavior: ConfidenceBehavior::DoNothing,
             enabled_grammar_categories: Vec::new(),
+            preferred_language: None,
+            app_language_overrides: Vec::new(),
+            uncertain_language_policy: UncertainLanguagePolicy::default(),
         }
     }
 }

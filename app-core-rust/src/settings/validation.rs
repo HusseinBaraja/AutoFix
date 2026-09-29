@@ -132,6 +132,35 @@ fn validate_non_empty_list(
 }
 
 fn validate_correction(config: &AppConfig) -> Result<(), ConfigValidationError> {
+    if config
+        .correction
+        .preferred_language
+        .as_deref()
+        .is_some_and(|tag| !crate::correction::language::valid_language_tag(tag))
+    {
+        return Err(ConfigValidationError::new(
+            "correction.preferred_language",
+            "must be a BCP 47 language tag",
+        ));
+    }
+    let mut apps = std::collections::HashSet::new();
+    for entry in &config.correction.app_language_overrides {
+        let Some((app, tag)) = entry.split_once('=') else {
+            return Err(ConfigValidationError::new(
+                "correction.app_language_overrides",
+                "use process.exe=language-tag",
+            ));
+        };
+        if app.trim().is_empty()
+            || !crate::correction::language::valid_language_tag(tag.trim())
+            || !apps.insert(app.trim().to_ascii_lowercase())
+        {
+            return Err(ConfigValidationError::new(
+                "correction.app_language_overrides",
+                "must contain unique process names and valid language tags",
+            ));
+        }
+    }
     match config.general.run_mode {
         RunMode::Blocklist | RunMode::Allowlist => {}
     }

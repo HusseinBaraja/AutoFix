@@ -22,6 +22,18 @@ confidence, no-change reason, latency, and completion/error/timeout status.
 `LocalRuleEngine`, `LocalMlEngine`, `OpenAiCompatibleApiEngine`, and
 `CustomApiEngine` implement the same interface. `LocalRuleEngine` provides fast,
 deterministic English correction for a conservative list of clear misspellings.
+The engine interface reports supported BCP 47 tags. Language selection uses
+read-only informative context and executable context, then resolves a primary
+language from a per-app override, global preference, or the session detection.
+The conservative detector recognizes English from function words and script
+families for other text; it leaves ambiguous Latin text unknown. Detection is
+memory-only per focused session. `correction.preferred_language` accepts a BCP
+47 tag, and `correction.app_language_overrides` accepts entries such as
+`notepad.exe=fr-FR`. Unknown or mixed text defaults to high-confidence typo
+edits only. `correction.uncertain_language_policy` can instead skip correction
+or use normal correction. The local rule engine supports English only; API
+engines can receive other language tags. The router still only logs requests,
+so these policies do not yet change target application text.
 In grammar mode it applies only enabled categories. Conservative local rules
 cover capitalization, sentence-ending punctuation on manual correction, extra
 punctuation, repeated words, subject-verb agreement, a/an articles, a few

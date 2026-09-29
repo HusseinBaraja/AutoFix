@@ -15,6 +15,9 @@ public sealed class ConfigFormMapperTests
         Card(sections, "shortcuts.correct_arbitrary_selection").IsEnabled = true;
         Card(sections, "triggers.characters").TextValue = "., ?, !";
         Card(sections, "api.timeout_auto_ms").TextValue = "900";
+        Card(sections, "correction.preferred_language").TextValue = "en-US";
+        Card(sections, "correction.app_language_overrides").TextValue = "notepad.exe=fr-FR, chrome.exe=de-DE";
+        Card(sections, "correction.uncertain_language_policy").SelectedValue = "do_nothing";
         Card(sections, "feedback.show_timeout_notice").IsEnabled = false;
 
         var config = ConfigFormMapper.BuildConfig(sections);
@@ -24,6 +27,9 @@ public sealed class ConfigFormMapperTests
         Assert.IsTrue(config.Shortcuts.CorrectArbitrarySelection);
         CollectionAssert.AreEqual(new[] { ".", "?", "!" }, config.Triggers.Characters);
         Assert.AreEqual(900, config.Api.TimeoutAutoMs);
+        Assert.AreEqual("en-US", config.Correction.PreferredLanguage);
+        CollectionAssert.AreEqual(new[] { "notepad.exe=fr-FR", "chrome.exe=de-DE" }, config.Correction.AppLanguageOverrides);
+        Assert.AreEqual("do_nothing", config.Correction.UncertainLanguagePolicy);
         Assert.IsFalse(config.Feedback.ShowTimeoutNotice);
     }
 

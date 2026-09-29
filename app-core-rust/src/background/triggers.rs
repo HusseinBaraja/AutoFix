@@ -1,6 +1,7 @@
 //! Selects correction work from text known to have been typed in this run.
 
 use super::{context_capture::SelectionCapture, security::TriggerKind, session::ContextVersions};
+use crate::correction::{LanguageInfo, UncertainLanguagePolicy};
 use crate::settings::AppConfig;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,6 +13,8 @@ pub(super) struct CorrectionRequest {
     pub(super) selected_text: bool,
     pub(super) temporary_selection: bool,
     pub(super) versions: ContextVersions,
+    pub(super) language_info: LanguageInfo,
+    pub(super) uncertain_language_policy: UncertainLanguagePolicy,
 }
 
 /// Build a manual request only when its selected span is authorized.
@@ -130,6 +133,11 @@ fn request(
         selected_text: false,
         temporary_selection: false,
         versions,
+        language_info: LanguageInfo {
+            primary_language: None,
+            detected_languages: Vec::new(),
+        },
+        uncertain_language_policy: UncertainLanguagePolicy::default(),
     })
 }
 

@@ -28,6 +28,12 @@ fn default_config_has_requested_values() {
     assert!(config.correction.enabled);
     assert_eq!(config.correction.mode, CorrectionMode::TyposOnly);
     assert_eq!(config.correction.engine, CorrectionEngine::Local);
+    assert_eq!(config.correction.preferred_language, None);
+    assert!(config.correction.app_language_overrides.is_empty());
+    assert_eq!(
+        config.correction.uncertain_language_policy,
+        crate::correction::UncertainLanguagePolicy::HighConfidenceTyposOnly
+    );
     assert_eq!(
         config.correction.high_confidence_behavior,
         ConfidenceBehavior::Silent
@@ -165,6 +171,34 @@ fn rejects_invalid_confidence_behavior() {
     let error = config.validate().unwrap_err();
 
     assert_eq!(error.field(), "correction.low_confidence_behavior");
+}
+
+#[test]
+fn language_settings_round_trip_and_validate() {
+    let mut config = AppConfig::default();
+    config.correction.preferred_language = Some("en-US".into());
+    config.correction.app_language_overrides = vec!["notepad.exe=fr-FR".into()];
+    config.correction.uncertain_language_policy =
+        crate::correction::UncertainLanguagePolicy::DoNothing;
+    let encoded = config_to_toml(&config).unwrap();
+    assert_eq!(
+        super::toml_io::parse_config(&encoded).unwrap().correction,
+        config.correction
+    );
+    config
+        .correction
+        .app_language_overrides
+        .push("NOTEPAD.EXE=de".into());
+    assert_eq!(
+        config.validate().unwrap_err().field(),
+        "correction.app_language_overrides"
+    );
+    config.correction.app_language_overrides.clear();
+    config.correction.preferred_language = Some("invalid tag".into());
+    assert_eq!(
+        config.validate().unwrap_err().field(),
+        "correction.preferred_language"
+    );
 }
 
 #[test]

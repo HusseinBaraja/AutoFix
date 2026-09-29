@@ -9,6 +9,8 @@ use super::{CorrectionInput, CorrectionOutput, EngineFailure, EngineFailureKind,
 pub trait CorrectionEngine: Send + Sync {
     /// Identifies the implementation without inferring it from task difficulty.
     fn kind(&self) -> EngineKind;
+    /// Reports whether this implementation can correct a BCP 47 language tag.
+    fn supports_language(&self, language_tag: &str) -> bool;
     /// Corrects the executable span for either correction mode.
     fn correct(&self, input: &CorrectionInput) -> CorrectionOutput;
 }
@@ -60,6 +62,9 @@ impl CorrectionEngine for OpenAiCompatibleApiEngine {
     fn kind(&self) -> EngineKind {
         self.0.kind()
     }
+    fn supports_language(&self, language_tag: &str) -> bool {
+        self.0.supports_language(language_tag)
+    }
     /// Delegates correction to the configured API engine.
     fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {
         self.0.correct(input)
@@ -70,6 +75,9 @@ impl CorrectionEngine for CustomApiEngine {
     /// Returns the custom API kind.
     fn kind(&self) -> EngineKind {
         self.0.kind()
+    }
+    fn supports_language(&self, language_tag: &str) -> bool {
+        self.0.supports_language(language_tag)
     }
     /// Delegates correction to the configured API engine.
     fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {
@@ -83,6 +91,10 @@ impl CorrectionEngine for LocalRuleEngine {
         EngineKind::LocalRule
     }
 
+    fn supports_language(&self, language_tag: &str) -> bool {
+        super::local_rule::is_english_tag(language_tag)
+    }
+
     /// Applies the local rules to the executable span.
     fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {
         local_rule::correct(input)
@@ -94,6 +106,10 @@ macro_rules! placeholder_engine {
         impl CorrectionEngine for $engine {
             fn kind(&self) -> EngineKind {
                 $kind
+            }
+
+            fn supports_language(&self, _language_tag: &str) -> bool {
+                false
             }
 
             fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {

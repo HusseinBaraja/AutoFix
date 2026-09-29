@@ -533,6 +533,7 @@ impl InputProcessor {
             self.session_manager.deactivate(MovementSignal::FocusChange);
             return;
         }
+        let mut ready_requests = Vec::new();
         if let Some(session) = self.session_manager.active() {
             if !session.position_uncertain() {
                 for mut pending in pending_requests {
@@ -540,10 +541,13 @@ impl InputProcessor {
                         let request = &mut pending.request;
                         request.informative_context = session.informative_context().to_owned();
                         request.versions = session.versions();
-                        self.dispatch_trigger(pending.request);
+                        ready_requests.push(pending.request);
                     }
                 }
             }
+        }
+        for request in ready_requests {
+            self.dispatch_trigger(request);
         }
         if let Some(signal) = self
             .session_manager
@@ -658,11 +662,43 @@ impl InputProcessor {
     }
 
     /// Recheck the focused target and trigger permission before routing.
-    fn dispatch_trigger(&self, request: CorrectionRequest) {
+    fn dispatch_trigger(&mut self, mut request: CorrectionRequest) {
         if let SecurityDecision::Allowed { target } =
             SecurityGate::check(request.trigger, &self.config, &self.database)
         {
             if self.session_manager.active_matches(&target) {
+                let saved_override = match self
+                    .database
+                    .language_overrides()
+                    .find(&target.process_name)
+                {
+                    Ok(value) => value,
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to read app language override");
+                        None
+                    }
+                };
+                let configured_override = crate::correction::language::app_override(
+                    &self.config.correction.app_language_overrides,
+                    &target.process_name,
+                );
+                let session_detected = self
+                    .session_manager
+                    .active()
+                    .and_then(|session| session.detected_language());
+                let selection = crate::correction::language::resolve(
+                    &request.informative_context,
+                    &request.executable_context,
+                    session_detected,
+                    configured_override.or(saved_override.as_deref()),
+                    self.config.correction.preferred_language.as_deref(),
+                    self.config.correction.uncertain_language_policy,
+                );
+                if let Some(session) = self.session_manager.active_mut() {
+                    session.set_detected_language(selection.session_detected);
+                }
+                request.language_info = selection.info;
+                request.uncertain_language_policy = selection.policy;
                 CorrectionEngineRouter::submit(request);
             }
         }

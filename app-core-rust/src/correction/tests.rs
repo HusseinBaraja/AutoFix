@@ -16,6 +16,7 @@ fn input(mode: CorrectionMode) -> CorrectionInput {
             detected_languages: vec!["en-US".to_owned()],
         },
         mixed_language_policy: MixedLanguagePolicy::PreserveNonPrimary,
+        uncertain_language_policy: UncertainLanguagePolicy::default(),
         custom_dictionary: vec!["AutoFix".to_owned()],
         protected_terms: vec!["teh-brand".to_owned()],
         trigger_type: TriggerType::ManualShortcut,
@@ -74,6 +75,21 @@ fn engine_kinds_have_explicit_local_or_api_identity() {
         EngineBackend::Api
     );
     assert_eq!(EngineKind::CustomApi.backend(), EngineBackend::Api);
+}
+
+#[test]
+fn engines_advertise_language_capabilities() {
+    let engines = CorrectionEngines::default();
+    assert!(engines
+        .engine(EngineKind::LocalRule)
+        .supports_language("en-US"));
+    assert!(!engines
+        .engine(EngineKind::LocalRule)
+        .supports_language("fr-FR"));
+    assert!(!engines.engine(EngineKind::LocalMl).supports_language("en"));
+    assert!(engines
+        .engine(EngineKind::CustomApi)
+        .supports_language("fr-FR"));
 }
 
 #[test]

@@ -54,6 +54,10 @@ impl CorrectionEngineRouter {
             following_chars = request.following_context.chars().count(),
             selected_text = request.selected_text,
             temporary_selection = request.temporary_selection,
+            primary_language = request.language_info.primary_language.as_deref().unwrap_or("unknown"),
+            detected_language_count = request.language_info.detected_languages.len(),
+            uncertain_language = request.language_info.is_uncertain(),
+            ?request.uncertain_language_policy,
             ?request.versions,
             "correction request accepted by placeholder router"
         );

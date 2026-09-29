@@ -43,10 +43,33 @@ pub struct ConfidenceBehaviorSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LanguageInfo {
-    /// User-selected or otherwise preferred BCP 47 language tag, when known.
+    /// Resolved BCP 47 language tag (app, global, then session detection).
     pub primary_language: Option<String>,
-    /// BCP 47 language tags detected in the executable span.
+    /// BCP 47 language tags detected from informative and executable context.
     pub detected_languages: Vec<String>,
+}
+
+impl LanguageInfo {
+    pub fn is_uncertain(&self) -> bool {
+        if self.detected_languages.len() != 1 || self.detected_languages[0].starts_with("und-") {
+            return true;
+        }
+        self.primary_language.as_deref().is_some_and(|primary| {
+            let primary_base = primary.split('-').next().unwrap_or(primary);
+            let detected_base = self.detected_languages[0].split('-').next().unwrap_or("");
+            !primary_base.eq_ignore_ascii_case(detected_base)
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UncertainLanguagePolicy {
+    /// Apply only high-confidence typo edits to unknown or mixed text.
+    #[default]
+    HighConfidenceTyposOnly,
+    DoNothing,
+    CorrectNormally,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,6 +106,8 @@ pub struct CorrectionInput {
     pub enabled_grammar_categories: Vec<GrammarCategory>,
     pub language_info: LanguageInfo,
     pub mixed_language_policy: MixedLanguagePolicy,
+    #[serde(default)]
+    pub uncertain_language_policy: UncertainLanguagePolicy,
     /// Accepted spellings which engines may use as correction candidates.
     pub custom_dictionary: Vec<String>,
     /// Exact terms which engines must not modify.
@@ -151,6 +176,7 @@ pub enum NoChangeReason {
     ConfidenceBelowConfiguredBehavior,
     AllCandidatesProtected,
     UnsupportedLanguage,
+    UncertainLanguage,
     EngineUnavailable,
     TimedOut,
     EngineError,

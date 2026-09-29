@@ -42,6 +42,13 @@ public static class SettingsSkeleton
         new("Apply silently", "silent"),
     ];
 
+    public static ObservableCollection<OptionItem> UncertainLanguagePolicies() =>
+    [
+        new("High-confidence typos only", "high_confidence_typos_only"),
+        new("Do nothing", "do_nothing"),
+        new("Correct normally", "correct_normally"),
+    ];
+
     public static ObservableCollection<SettingsSectionViewModel> CreateSections() =>
         CreateSections(AppConfig.Default());
 
@@ -70,6 +77,9 @@ public static class SettingsSkeleton
         [
             Toggle("Correction enabled", "Allow AutoFix to apply corrections.", "correction.enabled", config.Correction.Enabled),
             Dropdown("Correction mode", "Choose typos only or grammar-aware correction.", "correction.mode", config.Correction.Mode, Modes()),
+            Text("Preferred language", "Optional BCP 47 tag, such as en-US. Empty uses automatic detection.", "correction.preferred_language", config.Correction.PreferredLanguage ?? ""),
+            Text("App language overrides", "Comma-separated process.exe=language-tag entries.", "correction.app_language_overrides", ConfigValue.Join(config.Correction.AppLanguageOverrides)),
+            Dropdown("Unknown or mixed language", "How to handle text whose language is unclear or mixed.", "correction.uncertain_language_policy", config.Correction.UncertainLanguagePolicy, UncertainLanguagePolicies()),
             ..GrammarCategorySettings(config),
             Dropdown("High confidence behavior", "Behavior when correction confidence is high.", "correction.high_confidence_behavior", config.Correction.HighConfidenceBehavior, ConfidenceBehaviors()),
             Dropdown("Medium confidence behavior", "Behavior when correction confidence is medium.", "correction.medium_confidence_behavior", config.Correction.MediumConfidenceBehavior, ConfidenceBehaviors()),
