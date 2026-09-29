@@ -28,7 +28,7 @@ fn input(mode: CorrectionMode) -> CorrectionInput {
 }
 
 #[test]
-fn placeholder_engines_accept_every_correction_mode_without_difficulty_routing() {
+fn unconfigured_engines_accept_every_correction_mode_without_difficulty_routing() {
     let engines = CorrectionEngines::default();
 
     for kind in [

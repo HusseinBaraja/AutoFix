@@ -1,3 +1,4 @@
+use super::api::ApiCorrectionEngine;
 use super::local_rule;
 use super::{CorrectionInput, CorrectionOutput, EngineFailure, EngineFailureKind, EngineKind};
 
@@ -16,11 +17,55 @@ pub struct LocalRuleEngine;
 #[derive(Debug, Default)]
 pub struct LocalMlEngine;
 
-#[derive(Debug, Default)]
-pub struct OpenAiCompatibleApiEngine;
+pub struct OpenAiCompatibleApiEngine(ApiCorrectionEngine);
+pub struct CustomApiEngine(ApiCorrectionEngine);
 
-#[derive(Debug, Default)]
-pub struct CustomApiEngine;
+impl Default for OpenAiCompatibleApiEngine {
+    fn default() -> Self {
+        Self(ApiCorrectionEngine::unconfigured(
+            EngineKind::OpenAiCompatibleApi,
+        ))
+    }
+}
+
+impl Default for CustomApiEngine {
+    fn default() -> Self {
+        Self(ApiCorrectionEngine::unconfigured(EngineKind::CustomApi))
+    }
+}
+
+impl OpenAiCompatibleApiEngine {
+    pub fn new(config: super::ApiEngineConfig) -> Self {
+        Self(ApiCorrectionEngine::new(
+            EngineKind::OpenAiCompatibleApi,
+            config,
+        ))
+    }
+}
+
+impl CustomApiEngine {
+    pub fn new(config: super::ApiEngineConfig) -> Self {
+        Self(ApiCorrectionEngine::new(EngineKind::CustomApi, config))
+    }
+}
+
+impl CorrectionEngine for OpenAiCompatibleApiEngine {
+    fn kind(&self) -> EngineKind {
+        self.0.kind()
+    }
+    fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {
+        self.0.correct(input)
+    }
+}
+
+impl CorrectionEngine for CustomApiEngine {
+    fn kind(&self) -> EngineKind {
+        self.0.kind()
+    }
+    fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {
+        self.0.correct(input)
+    }
+}
 
 impl CorrectionEngine for LocalRuleEngine {
     fn kind(&self) -> EngineKind {
@@ -55,8 +100,6 @@ macro_rules! placeholder_engine {
 }
 
 placeholder_engine!(LocalMlEngine, EngineKind::LocalMl);
-placeholder_engine!(OpenAiCompatibleApiEngine, EngineKind::OpenAiCompatibleApi);
-placeholder_engine!(CustomApiEngine, EngineKind::CustomApi);
 
 /// Fixed engine registry. The caller supplies the engine for every task.
 pub struct CorrectionEngines {
@@ -71,13 +114,20 @@ impl Default for CorrectionEngines {
         Self {
             local_rule: LocalRuleEngine,
             local_ml: LocalMlEngine,
-            open_ai_compatible_api: OpenAiCompatibleApiEngine,
-            custom_api: CustomApiEngine,
+            open_ai_compatible_api: OpenAiCompatibleApiEngine::default(),
+            custom_api: CustomApiEngine::default(),
         }
     }
 }
 
 impl CorrectionEngines {
+    pub fn with_api_config(config: super::api::ApiEngineConfig) -> Self {
+        Self {
+            open_ai_compatible_api: OpenAiCompatibleApiEngine::new(config.clone()),
+            custom_api: CustomApiEngine::new(config),
+            ..Self::default()
+        }
+    }
     pub fn engine(&self, kind: EngineKind) -> &dyn CorrectionEngine {
         match kind {
             EngineKind::LocalRule => &self.local_rule,

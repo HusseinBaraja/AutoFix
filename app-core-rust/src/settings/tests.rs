@@ -44,6 +44,7 @@ fn default_config_has_requested_values() {
     assert_eq!(config.api.timeout_auto_ms, 700);
     assert_eq!(config.api.temperature, 0.0);
     assert!(!config.api.streaming);
+    assert!(!config.api.fallback_to_local);
     assert!(!config.logging.debug_mode_enabled);
     assert!(!config.logging.redacted_debug_mode_enabled);
     assert!(!config.logging.full_text_debug_mode_enabled);
@@ -194,6 +195,17 @@ fn rejects_streaming_correction() {
     let error = config.validate().unwrap_err();
 
     assert_eq!(error.field(), "api.streaming");
+}
+
+#[test]
+fn custom_api_requires_safe_base_url() {
+    let mut config = AppConfig::default();
+    config.api.provider_preset = "custom".into();
+    assert_eq!(config.validate().unwrap_err().field(), "api.base_url");
+    config.api.base_url = Some("http://example.com/v1".into());
+    assert_eq!(config.validate().unwrap_err().field(), "api.base_url");
+    config.api.base_url = Some("http://127.0.0.1:9000/v1".into());
+    assert!(config.validate().is_ok());
 }
 
 #[test]

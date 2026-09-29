@@ -56,13 +56,31 @@ public static class ConfigValidator
 
     private static void ValidateApi(AppConfig config)
     {
-        RequireText("api.provider_preset", config.Api.ProviderPreset);
+        if (config.Api.ProviderPreset is not ("openai_compatible" or "openai" or "groq" or "deepseek" or "custom"))
+        {
+            throw Invalid("api.provider_preset", "must be a supported provider preset");
+        }
+        if (config.Api.ProviderPreset == "custom" && string.IsNullOrWhiteSpace(config.Api.BaseUrl))
+        {
+            throw Invalid("api.base_url", "required for custom provider");
+        }
+        if (!string.IsNullOrWhiteSpace(config.Api.BaseUrl))
+        {
+            if (!Uri.TryCreate(config.Api.BaseUrl, UriKind.Absolute, out var url)
+                || (url.Scheme != Uri.UriSchemeHttps && !(url.Scheme == Uri.UriSchemeHttp && url.IsLoopback))
+                || !string.IsNullOrEmpty(url.UserInfo)
+                || !string.IsNullOrEmpty(url.Query)
+                || !string.IsNullOrEmpty(url.Fragment))
+            {
+                throw Invalid("api.base_url", "must be HTTPS or loopback HTTP without credentials");
+            }
+        }
         RequireText("api.model", config.Api.Model);
         RequirePositive("api.timeout_manual_ms", config.Api.TimeoutManualMs);
         RequirePositive("api.timeout_auto_ms", config.Api.TimeoutAutoMs);
-        if (config.Api.RetryCount < 0)
+        if (config.Api.RetryCount is < 0 or > 255)
         {
-            throw Invalid("api.retry_count", "must not be negative");
+            throw Invalid("api.retry_count", "must be between 0 and 255");
         }
         if (config.Api.Temperature is < 0 or > 2)
         {

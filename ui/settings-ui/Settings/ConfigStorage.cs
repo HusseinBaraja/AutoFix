@@ -99,7 +99,7 @@ public sealed class ConfigStorage
     private static string GeneratedComments() =>
         """
         # AutoFix user configuration.
-        # Store API keys in the OS secret store or environment, not in this TOML file.
+        # Store API keys in Windows Credential Manager, not in this TOML file.
         # Shortcut format uses key names joined by '+', for example Ctrl+Alt+Space.
         # Correction streaming stays disabled because corrections need bounded latency.
 
