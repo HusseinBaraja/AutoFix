@@ -28,6 +28,26 @@ public sealed class ConfigFormMapperTests
     }
 
     [TestMethod]
+    public void GrammarCategoriesRoundTripAndTyposModeDisablesThem()
+    {
+        var config = AppConfig.Default();
+        config.Correction.Mode = "typos_plus_grammar";
+        config.Correction.EnabledGrammarCategories = ["capitalization", "homophones"];
+        var sections = SettingsSkeleton.CreateSections(config);
+
+        Assert.IsTrue(Card(sections, "correction.enabled_grammar_categories.capitalization").IsEnabled);
+        Assert.IsFalse(Card(sections, "correction.enabled_grammar_categories.spacing").IsEnabled);
+        CollectionAssert.AreEqual(config.Correction.EnabledGrammarCategories, ConfigFormMapper.BuildConfig(sections).Correction.EnabledGrammarCategories);
+
+        Card(sections, "correction.enabled_grammar_categories.homophones").IsEnabled = false;
+        Card(sections, "correction.enabled_grammar_categories.spacing").IsEnabled = true;
+        CollectionAssert.AreEqual(new[] { "capitalization", "spacing" }, ConfigFormMapper.BuildConfig(sections).Correction.EnabledGrammarCategories);
+
+        Card(sections, "correction.mode").SelectedValue = "typos_only";
+        Assert.AreEqual(0, ConfigFormMapper.BuildConfig(sections).Correction.EnabledGrammarCategories.Count);
+    }
+
+    [TestMethod]
     public void BuildConfigRejectsInvalidValues()
     {
         var sections = SettingsSkeleton.CreateSections();

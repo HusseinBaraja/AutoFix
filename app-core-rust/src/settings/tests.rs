@@ -152,7 +152,7 @@ log_retention_days = 30
     assert_eq!(config.correction.mode, CorrectionMode::TyposPlusGrammar);
     assert_eq!(
         config.correction.enabled_grammar_categories,
-        vec![GrammarCategory::Agreement, GrammarCategory::Punctuation]
+        vec![GrammarCategory::Agreement, GrammarCategory::Spacing]
     );
     assert_eq!(config.logging.log_retention_days, Some(30));
 }

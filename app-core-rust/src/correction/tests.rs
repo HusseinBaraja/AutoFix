@@ -8,7 +8,7 @@ fn input(mode: CorrectionMode) -> CorrectionInput {
         enabled_grammar_categories: match mode {
             CorrectionMode::TyposOnly => Vec::new(),
             CorrectionMode::TyposPlusGrammar => {
-                vec![GrammarCategory::Agreement, GrammarCategory::Punctuation]
+                vec![GrammarCategory::Agreement, GrammarCategory::Spacing]
             }
         },
         language_info: LanguageInfo {

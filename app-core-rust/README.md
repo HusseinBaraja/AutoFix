@@ -22,8 +22,11 @@ confidence, no-change reason, latency, and completion/error/timeout status.
 `LocalRuleEngine`, `LocalMlEngine`, `OpenAiCompatibleApiEngine`, and
 `CustomApiEngine` implement the same interface. `LocalRuleEngine` provides fast,
 deterministic English correction for a conservative list of clear misspellings.
-In grammar mode it also supports enabled capitalization, punctuation, agreement,
-and tense rules; clarity and word-order rules are not implemented. It preserves
+In grammar mode it applies only enabled categories. Conservative local rules
+cover capitalization, sentence-ending punctuation on manual correction, extra
+punctuation, repeated words, subject-verb agreement, a/an articles, a few
+prepositions and homophones, spacing, contractions, and tense. Clarity and
+word-order rules are API-only. It preserves
 custom-dictionary entries, explicit protected terms, and detectable names,
 emails, URLs, paths, handles, hashtags, code identifiers, and product names.
 `OpenAiCompatibleApiEngine` and `CustomApiEngine` send non-streaming
@@ -35,9 +38,11 @@ named `AutoFix/provider-profile/<preset>`; callers can store it with
 Manual and automatic requests default to 3000 ms and 700 ms respectively;
 retries share the request's time budget. `ApiCorrectionEngine::submit` runs the
 request on a worker thread so the caller can keep processing typing. Fallback
-to the local rule engine is off by default. API results contain only
-replacement text for the executable span and are rejected if protected terms
-disappear. `ApiCorrectionEngine::notice_for` marks manual failures for a small
+to the local rule engine is off by default. API results must include categorized
+edits for the executable span. The engine rejects disabled grammar categories,
+unlisted changes, invalid offsets, and changed protected terms. API typo edits
+must match the local engine's known spelling replacements.
+`ApiCorrectionEngine::notice_for` marks manual failures for a small
 notice and automatic failures for silent handling. The local ML engine remains
 a placeholder. The background router and replacement path are still
 placeholders, so this engine is not yet invoked by live typing.

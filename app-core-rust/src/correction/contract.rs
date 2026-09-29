@@ -13,9 +13,17 @@ pub enum GrammarCategory {
     Agreement,
     Capitalization,
     Clarity,
-    Punctuation,
     Tense,
     WordOrder,
+    MissingPunctuation,
+    ExtraPunctuation,
+    RepeatedWords,
+    Articles,
+    Prepositions,
+    #[serde(alias = "punctuation")]
+    Spacing,
+    Apostrophes,
+    Homophones,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

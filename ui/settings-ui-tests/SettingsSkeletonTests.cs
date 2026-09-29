@@ -104,6 +104,19 @@ public sealed class SettingsSkeletonTests
     }
 
     [TestMethod]
+    public void CorrectionSectionOffersEveryGrammarCategory()
+    {
+        var cards = SettingsSkeleton.CreateSections()
+            .Single(section => section.Name == "Correction").Settings;
+        var categories = cards.Where(card => card.Path.StartsWith("correction.enabled_grammar_categories.")).ToArray();
+
+        CollectionAssert.AreEqual(
+            GrammarCategories.All.Select(category => $"correction.enabled_grammar_categories.{category.Value}").ToArray(),
+            categories.Select(card => card.Path).ToArray());
+        Assert.IsTrue(categories.All(card => card.IsEnabled && !card.IsAvailable));
+    }
+
+    [TestMethod]
     public void DropdownOptionsRenderAsLabels()
     {
         var option = SettingsSkeleton.Modes().First();

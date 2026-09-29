@@ -46,6 +46,10 @@ public sealed class ConfigStorage
         var text = File.ReadAllText(path);
         var config = TomlSerializer.Deserialize<AppConfig>(text, TomlOptions)
             ?? throw new InvalidDataException("Config file was empty.");
+        config.Correction.EnabledGrammarCategories = config.Correction.EnabledGrammarCategories
+            .Select(category => category == "punctuation" ? "spacing" : category)
+            .Distinct()
+            .ToList();
         ConfigValidator.Validate(config);
         return config;
     }

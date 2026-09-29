@@ -158,9 +158,16 @@ fn validate_correction(config: &AppConfig) -> Result<(), ConfigValidationError> 
             GrammarCategory::Agreement
             | GrammarCategory::Capitalization
             | GrammarCategory::Clarity
-            | GrammarCategory::Punctuation
             | GrammarCategory::Tense
-            | GrammarCategory::WordOrder => {}
+            | GrammarCategory::WordOrder
+            | GrammarCategory::MissingPunctuation
+            | GrammarCategory::ExtraPunctuation
+            | GrammarCategory::RepeatedWords
+            | GrammarCategory::Articles
+            | GrammarCategory::Prepositions
+            | GrammarCategory::Spacing
+            | GrammarCategory::Apostrophes
+            | GrammarCategory::Homophones => {}
         }
     }
 

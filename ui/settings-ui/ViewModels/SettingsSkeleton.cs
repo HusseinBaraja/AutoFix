@@ -70,6 +70,7 @@ public static class SettingsSkeleton
         [
             Toggle("Correction enabled", "Allow AutoFix to apply corrections.", "correction.enabled", config.Correction.Enabled),
             Dropdown("Correction mode", "Choose typos only or grammar-aware correction.", "correction.mode", config.Correction.Mode, Modes()),
+            ..GrammarCategorySettings(config),
             Dropdown("High confidence behavior", "Behavior when correction confidence is high.", "correction.high_confidence_behavior", config.Correction.HighConfidenceBehavior, ConfidenceBehaviors()),
             Dropdown("Medium confidence behavior", "Behavior when correction confidence is medium.", "correction.medium_confidence_behavior", config.Correction.MediumConfidenceBehavior, ConfidenceBehaviors()),
             Dropdown("Low confidence behavior", "Recommended: do nothing for safety.", "correction.low_confidence_behavior", config.Correction.LowConfidenceBehavior, ConfidenceBehaviors()),
@@ -135,6 +136,23 @@ public static class SettingsSkeleton
 
     private static SettingCardViewModel Toggle(string title, string description, string path, bool value) =>
         new() { Title = title, Description = description, Kind = "Toggle", Path = path, IsEnabled = value };
+
+    private static IEnumerable<SettingCardViewModel> GrammarCategorySettings(AppConfig config)
+    {
+        foreach (var category in GrammarCategories.All)
+        {
+            yield return new SettingCardViewModel
+            {
+                Title = category.Label,
+                Description = category.Description,
+                Kind = "Toggle",
+                Path = $"correction.enabled_grammar_categories.{category.Value}",
+                IsEnabled = config.Correction.Mode == "typos_only"
+                    || config.Correction.EnabledGrammarCategories.Contains(category.Value),
+                IsAvailable = config.Correction.Mode == "typos_plus_grammar",
+            };
+        }
+    }
 
     private static SettingCardViewModel Dropdown(
         string title,

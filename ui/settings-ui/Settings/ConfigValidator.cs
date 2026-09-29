@@ -54,6 +54,12 @@ public static class ConfigValidator
         {
             throw Invalid("correction.enabled_grammar_categories", "must be empty unless grammar mode is enabled");
         }
+        var categories = GrammarCategories.All.Select(category => category.Value).ToHashSet();
+        if (config.Correction.EnabledGrammarCategories.Any(category => !categories.Contains(category))
+            || config.Correction.EnabledGrammarCategories.Count != config.Correction.EnabledGrammarCategories.Distinct().Count())
+        {
+            throw Invalid("correction.enabled_grammar_categories", "contains an unknown or duplicate category");
+        }
     }
 
     /// <summary>Restricts API providers, endpoints, and request settings.</summary>

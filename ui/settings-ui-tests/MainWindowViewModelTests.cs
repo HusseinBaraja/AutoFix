@@ -30,6 +30,33 @@ public sealed class MainWindowViewModelTests
     }
 
     [TestMethod]
+    public async Task ModeChangeControlsGrammarAndPersistsEnabledCategories()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var ipcClient = new FakeBackgroundIpcClient();
+        var viewModel = new MainWindowViewModel(
+            ipcClient, fixture.Storage, new NullConfigFileDialog(),
+            new FakeApiKeyStatus(false), new FakeStartupRegistration());
+        await viewModel.LoadSettingsAsync();
+
+        var category = Card(viewModel, "correction.enabled_grammar_categories.homophones");
+        Assert.IsFalse(category.IsAvailable);
+        Card(viewModel, "correction.mode").SelectedValue = "typos_plus_grammar";
+        Assert.IsTrue(category.IsAvailable);
+        category.IsEnabled = false;
+        await WaitForAsync(() => !viewModel.IsDirty && ipcClient.ReloadCount > 0);
+        var saved = fixture.Storage.Load(fixture.Path);
+        Assert.AreEqual("typos_plus_grammar", saved.Correction.Mode);
+        Assert.IsFalse(saved.Correction.EnabledGrammarCategories.Contains("homophones"));
+        Assert.IsTrue(saved.Correction.EnabledGrammarCategories.Contains("capitalization"));
+
+        Card(viewModel, "correction.mode").SelectedValue = "typos_only";
+        Assert.IsFalse(category.IsAvailable);
+        await WaitForAsync(() => fixture.Storage.Load(fixture.Path).Correction.Mode == "typos_only");
+        Assert.AreEqual(0, fixture.Storage.Load(fixture.Path).Correction.EnabledGrammarCategories.Count);
+    }
+
+    [TestMethod]
     public async Task LoadSettingsDetachesOldSettingHandlers()
     {
         using var fixture = TempConfigFixture.Create();

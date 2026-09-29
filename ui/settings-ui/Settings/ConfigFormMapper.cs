@@ -75,6 +75,12 @@ public static class ConfigFormMapper
     {
         config.Correction.Enabled = Toggle(values, "correction.enabled");
         config.Correction.Mode = Dropdown(values, "correction.mode");
+        config.Correction.EnabledGrammarCategories = config.Correction.Mode == "typos_plus_grammar"
+            ? GrammarCategories.All
+                .Where(category => Toggle(values, $"correction.enabled_grammar_categories.{category.Value}"))
+                .Select(category => category.Value)
+                .ToList()
+            : [];
         config.Correction.Engine = Dropdown(values, "correction.engine");
         config.Correction.HighConfidenceBehavior = Dropdown(values, "correction.high_confidence_behavior");
         config.Correction.MediumConfidenceBehavior = Dropdown(values, "correction.medium_confidence_behavior");

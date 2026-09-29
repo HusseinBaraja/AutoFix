@@ -6,6 +6,7 @@ using AutoFix.SettingsUi.Models;
 public sealed class SettingCardViewModel : ObservableObject
 {
     private bool isEnabled;
+    private bool isAvailable = true;
     private string selectedValue = "";
     private string hotkey = "";
     private string textValue = "";
@@ -24,6 +25,12 @@ public sealed class SettingCardViewModel : ObservableObject
     {
         get => isEnabled;
         set => SetProperty(ref isEnabled, value);
+    }
+
+    public bool IsAvailable
+    {
+        get => isAvailable;
+        set => SetProperty(ref isAvailable, value);
     }
 
     public string SelectedValue

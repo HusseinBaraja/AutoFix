@@ -47,6 +47,19 @@ public sealed class ConfigStorageTests
     }
 
     [TestMethod]
+    public void LegacyPunctuationCategoryLoadsAsSpacing()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var config = AppConfig.Default();
+        config.Correction.Mode = "typos_plus_grammar";
+        config.Correction.EnabledGrammarCategories = ["spacing"];
+        fixture.Storage.Save(config);
+        File.WriteAllText(fixture.Path, File.ReadAllText(fixture.Path).Replace("\"spacing\"", "\"punctuation\""));
+
+        CollectionAssert.AreEqual(new[] { "spacing" }, fixture.Storage.Load(fixture.Path).Correction.EnabledGrammarCategories);
+    }
+
+    [TestMethod]
     public void LoadReadsCurrentSettings()
     {
         using var fixture = TempConfigFixture.Create();

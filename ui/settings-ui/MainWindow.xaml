@@ -176,6 +176,7 @@
                                                 <CheckBox Style="{StaticResource ToggleSwitch}"
                                                           HorizontalAlignment="Right"
                                                           IsChecked="{Binding IsEnabled}"
+                                                          IsEnabled="{Binding IsAvailable}"
                                                           Visibility="{Binding IsToggle, Converter={StaticResource BoolToVisibility}}" />
                                                 <ComboBox Width="320"
                                                           ItemsSource="{Binding Options}"

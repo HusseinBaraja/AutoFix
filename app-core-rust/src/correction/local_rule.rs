@@ -41,18 +41,23 @@ pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
 
     let words = words(original);
     let protected = protected_ranges(input, &words);
-    let mut candidates = typo_candidates(input, &words);
+    let mut candidates = typo_candidates(&words);
 
     if input.mode == CorrectionMode::TyposPlusGrammar {
         grammar_candidates(input, &words, &mut candidates);
     }
 
-    // Prefer typo edits when two conservative rules point at the same source.
+    // Prefer typo edits, then article replacements that can include enabled
+    // capitalization, when conservative rules share a source span.
     candidates.sort_by_key(|candidate| {
         (
             candidate.start_byte,
             candidate.end_byte,
-            !matches!(candidate.kind, CorrectionChangeKind::Typo),
+            match candidate.kind {
+                CorrectionChangeKind::Typo => 0,
+                CorrectionChangeKind::Grammar(GrammarCategory::Articles) => 1,
+                CorrectionChangeKind::Grammar(_) => 2,
+            },
         )
     });
 
@@ -184,17 +189,13 @@ fn lower_confidence(current: &mut Option<ConfidenceTier>, candidate: ConfidenceT
 }
 
 /// Finds known misspellings while preserving case and sentence starts.
-fn typo_candidates(input: &CorrectionInput, words: &[Word<'_>]) -> Vec<Candidate> {
-    let capitalization_enabled = grammar_enabled(input, GrammarCategory::Capitalization);
+fn typo_candidates(words: &[Word<'_>]) -> Vec<Candidate> {
     words
         .iter()
         .filter_map(|word| {
             let lower = word.text.to_ascii_lowercase();
             let (replacement, confidence) = typo_replacement(&lower)?;
-            let mut replacement = preserve_case(word.text, replacement)?;
-            if capitalization_enabled && is_sentence_start(input, word.start_byte) {
-                replacement = capitalize_first(&replacement);
-            }
+            let replacement = preserve_case(word.text, replacement)?;
             Some(word_candidate(
                 word,
                 replacement,
@@ -252,6 +253,13 @@ fn typo_replacement(word: &str) -> Option<(&'static str, ConfidenceTier)> {
         "alot" => ("a lot", Medium),
         _ => return None,
     })
+}
+
+/// Accepts only a known spelling replacement when an API labels an edit a typo.
+pub(super) fn is_known_typo_change(original: &str, replacement: &str) -> bool {
+    typo_replacement(&original.to_ascii_lowercase())
+        .and_then(|(expected, _)| preserve_case(original, expected))
+        .is_some_and(|expected| expected == replacement)
 }
 
 /// Adds candidates only for enabled grammar categories.
@@ -318,8 +326,151 @@ fn grammar_candidates(input: &CorrectionInput, words: &[Word<'_>], out: &mut Vec
         }
     }
 
-    if grammar_enabled(input, GrammarCategory::Punctuation) {
-        punctuation_candidates(&input.executable_context, out);
+    if grammar_enabled(input, GrammarCategory::Spacing) {
+        spacing_candidates(&input.executable_context, out);
+    }
+    if grammar_enabled(input, GrammarCategory::ExtraPunctuation) {
+        extra_punctuation_candidates(&input.executable_context, out);
+    }
+    if grammar_enabled(input, GrammarCategory::MissingPunctuation)
+        && input.trigger_type == super::TriggerType::ManualShortcut
+        && words.len() >= 3
+        && input
+            .executable_context
+            .chars()
+            .last()
+            .is_some_and(char::is_alphabetic)
+    {
+        let at = input.executable_context.len();
+        let char_at = input.executable_context.chars().count();
+        out.push(Candidate {
+            start_byte: at,
+            end_byte: at,
+            start_char: char_at,
+            end_char: char_at,
+            replacement: ".".into(),
+            kind: CorrectionChangeKind::Grammar(GrammarCategory::MissingPunctuation),
+            confidence: ConfidenceTier::Medium,
+        });
+    }
+    for pair in words.windows(2) {
+        if !only_whitespace_between(input, &pair[0], &pair[1]) {
+            continue;
+        }
+        let left = pair[0].text.to_ascii_lowercase();
+        let right = pair[1].text.to_ascii_lowercase();
+        if grammar_enabled(input, GrammarCategory::RepeatedWords)
+            && left == right
+            && !matches!(left.as_str(), "had" | "that")
+        {
+            out.push(Candidate {
+                start_byte: pair[0].end_byte,
+                end_byte: pair[1].end_byte,
+                start_char: pair[0].end_char,
+                end_char: pair[1].end_char,
+                replacement: String::new(),
+                kind: CorrectionChangeKind::Grammar(GrammarCategory::RepeatedWords),
+                confidence: ConfidenceTier::High,
+            });
+        }
+        if grammar_enabled(input, GrammarCategory::Articles) {
+            let replacement = match (left.as_str(), right.chars().next()) {
+                ("a", _) if matches!(right.as_str(), "hour" | "honest" | "honor" | "heir") => {
+                    Some("an")
+                }
+                ("a", Some('a' | 'e' | 'i' | 'o' | 'u'))
+                    if !right.starts_with("uni") && !right.starts_with("use") && right != "one" =>
+                {
+                    Some("an")
+                }
+                (
+                    "an",
+                    Some(
+                        'b' | 'c' | 'd' | 'f' | 'g' | 'h' | 'j' | 'k' | 'l' | 'm' | 'n' | 'p' | 'q'
+                        | 'r' | 's' | 't' | 'v' | 'w' | 'x' | 'y' | 'z',
+                    ),
+                ) if !matches!(right.as_str(), "hour" | "honest" | "honor" | "heir") => Some("a"),
+                ("an", _)
+                    if right.starts_with("uni") || right.starts_with("use") || right == "one" =>
+                {
+                    Some("a")
+                }
+                _ => None,
+            };
+            if let Some(mut replacement) =
+                replacement.and_then(|value| preserve_case(pair[0].text, value))
+            {
+                if grammar_enabled(input, GrammarCategory::Capitalization)
+                    && is_sentence_start(input, pair[0].start_byte)
+                {
+                    replacement = capitalize_first(&replacement);
+                }
+                out.push(word_candidate(
+                    &pair[0],
+                    replacement,
+                    CorrectionChangeKind::Grammar(GrammarCategory::Articles),
+                    ConfidenceTier::Medium,
+                ));
+            }
+        }
+        if grammar_enabled(input, GrammarCategory::Prepositions) {
+            let replacement = match (left.as_str(), right.as_str()) {
+                ("depend" | "depends", "of") => Some("on"),
+                ("interested", "on") => Some("in"),
+                ("listen" | "listening", "on") => Some("to"),
+                _ => None,
+            };
+            if let Some(replacement) =
+                replacement.and_then(|value| preserve_case(pair[1].text, value))
+            {
+                out.push(word_candidate(
+                    &pair[1],
+                    replacement,
+                    CorrectionChangeKind::Grammar(GrammarCategory::Prepositions),
+                    ConfidenceTier::Medium,
+                ));
+            }
+        }
+        if grammar_enabled(input, GrammarCategory::Homophones) {
+            let replacement = match (left.as_str(), right.as_str()) {
+                ("your", "welcome" | "right") => Some("you're"),
+                ("their", "is" | "are") => Some("there"),
+                ("its", "a" | "an") => Some("it's"),
+                _ => None,
+            };
+            if let Some(replacement) =
+                replacement.and_then(|value| preserve_case(pair[0].text, value))
+            {
+                out.push(word_candidate(
+                    &pair[0],
+                    replacement,
+                    CorrectionChangeKind::Grammar(GrammarCategory::Homophones),
+                    ConfidenceTier::Medium,
+                ));
+            }
+        }
+    }
+    if grammar_enabled(input, GrammarCategory::Apostrophes) {
+        for word in words {
+            let replacement = match word.text.to_ascii_lowercase().as_str() {
+                "dont" => Some("don't"),
+                "cant" => Some("can't"),
+                "wont" => Some("won't"),
+                "isnt" => Some("isn't"),
+                "arent" => Some("aren't"),
+                "wasnt" => Some("wasn't"),
+                _ => None,
+            };
+            if let Some(replacement) = replacement.and_then(|value| preserve_case(word.text, value))
+            {
+                out.push(word_candidate(
+                    word,
+                    replacement,
+                    CorrectionChangeKind::Grammar(GrammarCategory::Apostrophes),
+                    ConfidenceTier::High,
+                ));
+            }
+        }
     }
 }
 
@@ -359,7 +510,7 @@ fn tense_replacement(auxiliary: &str, verb: &str) -> Option<&'static str> {
 }
 
 /// Removes spaces directly before supported punctuation marks.
-fn punctuation_candidates(text: &str, out: &mut Vec<Candidate>) {
+fn spacing_candidates(text: &str, out: &mut Vec<Candidate>) {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut index = 0;
     while index < chars.len() {
@@ -381,7 +532,27 @@ fn punctuation_candidates(text: &str, out: &mut Vec<Candidate>) {
                 start_char: start_index,
                 end_char: index,
                 replacement: String::new(),
-                kind: CorrectionChangeKind::Grammar(GrammarCategory::Punctuation),
+                kind: CorrectionChangeKind::Grammar(GrammarCategory::Spacing),
+                confidence: ConfidenceTier::High,
+            });
+        }
+    }
+}
+
+/// Removes a second consecutive mark, excluding ellipses and mixed punctuation.
+fn extra_punctuation_candidates(text: &str, out: &mut Vec<Candidate>) {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    for index in 1..chars.len() {
+        if chars[index].1 == chars[index - 1].1
+            && matches!(chars[index].1, '!' | '?' | ',' | ';' | ':')
+        {
+            out.push(Candidate {
+                start_byte: chars[index].0,
+                end_byte: chars.get(index + 1).map_or(text.len(), |entry| entry.0),
+                start_char: index,
+                end_char: index + 1,
+                replacement: String::new(),
+                kind: CorrectionChangeKind::Grammar(GrammarCategory::ExtraPunctuation),
                 confidence: ConfidenceTier::High,
             });
         }
@@ -774,10 +945,8 @@ mod tests {
     #[test]
     fn grammar_mode_applies_only_enabled_categories() {
         let mut request = input("i have went home .", CorrectionMode::TyposPlusGrammar);
-        request.enabled_grammar_categories = vec![
-            GrammarCategory::Capitalization,
-            GrammarCategory::Punctuation,
-        ];
+        request.enabled_grammar_categories =
+            vec![GrammarCategory::Capitalization, GrammarCategory::Spacing];
 
         let output = correct(&request);
 
@@ -786,7 +955,7 @@ mod tests {
             matches!(
                 change.kind,
                 CorrectionChangeKind::Grammar(GrammarCategory::Capitalization)
-                    | CorrectionChangeKind::Grammar(GrammarCategory::Punctuation)
+                    | CorrectionChangeKind::Grammar(GrammarCategory::Spacing)
             )
         }));
     }
@@ -809,12 +978,62 @@ mod tests {
     }
 
     #[test]
+    fn suggested_grammar_rules_require_their_categories() {
+        let cases = [
+            (
+                GrammarCategory::MissingPunctuation,
+                "we are ready",
+                "we are ready.",
+            ),
+            (GrammarCategory::ExtraPunctuation, "ready!!", "ready!"),
+            (GrammarCategory::RepeatedWords, "the the book", "the book"),
+            (GrammarCategory::Articles, "a apple", "an apple"),
+            (
+                GrammarCategory::Prepositions,
+                "depend of us",
+                "depend on us",
+            ),
+            (GrammarCategory::Spacing, "ready !", "ready!"),
+            (GrammarCategory::Apostrophes, "dont go", "don't go"),
+            (
+                GrammarCategory::Homophones,
+                "your welcome",
+                "you're welcome",
+            ),
+        ];
+        for (category, original, expected) in cases {
+            let mut request = input(original, CorrectionMode::TyposPlusGrammar);
+            assert_eq!(correct(&request).corrected_executable_text, original);
+            request.enabled_grammar_categories = vec![category];
+            let output = correct(&request);
+            assert_eq!(output.corrected_executable_text, expected, "{category:?}");
+            assert!(output
+                .changes
+                .unwrap()
+                .iter()
+                .all(|change| { change.kind == CorrectionChangeKind::Grammar(category) }));
+        }
+    }
+
+    #[test]
+    fn article_and_capitalization_combine_only_when_both_enabled() {
+        let mut request = input("a apple", CorrectionMode::TyposPlusGrammar);
+        request.enabled_grammar_categories =
+            vec![GrammarCategory::Articles, GrammarCategory::Capitalization];
+        assert_eq!(correct(&request).corrected_executable_text, "An apple");
+        request.enabled_grammar_categories = vec![GrammarCategory::Articles];
+        assert_eq!(correct(&request).corrected_executable_text, "an apple");
+        request.executable_context = "an university".into();
+        assert_eq!(correct(&request).corrected_executable_text, "a university");
+    }
+
+    #[test]
     fn typos_only_ignores_grammar_categories_even_if_input_is_inconsistent() {
         let mut request = input("i is ready .", CorrectionMode::TyposOnly);
         request.enabled_grammar_categories = vec![
             GrammarCategory::Agreement,
             GrammarCategory::Capitalization,
-            GrammarCategory::Punctuation,
+            GrammarCategory::Spacing,
         ];
 
         let output = correct(&request);
