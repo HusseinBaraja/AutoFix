@@ -25,6 +25,7 @@ struct Candidate {
     confidence: ConfidenceTier,
 }
 
+/// Applies conservative English rules only to the executable span.
 pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
     let started = Instant::now();
     let original = &input.executable_context;
@@ -130,10 +131,12 @@ pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
     CorrectionOutput::changed(corrected, confidence, Some(changes), elapsed_ms(started))
 }
 
+/// Converts elapsed time to a saturating millisecond count.
 fn elapsed_ms(started: Instant) -> u64 {
     started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
 }
 
+/// Allows English when the preferred or detected language supports it.
 fn supports_english(input: &CorrectionInput) -> bool {
     if let Some(primary) = &input.language_info.primary_language {
         return is_english_tag(primary);
@@ -147,6 +150,7 @@ fn supports_english(input: &CorrectionInput) -> bool {
             .any(|language| is_english_tag(language))
 }
 
+/// Recognizes English BCP 47 tags without treating other languages as English.
 fn is_english_tag(language: &str) -> bool {
     language.eq_ignore_ascii_case("en")
         || language
@@ -154,6 +158,7 @@ fn is_english_tag(language: &str) -> bool {
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("en-"))
 }
 
+/// Selects the configured action for a candidate's confidence tier.
 fn behavior_for(input: &CorrectionInput, tier: ConfidenceTier) -> ConfidenceBehavior {
     match tier {
         ConfidenceTier::High => input.confidence_behavior.high,
@@ -162,6 +167,7 @@ fn behavior_for(input: &CorrectionInput, tier: ConfidenceTier) -> ConfidenceBeha
     }
 }
 
+/// Ranks confidence from low to high for conservative result reporting.
 const fn confidence_rank(tier: ConfidenceTier) -> u8 {
     match tier {
         ConfidenceTier::Low => 0,
@@ -170,12 +176,14 @@ const fn confidence_rank(tier: ConfidenceTier) -> u8 {
     }
 }
 
+/// Retains the lowest confidence among blocked candidates.
 fn lower_confidence(current: &mut Option<ConfidenceTier>, candidate: ConfidenceTier) {
     if current.is_none_or(|tier| confidence_rank(candidate) < confidence_rank(tier)) {
         *current = Some(candidate);
     }
 }
 
+/// Finds known misspellings while preserving case and sentence starts.
 fn typo_candidates(input: &CorrectionInput, words: &[Word<'_>]) -> Vec<Candidate> {
     let capitalization_enabled = grammar_enabled(input, GrammarCategory::Capitalization);
     words
@@ -197,6 +205,7 @@ fn typo_candidates(input: &CorrectionInput, words: &[Word<'_>]) -> Vec<Candidate
         .collect()
 }
 
+/// Looks up a conservative typo replacement and its confidence.
 fn typo_replacement(word: &str) -> Option<(&'static str, ConfidenceTier)> {
     use ConfidenceTier::{High, Medium};
 
@@ -245,6 +254,7 @@ fn typo_replacement(word: &str) -> Option<(&'static str, ConfidenceTier)> {
     })
 }
 
+/// Adds candidates only for enabled grammar categories.
 fn grammar_candidates(input: &CorrectionInput, words: &[Word<'_>], out: &mut Vec<Candidate>) {
     if grammar_enabled(input, GrammarCategory::Capitalization) {
         for word in words {
@@ -313,11 +323,13 @@ fn grammar_candidates(input: &CorrectionInput, words: &[Word<'_>], out: &mut Vec
     }
 }
 
+/// Checks both grammar mode and the category's explicit setting.
 fn grammar_enabled(input: &CorrectionInput, category: GrammarCategory) -> bool {
     input.mode == CorrectionMode::TyposPlusGrammar
         && input.enabled_grammar_categories.contains(&category)
 }
 
+/// Maps supported subject and verb pairs to an agreement correction.
 fn agreement_replacement(subject: &str, verb: &str) -> Option<&'static str> {
     match (subject, verb) {
         ("i", "is" | "are") => Some("am"),
@@ -332,6 +344,7 @@ fn agreement_replacement(subject: &str, verb: &str) -> Option<&'static str> {
     }
 }
 
+/// Maps supported auxiliary and verb pairs to a tense correction.
 fn tense_replacement(auxiliary: &str, verb: &str) -> Option<&'static str> {
     match (auxiliary, verb) {
         ("have" | "has" | "had", "went") => Some("gone"),
@@ -345,6 +358,7 @@ fn tense_replacement(auxiliary: &str, verb: &str) -> Option<&'static str> {
     }
 }
 
+/// Removes spaces directly before supported punctuation marks.
 fn punctuation_candidates(text: &str, out: &mut Vec<Candidate>) {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut index = 0;
@@ -374,6 +388,7 @@ fn punctuation_candidates(text: &str, out: &mut Vec<Candidate>) {
     }
 }
 
+/// Copies a word's byte and character offsets into a candidate edit.
 fn word_candidate(
     word: &Word<'_>,
     replacement: String,
@@ -391,6 +406,7 @@ fn word_candidate(
     }
 }
 
+/// Splits alphabetic words and records offsets in bytes and Unicode scalars.
 fn words(text: &str) -> Vec<Word<'_>> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut result = Vec::new();
@@ -429,6 +445,7 @@ fn words(text: &str) -> Vec<Word<'_>> {
     result
 }
 
+/// Collects explicit terms and detectable names or structured tokens to protect.
 fn protected_ranges(input: &CorrectionInput, words: &[Word<'_>]) -> Vec<(usize, usize)> {
     let text = &input.executable_context;
     let mut ranges = Vec::new();
@@ -467,6 +484,7 @@ fn protected_ranges(input: &CorrectionInput, words: &[Word<'_>]) -> Vec<(usize, 
     ranges
 }
 
+/// Adds whole-term, case-sensitive protected matches.
 fn add_exact_matches(text: &str, term: &str, ranges: &mut Vec<(usize, usize)>) {
     if term.is_empty() {
         return;
@@ -477,6 +495,7 @@ fn add_exact_matches(text: &str, term: &str, ranges: &mut Vec<(usize, usize)>) {
     }));
 }
 
+/// Adds whole-term dictionary matches regardless of ASCII case.
 fn add_ascii_case_insensitive_matches(text: &str, term: &str, ranges: &mut Vec<(usize, usize)>) {
     if term.is_empty() {
         return;
@@ -493,6 +512,7 @@ fn add_ascii_case_insensitive_matches(text: &str, term: &str, ranges: &mut Vec<(
     );
 }
 
+/// Prevents a protected word from matching inside a larger identifier.
 fn has_term_boundaries(text: &str, start: usize, end: usize, term: &str) -> bool {
     let starts_as_word = term.chars().next().is_some_and(is_identifier_character);
     let ends_as_word = term
@@ -511,10 +531,12 @@ fn has_term_boundaries(text: &str, start: usize, end: usize, term: &str) -> bool
     (!starts_as_word || !before_is_word) && (!ends_as_word || !after_is_word)
 }
 
+/// Treats letters, digits, and underscores as identifier boundaries.
 fn is_identifier_character(character: char) -> bool {
     character.is_alphanumeric() || character == '_'
 }
 
+/// Returns byte ranges of contiguous non-whitespace chunks.
 fn non_whitespace_ranges(text: &str) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut start = None;
@@ -533,6 +555,7 @@ fn non_whitespace_ranges(text: &str) -> Vec<(usize, usize)> {
     ranges
 }
 
+/// Detects URLs, addresses, paths, handles, and code-like chunks.
 fn looks_protected_chunk(chunk: &str) -> bool {
     let trimmed = chunk.trim_matches(|character: char| {
         matches!(
@@ -594,6 +617,7 @@ fn looks_protected_chunk(chunk: &str) -> bool {
     is_url || is_email || is_path || is_dotted_resource || is_handle || is_code
 }
 
+/// Detects non-English words, mixed case names, and identifier-like words.
 fn looks_like_identifier_or_product(word: &str) -> bool {
     if !word.is_ascii() {
         return true;
@@ -608,12 +632,14 @@ fn looks_like_identifier_or_product(word: &str) -> bool {
     (has_lower && has_upper_after_first) || has_digit || all_upper
 }
 
+/// Checks for one leading uppercase character followed by lowercase letters.
 fn is_title_case(word: &str) -> bool {
     let mut characters = word.chars();
     characters.next().is_some_and(char::is_uppercase)
         && characters.all(|character| !character.is_alphabetic() || character.is_lowercase())
 }
 
+/// Uses read-only preceding context to identify a sentence boundary.
 fn is_sentence_start(input: &CorrectionInput, start_byte: usize) -> bool {
     let executable_prefix = &input.executable_context[..start_byte];
     let previous = previous_meaningful(executable_prefix)
@@ -621,18 +647,21 @@ fn is_sentence_start(input: &CorrectionInput, start_byte: usize) -> bool {
     previous.is_none_or(|character| matches!(character, '.' | '!' | '?'))
 }
 
+/// Skips trailing whitespace and closing marks when finding preceding text.
 fn previous_meaningful(text: &str) -> Option<char> {
     text.chars().rev().find(|character| {
         !character.is_whitespace() && !matches!(character, '"' | '\'' | '”' | '’' | ')' | ']' | '}')
     })
 }
 
+/// Requires adjacent rule words to have no intervening content.
 fn only_whitespace_between(input: &CorrectionInput, left: &Word<'_>, right: &Word<'_>) -> bool {
     input.executable_context[left.end_byte..right.start_byte]
         .chars()
         .all(char::is_whitespace)
 }
 
+/// Matches lower, upper, or title case and rejects ambiguous casing.
 fn preserve_case(original: &str, replacement: &str) -> Option<String> {
     if original
         .bytes()
@@ -651,6 +680,7 @@ fn preserve_case(original: &str, replacement: &str) -> Option<String> {
     }
 }
 
+/// Uppercases the first Unicode character without changing the rest.
 fn capitalize_first(text: &str) -> String {
     let mut characters = text.chars();
     let Some(first) = characters.next() else {
@@ -659,12 +689,14 @@ fn capitalize_first(text: &str) -> String {
     first.to_uppercase().chain(characters).collect()
 }
 
+/// Checks whether a candidate overlaps any protected byte range.
 fn intersects_any(start: usize, end: usize, ranges: &[(usize, usize)]) -> bool {
     ranges
         .iter()
         .any(|(other_start, other_end)| ranges_intersect(start, end, *other_start, *other_end))
 }
 
+/// Tests overlap between two half-open byte ranges.
 fn ranges_intersect(start: usize, end: usize, other_start: usize, other_end: usize) -> bool {
     start < other_end && other_start < end
 }

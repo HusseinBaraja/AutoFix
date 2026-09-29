@@ -7,7 +7,9 @@ use super::{CorrectionInput, CorrectionOutput, EngineFailure, EngineFailureKind,
 /// Engine selection is explicit for every task. Implementations must accept
 /// both correction modes; callers must not route by perceived task difficulty.
 pub trait CorrectionEngine: Send + Sync {
+    /// Identifies the implementation without inferring it from task difficulty.
     fn kind(&self) -> EngineKind;
+    /// Corrects the executable span for either correction mode.
     fn correct(&self, input: &CorrectionInput) -> CorrectionOutput;
 }
 
@@ -21,6 +23,7 @@ pub struct OpenAiCompatibleApiEngine(ApiCorrectionEngine);
 pub struct CustomApiEngine(ApiCorrectionEngine);
 
 impl Default for OpenAiCompatibleApiEngine {
+    /// Creates an API engine that reports unavailable until configured.
     fn default() -> Self {
         Self(ApiCorrectionEngine::unconfigured(
             EngineKind::OpenAiCompatibleApi,
@@ -29,12 +32,14 @@ impl Default for OpenAiCompatibleApiEngine {
 }
 
 impl Default for CustomApiEngine {
+    /// Creates a custom API engine that reports unavailable until configured.
     fn default() -> Self {
         Self(ApiCorrectionEngine::unconfigured(EngineKind::CustomApi))
     }
 }
 
 impl OpenAiCompatibleApiEngine {
+    /// Wraps a configured OpenAI-compatible transport.
     pub fn new(config: super::ApiEngineConfig) -> Self {
         Self(ApiCorrectionEngine::new(
             EngineKind::OpenAiCompatibleApi,
@@ -44,34 +49,41 @@ impl OpenAiCompatibleApiEngine {
 }
 
 impl CustomApiEngine {
+    /// Wraps a configured custom API transport.
     pub fn new(config: super::ApiEngineConfig) -> Self {
         Self(ApiCorrectionEngine::new(EngineKind::CustomApi, config))
     }
 }
 
 impl CorrectionEngine for OpenAiCompatibleApiEngine {
+    /// Returns the OpenAI-compatible API kind.
     fn kind(&self) -> EngineKind {
         self.0.kind()
     }
+    /// Delegates correction to the configured API engine.
     fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {
         self.0.correct(input)
     }
 }
 
 impl CorrectionEngine for CustomApiEngine {
+    /// Returns the custom API kind.
     fn kind(&self) -> EngineKind {
         self.0.kind()
     }
+    /// Delegates correction to the configured API engine.
     fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {
         self.0.correct(input)
     }
 }
 
 impl CorrectionEngine for LocalRuleEngine {
+    /// Returns the local rule engine kind.
     fn kind(&self) -> EngineKind {
         EngineKind::LocalRule
     }
 
+    /// Applies the local rules to the executable span.
     fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {
         local_rule::correct(input)
     }
@@ -110,6 +122,7 @@ pub struct CorrectionEngines {
 }
 
 impl Default for CorrectionEngines {
+    /// Registers the local engines and unconfigured API engines.
     fn default() -> Self {
         Self {
             local_rule: LocalRuleEngine,
@@ -121,6 +134,7 @@ impl Default for CorrectionEngines {
 }
 
 impl CorrectionEngines {
+    /// Registers both API kinds with the supplied configuration.
     pub fn with_api_config(config: super::api::ApiEngineConfig) -> Self {
         Self {
             open_ai_compatible_api: OpenAiCompatibleApiEngine::new(config.clone()),
@@ -128,6 +142,7 @@ impl CorrectionEngines {
             ..Self::default()
         }
     }
+    /// Selects the caller's explicit engine kind.
     pub fn engine(&self, kind: EngineKind) -> &dyn CorrectionEngine {
         match kind {
             EngineKind::LocalRule => &self.local_rule,
@@ -137,6 +152,7 @@ impl CorrectionEngines {
         }
     }
 
+    /// Corrects through the selected engine without automatic routing.
     pub fn correct_with(&self, kind: EngineKind, input: &CorrectionInput) -> CorrectionOutput {
         self.engine(kind).correct(input)
     }

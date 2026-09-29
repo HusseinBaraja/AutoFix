@@ -24,10 +24,12 @@ struct Endpoint<'a> {
     path: &'a str,
 }
 
+/// Validates a provider URL without opening a network connection.
 pub(super) fn validate_base(base: &str) -> Result<(), ApiError> {
     parse(base).map(|_| ())
 }
 
+/// Parses the endpoint and restricts cleartext HTTP to loopback hosts.
 fn parse(url: &str) -> Result<Endpoint<'_>, ApiError> {
     let (scheme, rest) = url
         .split_once("://")
@@ -93,6 +95,7 @@ fn parse(url: &str) -> Result<Endpoint<'_>, ApiError> {
 
 struct Handle(*mut c_void);
 impl Drop for Handle {
+    /// Releases the owned WinHTTP handle on every exit path.
     fn drop(&mut self) {
         if !self.0.is_null() {
             unsafe {
@@ -102,10 +105,12 @@ impl Drop for Handle {
     }
 }
 
+/// Encodes a null-terminated UTF-16 string for WinHTTP.
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// Sends JSON without redirects and caps the response size and request time.
 pub(super) fn post(
     url: &str,
     key: &str,
@@ -271,6 +276,7 @@ pub(super) fn post(
     })
 }
 
+/// Maps WinHTTP timeout separately from retryable transport failures.
 fn last_error() -> ApiError {
     match unsafe { GetLastError() } {
         ERROR_WINHTTP_TIMEOUT => ApiError::Timeout,

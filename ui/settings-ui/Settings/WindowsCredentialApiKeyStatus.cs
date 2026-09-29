@@ -6,6 +6,7 @@ public sealed class WindowsCredentialApiKeyStatus : IApiKeyStatus
 {
     private const int GenericCredential = 1;
 
+    /// <summary>Checks whether the selected profile has a non-empty Windows credential.</summary>
     public bool HasConfiguredApiKey(AppConfig config)
     {
         var target = $"AutoFix/provider-profile/{config.Api.ProviderPreset}";

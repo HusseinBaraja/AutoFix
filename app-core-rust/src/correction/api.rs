@@ -14,6 +14,7 @@ use super::{
 
 const MAX_RESPONSE_BYTES: u64 = 256 * 1024;
 
+/// Accepts HTTPS endpoints and loopback HTTP endpoints supported by WinHTTP.
 pub(crate) fn valid_base_url(base: &str) -> bool {
     winhttp::validate_base(base).is_ok()
 }
@@ -33,6 +34,7 @@ pub struct ApiEngineConfig {
 }
 
 impl Default for ApiEngineConfig {
+    /// Uses conservative timeouts, no automatic fallback, and the OpenAI preset.
     fn default() -> Self {
         Self {
             provider_preset: "openai_compatible".into(),
@@ -60,6 +62,7 @@ pub struct ApiCorrectionEngine {
 }
 
 impl ApiCorrectionEngine {
+    /// Builds a configured API engine for one of the API engine kinds.
     pub fn new(kind: EngineKind, config: ApiEngineConfig) -> Self {
         assert!(matches!(
             kind,
@@ -71,6 +74,7 @@ impl ApiCorrectionEngine {
         }
     }
 
+    /// Keeps an API engine available in the registry before configuration.
     pub(crate) fn unconfigured(kind: EngineKind) -> Self {
         Self { kind, config: None }
     }
@@ -101,10 +105,12 @@ impl ApiCorrectionEngine {
 }
 
 impl CorrectionEngine for ApiCorrectionEngine {
+    /// Reports the API engine kind selected at construction.
     fn kind(&self) -> EngineKind {
         self.kind
     }
 
+    /// Runs the configured request and maps failures or opt-in fallback to output.
     fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {
         let started = Instant::now();
         let Some(config) = &self.config else {
@@ -160,6 +166,7 @@ enum ApiError {
     Failure(EngineFailure),
 }
 
+/// Sends a bounded request with shared timeout and retry budget.
 fn correct_api(
     config: &ApiEngineConfig,
     input: &CorrectionInput,
@@ -221,6 +228,7 @@ fn correct_api(
     unreachable!()
 }
 
+/// Resolves a provider preset or custom base to its chat completions endpoint.
 fn endpoint(config: &ApiEngineConfig) -> Result<String, ApiError> {
     let base = match (&*config.provider_preset, config.base_url.as_deref()) {
         (_, Some(base)) => base,
@@ -233,6 +241,7 @@ fn endpoint(config: &ApiEngineConfig) -> Result<String, ApiError> {
     Ok(format!("{}/chat/completions", base.trim_end_matches('/')))
 }
 
+/// Sends informative context as read-only data and requests executable text only.
 fn payload(config: &ApiEngineConfig, input: &CorrectionInput) -> Value {
     json!({
         "model": config.model,
@@ -254,6 +263,7 @@ fn payload(config: &ApiEngineConfig, input: &CorrectionInput) -> Value {
     })
 }
 
+/// Validates the response shape, size, protected terms, and context boundary.
 fn parse_response(body: &str, input: &CorrectionInput) -> Result<String, ApiError> {
     let envelope: Value = serde_json::from_str(body).map_err(|_| invalid_response())?;
     let content = envelope
@@ -298,9 +308,11 @@ fn parse_response(body: &str, input: &CorrectionInput) -> Result<String, ApiErro
     Ok(corrected.to_owned())
 }
 
+/// Wraps invalid configuration or input as a non-retryable error.
 fn invalid(message: &'static str) -> ApiError {
     failure_error(EngineFailureKind::InvalidInput, message, false)
 }
+/// Creates a non-retryable response validation error.
 fn invalid_response() -> ApiError {
     failure_error(
         EngineFailureKind::InvalidResponse,
@@ -308,6 +320,7 @@ fn invalid_response() -> ApiError {
         false,
     )
 }
+/// Builds a failure with the transport's retry decision.
 fn failure_error(kind: EngineFailureKind, message: &'static str, retryable: bool) -> ApiError {
     ApiError::Failure(EngineFailure {
         kind,
@@ -315,6 +328,7 @@ fn failure_error(kind: EngineFailureKind, message: &'static str, retryable: bool
         retryable,
     })
 }
+/// Preserves executable input when a correction cannot be completed.
 fn failure(
     input: &CorrectionInput,
     kind: EngineFailureKind,
@@ -332,6 +346,7 @@ fn failure(
         elapsed_ms(started),
     )
 }
+/// Converts elapsed time to a saturating millisecond count.
 fn elapsed_ms(started: Instant) -> u64 {
     started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
 }

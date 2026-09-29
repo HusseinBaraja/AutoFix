@@ -100,6 +100,7 @@ pub enum EngineKind {
 }
 
 impl EngineKind {
+    /// Classifies an engine as local or API backed.
     pub const fn backend(self) -> EngineBackend {
         match self {
             Self::LocalRule | Self::LocalMl => EngineBackend::Local,
@@ -189,6 +190,7 @@ pub struct CorrectionOutput {
 }
 
 impl CorrectionOutput {
+    /// Records a completed correction and optional structured edits.
     pub fn changed(
         corrected_executable_text: String,
         confidence: ConfidenceTier,
@@ -206,6 +208,7 @@ impl CorrectionOutput {
         }
     }
 
+    /// Records a completed request that left executable text unchanged.
     pub fn unchanged(
         executable_text: String,
         confidence: ConfidenceTier,
@@ -223,6 +226,7 @@ impl CorrectionOutput {
         }
     }
 
+    /// Preserves the original executable text after a timeout.
     pub fn timed_out(executable_text: String, engine_latency_ms: u64) -> Self {
         Self {
             corrected_executable_text: executable_text,
@@ -235,6 +239,7 @@ impl CorrectionOutput {
         }
     }
 
+    /// Preserves the original executable text and reports an engine failure.
     pub fn failed(executable_text: String, failure: EngineFailure, engine_latency_ms: u64) -> Self {
         Self {
             corrected_executable_text: executable_text,
