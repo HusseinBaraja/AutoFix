@@ -26,6 +26,15 @@ public static class SettingsSkeleton
         new("API", "api"),
     ];
 
+    public static ObservableCollection<OptionItem> ApiProviders() =>
+    [
+        new("OpenAI compatible", "openai_compatible"),
+        new("OpenAI", "openai"),
+        new("Groq", "groq"),
+        new("DeepSeek", "deepseek"),
+        new("Custom endpoint", "custom"),
+    ];
+
     public static ObservableCollection<OptionItem> ConfidenceBehaviors() =>
     [
         new("Do nothing", "do_nothing"),
@@ -68,7 +77,7 @@ public static class SettingsSkeleton
         Section("Engines", "Local and API correction providers",
         [
             Dropdown("Engine", "Route correction requests.", "correction.engine", config.Correction.Engine, Engines()),
-            Text("API provider preset", "Provider profile name. API keys are not stored here.", "api.provider_preset", config.Api.ProviderPreset),
+            Dropdown("API provider preset", "Choose a provider. Store its key in Windows Credential Manager.", "api.provider_preset", config.Api.ProviderPreset, ApiProviders()),
             Text("API base URL", "Optional OpenAI-compatible endpoint.", "api.base_url", ConfigValue.Text(config.Api.BaseUrl)),
             Text("API model", "Model name used by the API engine.", "api.model", config.Api.Model),
             Text("Manual API timeout (ms)", "Timeout for manual correction requests.", "api.timeout_manual_ms", config.Api.TimeoutManualMs.ToString(CultureInfo.InvariantCulture)),

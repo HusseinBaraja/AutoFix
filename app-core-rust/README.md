@@ -13,6 +13,37 @@ This component owns the installed product's background mode:
 - Replacement engine.
 - App rules and security layer.
 
+The correction engine contract is defined in `src/correction`. It keeps
+read-only informative context separate from editable executable text and carries
+the correction mode, enabled grammar categories, language and mixed-language
+policy, dictionary and protected terms, trigger, and confidence behavior. Its
+result includes corrected executable text, change need and optional details,
+confidence, no-change reason, latency, and completion/error/timeout status.
+`LocalRuleEngine`, `LocalMlEngine`, `OpenAiCompatibleApiEngine`, and
+`CustomApiEngine` implement the same interface. `LocalRuleEngine` provides fast,
+deterministic English correction for a conservative list of clear misspellings.
+In grammar mode it also supports enabled capitalization, punctuation, agreement,
+and tense rules; clarity and word-order rules are not implemented. It preserves
+custom-dictionary entries, explicit protected terms, and detectable names,
+emails, URLs, paths, handles, hashtags, code identifiers, and product names.
+`OpenAiCompatibleApiEngine` and `CustomApiEngine` send non-streaming
+chat-completion requests through WinHTTP. Presets include OpenAI, Groq, and
+DeepSeek; `custom` requires a base URL. HTTPS is required except for loopback
+HTTP. The provider preset selects a generic Windows Credential Manager entry
+named `AutoFix/provider-profile/<preset>`; callers can store it with
+`secrets::set_secret`. API keys are never put in TOML or diagnostic logs.
+Manual and automatic requests default to 3000 ms and 700 ms respectively;
+retries share the request's time budget. `ApiCorrectionEngine::submit` runs the
+request on a worker thread so the caller can keep processing typing. Fallback
+to the local rule engine is off by default. API results contain only
+replacement text for the executable span and are rejected if protected terms
+disappear. `ApiCorrectionEngine::notice_for` marks manual failures for a small
+notice and automatic failures for silent handling. The local ML engine remains
+a placeholder. The background router and replacement path are still
+placeholders, so this engine is not yet invoked by live typing.
+Engine selection is explicit per request; neither local nor API routing depends
+on task difficulty, and both correction modes are accepted by every engine.
+
 The keyboard session tracker is implemented. It keeps up to 4,096 characters
 typed during the current engine run in memory and exposes only the known text
 before the caret as executable context. Backspace, Delete, and plain Left/Right

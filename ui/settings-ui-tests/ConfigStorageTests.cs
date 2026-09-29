@@ -6,6 +6,21 @@ namespace AutoFix.SettingsUi.Tests;
 public sealed class ConfigStorageTests
 {
     [TestMethod]
+    public void ApiDefaultsKeepFallbackOffAndRequireSecureCustomEndpoint()
+    {
+        var config = AppConfig.Default();
+        Assert.IsFalse(config.Api.FallbackToLocal);
+        Assert.AreEqual(3000L, config.Api.TimeoutManualMs);
+        Assert.AreEqual(700L, config.Api.TimeoutAutoMs);
+        config.Api.ProviderPreset = "custom";
+        Assert.ThrowsException<InvalidDataException>(() => ConfigValidator.Validate(config));
+        config.Api.BaseUrl = "http://example.com/v1";
+        Assert.ThrowsException<InvalidDataException>(() => ConfigValidator.Validate(config));
+        config.Api.BaseUrl = "http://127.0.0.1:9000/v1";
+        ConfigValidator.Validate(config);
+    }
+
+    [TestMethod]
     public void SaveWritesTomlWithoutApiKeys()
     {
         using var fixture = TempConfigFixture.Create();

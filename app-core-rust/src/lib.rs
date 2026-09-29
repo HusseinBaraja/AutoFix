@@ -1,4 +1,5 @@
 mod background;
+pub mod correction;
 mod ipc;
 mod settings;
 mod storage;
@@ -9,7 +10,6 @@ use std::panic;
 mod accessibility;
 #[cfg(test)]
 mod platform;
-#[cfg(test)]
 pub mod secrets;
 
 pub fn run_background_entry() -> i32 {

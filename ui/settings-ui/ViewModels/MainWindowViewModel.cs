@@ -44,7 +44,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         IBackgroundIpcClient ipcClient,
         ConfigStorage configStorage,
         IConfigFileDialog fileDialog)
-        : this(ipcClient, configStorage, fileDialog, new EnvironmentApiKeyStatus())
+        : this(ipcClient, configStorage, fileDialog, new WindowsCredentialApiKeyStatus())
     {
     }
 

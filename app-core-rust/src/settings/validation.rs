@@ -1,7 +1,9 @@
 use std::{error::Error, fmt};
 
+use crate::correction::{ConfidenceBehavior, CorrectionMode, GrammarCategory};
+
 use super::{
-    model::{ConfidenceBehavior, CorrectionEngine, CorrectionMode, GrammarCategory, RunMode},
+    model::{CorrectionEngine, RunMode},
     AppConfig, Shortcut,
 };
 
@@ -169,10 +171,32 @@ fn validate_api(config: &AppConfig) -> Result<(), ConfigValidationError> {
     if config.api.model.trim().is_empty() {
         return Err(ConfigValidationError::new("api.model", "must not be empty"));
     }
-    if config.api.provider_preset.trim().is_empty() {
+    if !matches!(
+        config.api.provider_preset.as_str(),
+        "openai_compatible" | "openai" | "groq" | "deepseek" | "custom"
+    ) {
         return Err(ConfigValidationError::new(
             "api.provider_preset",
-            "must not be empty",
+            "must be a supported provider preset",
+        ));
+    }
+    if config.api.provider_preset == "custom"
+        && config.api.base_url.as_deref().is_none_or(str::is_empty)
+    {
+        return Err(ConfigValidationError::new(
+            "api.base_url",
+            "required for custom provider",
+        ));
+    }
+    if config
+        .api
+        .base_url
+        .as_deref()
+        .is_some_and(|url| !crate::correction::valid_base_url(url))
+    {
+        return Err(ConfigValidationError::new(
+            "api.base_url",
+            "must be HTTPS or loopback HTTP without credentials",
         ));
     }
     if config.api.timeout_auto_ms == 0 {

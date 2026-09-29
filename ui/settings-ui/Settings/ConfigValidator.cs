@@ -9,6 +9,7 @@ public static class ConfigValidator
     private static readonly HashSet<string> Engines = ["local", "api"];
     private static readonly HashSet<string> Confidence = ["do_nothing", "suggestion", "silent"];
 
+    /// <summary>Validates settings before they are saved or applied.</summary>
     public static void Validate(AppConfig config)
     {
         RequireChoice("general.run_mode", config.General.RunMode, RunModes);
@@ -31,6 +32,7 @@ public static class ConfigValidator
         ValidateLogging(config);
     }
 
+    /// <summary>Checks correction mode, engine, and confidence settings.</summary>
     private static void ValidateCorrection(AppConfig config)
     {
         RequireChoice("correction.mode", config.Correction.Mode, Modes);
@@ -54,15 +56,34 @@ public static class ConfigValidator
         }
     }
 
+    /// <summary>Restricts API providers, endpoints, and request settings.</summary>
     private static void ValidateApi(AppConfig config)
     {
-        RequireText("api.provider_preset", config.Api.ProviderPreset);
+        if (config.Api.ProviderPreset is not ("openai_compatible" or "openai" or "groq" or "deepseek" or "custom"))
+        {
+            throw Invalid("api.provider_preset", "must be a supported provider preset");
+        }
+        if (config.Api.ProviderPreset == "custom" && string.IsNullOrWhiteSpace(config.Api.BaseUrl))
+        {
+            throw Invalid("api.base_url", "required for custom provider");
+        }
+        if (!string.IsNullOrWhiteSpace(config.Api.BaseUrl))
+        {
+            if (!Uri.TryCreate(config.Api.BaseUrl, UriKind.Absolute, out var url)
+                || (url.Scheme != Uri.UriSchemeHttps && !(url.Scheme == Uri.UriSchemeHttp && url.IsLoopback))
+                || !string.IsNullOrEmpty(url.UserInfo)
+                || !string.IsNullOrEmpty(url.Query)
+                || !string.IsNullOrEmpty(url.Fragment))
+            {
+                throw Invalid("api.base_url", "must be HTTPS or loopback HTTP without credentials");
+            }
+        }
         RequireText("api.model", config.Api.Model);
         RequirePositive("api.timeout_manual_ms", config.Api.TimeoutManualMs);
         RequirePositive("api.timeout_auto_ms", config.Api.TimeoutAutoMs);
-        if (config.Api.RetryCount < 0)
+        if (config.Api.RetryCount is < 0 or > 255)
         {
-            throw Invalid("api.retry_count", "must not be negative");
+            throw Invalid("api.retry_count", "must be between 0 and 255");
         }
         if (config.Api.Temperature is < 0 or > 2)
         {
@@ -74,6 +95,7 @@ public static class ConfigValidator
         }
     }
 
+    /// <summary>Checks dependencies between diagnostic logging options.</summary>
     private static void ValidateLogging(AppConfig config)
     {
         if (config.Logging.RedactedDebugModeEnabled && !config.Logging.DebugModeEnabled)
@@ -90,6 +112,7 @@ public static class ConfigValidator
         }
     }
 
+    /// <summary>Requires a value from the field's supported choices.</summary>
     private static void RequireChoice(string field, string value, HashSet<string> allowed)
     {
         if (!allowed.Contains(value))
@@ -98,6 +121,7 @@ public static class ConfigValidator
         }
     }
 
+    /// <summary>Requires a non-empty text value.</summary>
     private static void RequireText(string field, string value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -106,6 +130,7 @@ public static class ConfigValidator
         }
     }
 
+    /// <summary>Requires a valid shortcut with a modifier.</summary>
     private static void RequireHotkey(string field, string value)
     {
         if (!HotkeyFormatter.IsValid(value))
@@ -114,6 +139,7 @@ public static class ConfigValidator
         }
     }
 
+    /// <summary>Requires a non-empty list of non-empty strings.</summary>
     private static void RequireList(string field, IReadOnlyCollection<string> values)
     {
         if (values.Count == 0 || values.Any(string.IsNullOrWhiteSpace))
@@ -122,6 +148,7 @@ public static class ConfigValidator
         }
     }
 
+    /// <summary>Requires a positive numeric setting.</summary>
     private static void RequirePositive(string field, long value)
     {
         if (value <= 0)
@@ -130,6 +157,7 @@ public static class ConfigValidator
         }
     }
 
+    /// <summary>Names the invalid field in a storage validation error.</summary>
     private static InvalidDataException Invalid(string field, string message) =>
         new($"{field}: {message}");
 }

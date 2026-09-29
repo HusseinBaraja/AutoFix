@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::correction::{ConfidenceBehavior, CorrectionMode, GrammarCategory};
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub(crate) struct AppConfig {
     #[serde(default)]
@@ -133,35 +135,9 @@ impl Default for CorrectionConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum CorrectionMode {
-    TyposOnly,
-    TyposPlusGrammar,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub(crate) enum CorrectionEngine {
     Local,
     Api,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ConfidenceBehavior {
-    DoNothing,
-    Suggestion,
-    Silent,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum GrammarCategory {
-    Agreement,
-    Capitalization,
-    Clarity,
-    Punctuation,
-    Tense,
-    WordOrder,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -186,9 +162,24 @@ impl Default for ApiConfig {
             timeout_manual_ms: 3_000,
             timeout_auto_ms: 700,
             retry_count: 1,
-            fallback_to_local: true,
+            fallback_to_local: false,
             temperature: 0.0,
             streaming: false,
+        }
+    }
+}
+
+impl From<&ApiConfig> for crate::correction::ApiEngineConfig {
+    fn from(config: &ApiConfig) -> Self {
+        Self {
+            provider_preset: config.provider_preset.clone(),
+            base_url: config.base_url.clone(),
+            model: config.model.clone(),
+            timeout_manual_ms: config.timeout_manual_ms,
+            timeout_auto_ms: config.timeout_auto_ms,
+            retry_count: config.retry_count,
+            fallback_to_local: config.fallback_to_local,
+            temperature: config.temperature,
         }
     }
 }

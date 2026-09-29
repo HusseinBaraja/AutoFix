@@ -130,7 +130,7 @@ public sealed class ApiConfig
     public string? BaseUrl { get; set; }
 
     [JsonPropertyName("model")]
-    public string Model { get; set; } = "gemini-2.5-flash-lite";
+    public string Model { get; set; } = "gpt-4.1-mini";
 
     [JsonPropertyName("timeout_manual_ms")]
     public long TimeoutManualMs { get; set; } = 3000;
@@ -142,7 +142,7 @@ public sealed class ApiConfig
     public int RetryCount { get; set; } = 1;
 
     [JsonPropertyName("fallback_to_local")]
-    public bool FallbackToLocal { get; set; } = true;
+    public bool FallbackToLocal { get; set; }
 
     [JsonPropertyName("temperature")]
     public double Temperature { get; set; }

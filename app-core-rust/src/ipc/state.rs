@@ -39,7 +39,7 @@ impl IpcServerState {
         match request {
             IpcRequest::GetAppStatus => IpcResponse::AppStatus(self.status()),
             IpcRequest::GetCorrectionMode => IpcResponse::CorrectionMode(CorrectionModeResponse {
-                mode: self.config.correction.mode.clone().into(),
+                mode: self.config.correction.mode.into(),
             }),
             IpcRequest::GetCurrentEngine => IpcResponse::CurrentEngine(CorrectionEngineResponse {
                 engine: self.config.correction.engine.clone().into(),
@@ -140,7 +140,7 @@ impl IpcServerState {
     fn status(&self) -> AppStatusResponse {
         AppStatusResponse {
             running: true,
-            correction_mode: self.config.correction.mode.clone().into(),
+            correction_mode: self.config.correction.mode.into(),
             engine: self.config.correction.engine.clone().into(),
         }
     }

@@ -83,7 +83,7 @@ public static class ConfigFormMapper
 
     private static void ApplyApi(AppConfig config, IReadOnlyDictionary<string, SettingCardViewModel> values)
     {
-        config.Api.ProviderPreset = Text(values, "api.provider_preset");
+        config.Api.ProviderPreset = Dropdown(values, "api.provider_preset");
         config.Api.BaseUrl = NullWhenEmpty(Text(values, "api.base_url"));
         config.Api.Model = Text(values, "api.model");
         config.Api.TimeoutManualMs = Long(values, "api.timeout_manual_ms");
