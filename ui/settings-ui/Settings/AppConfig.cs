@@ -128,6 +128,9 @@ public sealed class CorrectionConfig
 
     [JsonPropertyName("uncertain_language_policy")]
     public string UncertainLanguagePolicy { get; set; } = "high_confidence_typos_only";
+
+    [JsonPropertyName("mixed_language_policy")]
+    public string MixedLanguagePolicy { get; set; } = "dominant_language_only";
 }
 
 public sealed class ApiConfig

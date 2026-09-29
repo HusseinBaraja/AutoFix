@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use crate::correction::{ConfidenceBehavior, CorrectionMode, GrammarCategory};
+use crate::correction::{ConfidenceBehavior, CorrectionMode, GrammarCategory, MixedLanguagePolicy};
 
 use super::{
     model::{CorrectionEngine, RunMode},
@@ -166,6 +166,14 @@ fn validate_correction(config: &AppConfig) -> Result<(), ConfigValidationError> 
     }
     match config.correction.engine {
         CorrectionEngine::Local | CorrectionEngine::Api => {}
+    }
+    if config.correction.mixed_language_policy == MixedLanguagePolicy::PerToken
+        && config.correction.engine != CorrectionEngine::Api
+    {
+        return Err(ConfigValidationError::new(
+            "correction.mixed_language_policy",
+            "per-token correction requires the API engine",
+        ));
     }
     match config.correction.mode {
         CorrectionMode::TyposOnly if !config.correction.enabled_grammar_categories.is_empty() => {

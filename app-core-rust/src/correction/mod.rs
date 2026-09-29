@@ -8,6 +8,7 @@ mod contract;
 mod engines;
 pub(crate) mod language;
 mod local_rule;
+mod mixed_language;
 
 pub(crate) use api::valid_base_url;
 pub use api::{ApiCorrectionEngine, ApiEngineConfig, ApiNotice};

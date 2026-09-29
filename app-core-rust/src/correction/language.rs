@@ -41,9 +41,30 @@ pub(crate) fn resolve(
     policy: UncertainLanguagePolicy,
 ) -> LanguageSelection {
     let detected = detect(informative, executable);
-    let current = (detected.len() == 1)
-        .then(|| detected.first().cloned())
-        .flatten();
+    let current = if detected.len() == 1 {
+        detected.first().cloned()
+    } else if detected.len() > 1 {
+        let text = format!("{informative} {executable}");
+        detected
+            .iter()
+            .max_by_key(|tag| {
+                text.chars()
+                    .filter(|character| match tag.as_str() {
+                        "en" => character.is_ascii_alphabetic(),
+                        "und-Arab" => (0x0600..=0x08ff).contains(&(*character as u32)),
+                        "und-Cyrl" => (0x0400..=0x052f).contains(&(*character as u32)),
+                        "und-Deva" => (0x0900..=0x097f).contains(&(*character as u32)),
+                        "und-Hani" => (0x4e00..=0x9fff).contains(&(*character as u32)),
+                        "ja" => (0x3040..=0x30ff).contains(&(*character as u32)),
+                        "ko" => (0xac00..=0xd7af).contains(&(*character as u32)),
+                        _ => false,
+                    })
+                    .count()
+            })
+            .cloned()
+    } else {
+        None
+    };
     let session_detected = current.or_else(|| session_detected.map(str::to_owned));
     let primary = app_override
         .or(global_preferred)
@@ -151,6 +172,7 @@ mod tests {
             .detected_languages
             .contains(&"und-Arab".to_owned()));
         assert!(mixed.info.detected_languages.contains(&"en".to_owned()));
+        assert_eq!(mixed.info.primary_language.as_deref(), Some("en"));
     }
 
     #[test]

@@ -9,6 +9,7 @@ public static class ConfigValidator
     private static readonly HashSet<string> Engines = ["local", "api"];
     private static readonly HashSet<string> Confidence = ["do_nothing", "suggestion", "silent"];
     private static readonly HashSet<string> UncertainLanguagePolicies = ["high_confidence_typos_only", "do_nothing", "correct_normally"];
+    private static readonly HashSet<string> MixedLanguagePolicies = ["disable_correction", "dominant_language_only", "per_token"];
 
     /// <summary>Validates settings before they are saved or applied.</summary>
     public static void Validate(AppConfig config)
@@ -39,6 +40,11 @@ public static class ConfigValidator
         RequireChoice("correction.mode", config.Correction.Mode, Modes);
         RequireChoice("correction.engine", config.Correction.Engine, Engines);
         RequireChoice("correction.uncertain_language_policy", config.Correction.UncertainLanguagePolicy, UncertainLanguagePolicies);
+        RequireChoice("correction.mixed_language_policy", config.Correction.MixedLanguagePolicy, MixedLanguagePolicies);
+        if (config.Correction.MixedLanguagePolicy == "per_token" && config.Correction.Engine != "api")
+        {
+            throw Invalid("correction.mixed_language_policy", "per-token correction requires the API engine");
+        }
         if (config.Correction.PreferredLanguage is { } tag && !ValidLanguageTag(tag))
         {
             throw Invalid("correction.preferred_language", "must be a BCP 47 language tag");

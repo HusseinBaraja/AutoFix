@@ -85,6 +85,7 @@ public static class ConfigFormMapper
         config.Correction.PreferredLanguage = NullWhenEmpty(Text(values, "correction.preferred_language"));
         config.Correction.AppLanguageOverrides = List(values, "correction.app_language_overrides");
         config.Correction.UncertainLanguagePolicy = Dropdown(values, "correction.uncertain_language_policy");
+        config.Correction.MixedLanguagePolicy = Dropdown(values, "correction.mixed_language_policy");
         config.Correction.HighConfidenceBehavior = Dropdown(values, "correction.high_confidence_behavior");
         config.Correction.MediumConfidenceBehavior = Dropdown(values, "correction.medium_confidence_behavior");
         config.Correction.LowConfidenceBehavior = Dropdown(values, "correction.low_confidence_behavior");

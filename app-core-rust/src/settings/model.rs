@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::correction::{
-    ConfidenceBehavior, CorrectionMode, GrammarCategory, UncertainLanguagePolicy,
+    ConfidenceBehavior, CorrectionMode, GrammarCategory, MixedLanguagePolicy,
+    UncertainLanguagePolicy,
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -121,6 +122,8 @@ pub(crate) struct CorrectionConfig {
     pub(crate) app_language_overrides: Vec<String>,
     #[serde(default)]
     pub(crate) uncertain_language_policy: UncertainLanguagePolicy,
+    #[serde(default)]
+    pub(crate) mixed_language_policy: MixedLanguagePolicy,
 }
 
 fn default_true() -> bool {
@@ -140,6 +143,7 @@ impl Default for CorrectionConfig {
             preferred_language: None,
             app_language_overrides: Vec::new(),
             uncertain_language_policy: UncertainLanguagePolicy::default(),
+            mixed_language_policy: MixedLanguagePolicy::default(),
         }
     }
 }

@@ -15,7 +15,7 @@ fn input(mode: CorrectionMode) -> CorrectionInput {
             primary_language: Some("en-US".to_owned()),
             detected_languages: vec!["en-US".to_owned()],
         },
-        mixed_language_policy: MixedLanguagePolicy::PreserveNonPrimary,
+        mixed_language_policy: MixedLanguagePolicy::DominantLanguageOnly,
         uncertain_language_policy: UncertainLanguagePolicy::default(),
         custom_dictionary: vec!["AutoFix".to_owned()],
         protected_terms: vec!["teh-brand".to_owned()],

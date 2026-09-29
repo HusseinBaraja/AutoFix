@@ -35,6 +35,10 @@ fn default_config_has_requested_values() {
         crate::correction::UncertainLanguagePolicy::HighConfidenceTyposOnly
     );
     assert_eq!(
+        config.correction.mixed_language_policy,
+        crate::correction::MixedLanguagePolicy::DominantLanguageOnly
+    );
+    assert_eq!(
         config.correction.high_confidence_behavior,
         ConfidenceBehavior::Silent
     );
@@ -180,6 +184,8 @@ fn language_settings_round_trip_and_validate() {
     config.correction.app_language_overrides = vec!["notepad.exe=fr-FR".into()];
     config.correction.uncertain_language_policy =
         crate::correction::UncertainLanguagePolicy::DoNothing;
+    config.correction.mixed_language_policy =
+        crate::correction::MixedLanguagePolicy::DisableCorrection;
     let encoded = config_to_toml(&config).unwrap();
     assert_eq!(
         super::toml_io::parse_config(&encoded).unwrap().correction,
@@ -199,6 +205,18 @@ fn language_settings_round_trip_and_validate() {
         config.validate().unwrap_err().field(),
         "correction.preferred_language"
     );
+}
+
+#[test]
+fn per_token_policy_requires_api_engine() {
+    let mut config = AppConfig::default();
+    config.correction.mixed_language_policy = crate::correction::MixedLanguagePolicy::PerToken;
+    assert_eq!(
+        config.validate().unwrap_err().field(),
+        "correction.mixed_language_policy"
+    );
+    config.correction.engine = CorrectionEngine::Api;
+    assert!(config.validate().is_ok());
 }
 
 #[test]

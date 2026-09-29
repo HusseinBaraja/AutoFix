@@ -49,6 +49,13 @@ public static class SettingsSkeleton
         new("Correct normally", "correct_normally"),
     ];
 
+    public static ObservableCollection<OptionItem> MixedLanguagePolicies() =>
+    [
+        new("Disable correction", "disable_correction"),
+        new("Correct dominant language only", "dominant_language_only"),
+        new("Correct per token (API)", "per_token"),
+    ];
+
     public static ObservableCollection<SettingsSectionViewModel> CreateSections() =>
         CreateSections(AppConfig.Default());
 
@@ -79,7 +86,8 @@ public static class SettingsSkeleton
             Dropdown("Correction mode", "Choose typos only or grammar-aware correction.", "correction.mode", config.Correction.Mode, Modes()),
             Text("Preferred language", "Optional BCP 47 tag, such as en-US. Empty uses automatic detection.", "correction.preferred_language", config.Correction.PreferredLanguage ?? ""),
             Text("App language overrides", "Comma-separated process.exe=language-tag entries.", "correction.app_language_overrides", ConfigValue.Join(config.Correction.AppLanguageOverrides)),
-            Dropdown("Unknown or mixed language", "How to handle text whose language is unclear or mixed.", "correction.uncertain_language_policy", config.Correction.UncertainLanguagePolicy, UncertainLanguagePolicies()),
+            Dropdown("Unknown language", "How to handle text whose language is unclear.", "correction.uncertain_language_policy", config.Correction.UncertainLanguagePolicy, UncertainLanguagePolicies()),
+            Dropdown("Mixed-language text", "Disable correction, use the dominant language, or correct each token with the API engine.", "correction.mixed_language_policy", config.Correction.MixedLanguagePolicy, MixedLanguagePolicies()),
             ..GrammarCategorySettings(config),
             Dropdown("High confidence behavior", "Behavior when correction confidence is high.", "correction.high_confidence_behavior", config.Correction.HighConfidenceBehavior, ConfidenceBehaviors()),
             Dropdown("Medium confidence behavior", "Behavior when correction confidence is medium.", "correction.medium_confidence_behavior", config.Correction.MediumConfidenceBehavior, ConfidenceBehaviors()),

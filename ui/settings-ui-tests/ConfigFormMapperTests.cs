@@ -18,6 +18,7 @@ public sealed class ConfigFormMapperTests
         Card(sections, "correction.preferred_language").TextValue = "en-US";
         Card(sections, "correction.app_language_overrides").TextValue = "notepad.exe=fr-FR, chrome.exe=de-DE";
         Card(sections, "correction.uncertain_language_policy").SelectedValue = "do_nothing";
+        Card(sections, "correction.mixed_language_policy").SelectedValue = "disable_correction";
         Card(sections, "feedback.show_timeout_notice").IsEnabled = false;
 
         var config = ConfigFormMapper.BuildConfig(sections);
@@ -30,6 +31,7 @@ public sealed class ConfigFormMapperTests
         Assert.AreEqual("en-US", config.Correction.PreferredLanguage);
         CollectionAssert.AreEqual(new[] { "notepad.exe=fr-FR", "chrome.exe=de-DE" }, config.Correction.AppLanguageOverrides);
         Assert.AreEqual("do_nothing", config.Correction.UncertainLanguagePolicy);
+        Assert.AreEqual("disable_correction", config.Correction.MixedLanguagePolicy);
         Assert.IsFalse(config.Feedback.ShowTimeoutNotice);
     }
 

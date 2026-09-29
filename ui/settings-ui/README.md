@@ -15,5 +15,7 @@ Correction settings offer typos-only and typos-plus-grammar modes. Grammar
 category switches are available in grammar mode; the saved enabled list is
 empty in typos-only mode. An older `punctuation` setting loads as `spacing`.
 Language controls allow an optional global BCP 47 preference, comma-separated
-per-app entries (`process.exe=language-tag`), and a policy for unknown or mixed
-text. The default policy permits only high-confidence typo edits.
+per-app entries (`process.exe=language-tag`), a policy for unknown text, and a
+separate mixed-language policy. Mixed text defaults to dominant-language-only,
+high-confidence typo edits. Correction can be disabled on mixed text; per-token
+correction requires the API engine.

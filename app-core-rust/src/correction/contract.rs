@@ -50,6 +50,24 @@ pub struct LanguageInfo {
 }
 
 impl LanguageInfo {
+    pub fn is_mixed(&self) -> bool {
+        self.detected_languages.len() > 1
+            || (self.detected_languages.len() == 1
+                && self.detected_languages[0].starts_with("und-")
+                && self.primary_language.as_deref().is_some_and(|primary| {
+                    let detected = self.detected_languages[0].as_str();
+                    let base = primary.split('-').next().unwrap_or("");
+                    !primary.eq_ignore_ascii_case(detected)
+                        && !matches!(
+                            (base, detected),
+                            ("ar", "und-Arab")
+                                | ("ru", "und-Cyrl")
+                                | ("hi", "und-Deva")
+                                | ("zh", "und-Hani")
+                        )
+                }))
+    }
+
     pub fn is_uncertain(&self) -> bool {
         if self.detected_languages.len() != 1 || self.detected_languages[0].starts_with("und-") {
             return true;
@@ -72,15 +90,17 @@ pub enum UncertainLanguagePolicy {
     CorrectNormally,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MixedLanguagePolicy {
-    /// Preserve words that do not belong to the primary language.
-    PreserveNonPrimary,
-    /// Correct each detected language using the same correction mode.
-    CorrectEachDetectedLanguage,
-    /// Correct only the primary language and leave other spans unchanged.
-    PrimaryLanguageOnly,
+    DisableCorrection,
+    /// Correct only tokens in the dominant language.
+    #[default]
+    #[serde(alias = "preserve_non_primary", alias = "primary_language_only")]
+    DominantLanguageOnly,
+    /// Correct each token only when the selected engine supports this policy.
+    #[serde(alias = "correct_each_detected_language")]
+    PerToken,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -105,6 +125,7 @@ pub struct CorrectionInput {
     /// in typos-only mode.
     pub enabled_grammar_categories: Vec<GrammarCategory>,
     pub language_info: LanguageInfo,
+    #[serde(default)]
     pub mixed_language_policy: MixedLanguagePolicy,
     #[serde(default)]
     pub uncertain_language_policy: UncertainLanguagePolicy,

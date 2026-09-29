@@ -30,6 +30,25 @@ pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
     let started = Instant::now();
     let original = &input.executable_context;
 
+    if super::mixed_language::disabled(input) {
+        return CorrectionOutput::unchanged(
+            original.clone(),
+            ConfidenceTier::Low,
+            NoChangeReason::UncertainLanguage,
+            elapsed_ms(started),
+        );
+    }
+    if input.language_info.is_mixed()
+        && input.mixed_language_policy == super::MixedLanguagePolicy::PerToken
+    {
+        return CorrectionOutput::unchanged(
+            original.clone(),
+            ConfidenceTier::Low,
+            NoChangeReason::UnsupportedLanguage,
+            elapsed_ms(started),
+        );
+    }
+
     if input.language_info.is_uncertain()
         && input.uncertain_language_policy == UncertainLanguagePolicy::DoNothing
     {
@@ -81,6 +100,10 @@ pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
     let mut blocked_confidence = None;
 
     for candidate in candidates {
+        if !super::mixed_language::edit_allowed(input, candidate.start_byte, candidate.end_byte) {
+            protected_count += 1;
+            continue;
+        }
         if input.language_info.is_uncertain()
             && input.uncertain_language_policy == UncertainLanguagePolicy::HighConfidenceTyposOnly
             && (candidate.kind != CorrectionChangeKind::Typo
@@ -663,8 +686,11 @@ fn protected_ranges(input: &CorrectionInput, words: &[Word<'_>]) -> Vec<(usize, 
     }
 
     for word in words {
-        if looks_like_identifier_or_product(word.text)
-            || (is_title_case(word.text) && !is_sentence_start(input, word.start_byte))
+        if (looks_like_identifier_or_product(word.text)
+            && !(input.language_info.is_mixed()
+                && input.mixed_language_policy == super::MixedLanguagePolicy::PerToken
+                && !word.text.is_ascii()))
+            || is_title_case(word.text)
         {
             ranges.push((word.start_byte, word.end_byte));
         }
@@ -682,6 +708,12 @@ fn protected_ranges(input: &CorrectionInput, words: &[Word<'_>]) -> Vec<(usize, 
     }
 
     ranges
+}
+
+/// Apply the same structured-token protection to API response edits.
+pub(super) fn is_protected_edit(input: &CorrectionInput, start: usize, end: usize) -> bool {
+    let words = words(&input.executable_context);
+    intersects_any(start, end, &protected_ranges(input, &words))
 }
 
 /// Adds whole-term, case-sensitive protected matches.
@@ -918,7 +950,7 @@ mod tests {
                 primary_language: Some("en-US".to_owned()),
                 detected_languages: vec!["en-US".to_owned()],
             },
-            mixed_language_policy: MixedLanguagePolicy::PreserveNonPrimary,
+            mixed_language_policy: MixedLanguagePolicy::DominantLanguageOnly,
             uncertain_language_policy: UncertainLanguagePolicy::default(),
             custom_dictionary: Vec::new(),
             protected_terms: Vec::new(),
@@ -932,13 +964,13 @@ mod tests {
     }
 
     #[test]
-    fn typos_only_changes_only_clear_misspellings_and_preserves_layout_and_case() {
+    fn typos_only_changes_clear_misspellings_and_preserves_ambiguous_names() {
         let output = correct(&input("Teh  wierd, teh!", CorrectionMode::TyposOnly));
 
-        assert_eq!(output.corrected_executable_text, "The  weird, the!");
+        assert_eq!(output.corrected_executable_text, "Teh  weird, the!");
         assert_eq!(output.confidence, ConfidenceTier::High);
-        assert_eq!(output.changes.as_ref().unwrap().len(), 3);
-        assert_eq!(output.changes.as_ref().unwrap()[1].start_char, 5);
+        assert_eq!(output.changes.as_ref().unwrap().len(), 2);
+        assert_eq!(output.changes.as_ref().unwrap()[0].start_char, 5);
     }
 
     #[test]
@@ -1116,6 +1148,34 @@ mod tests {
         );
         request.uncertain_language_policy = UncertainLanguagePolicy::CorrectNormally;
         assert_eq!(correct(&request).corrected_executable_text, "the a lot I");
+    }
+
+    #[test]
+    fn mixed_text_defaults_to_high_confidence_dominant_language_typos() {
+        let mut request = input("the and teh alot مرحبا", CorrectionMode::TyposPlusGrammar);
+        request.language_info.detected_languages = vec!["en".into(), "und-Arab".into()];
+        request.enabled_grammar_categories = vec![GrammarCategory::Capitalization];
+
+        assert_eq!(
+            correct(&request).corrected_executable_text,
+            "the and the alot مرحبا"
+        );
+        request.mixed_language_policy = MixedLanguagePolicy::DisableCorrection;
+        assert_eq!(
+            correct(&request).no_change_reason,
+            Some(NoChangeReason::UncertainLanguage)
+        );
+        request.mixed_language_policy = MixedLanguagePolicy::PerToken;
+        assert_eq!(
+            correct(&request).no_change_reason,
+            Some(NoChangeReason::UnsupportedLanguage)
+        );
+        request.language_info.detected_languages = vec!["und-Arab".into()];
+        request.mixed_language_policy = MixedLanguagePolicy::DisableCorrection;
+        assert_eq!(
+            correct(&request).no_change_reason,
+            Some(NoChangeReason::UncertainLanguage)
+        );
     }
 
     #[test]

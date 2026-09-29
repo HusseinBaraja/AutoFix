@@ -54,13 +54,25 @@ public sealed class ConfigStorageTests
         config.Correction.PreferredLanguage = "en-US";
         config.Correction.AppLanguageOverrides = ["notepad.exe=fr-FR"];
         config.Correction.UncertainLanguagePolicy = "do_nothing";
+        config.Correction.MixedLanguagePolicy = "disable_correction";
         fixture.Storage.Save(config);
         var loaded = fixture.Storage.Load(fixture.Path);
         Assert.AreEqual("en-US", loaded.Correction.PreferredLanguage);
         CollectionAssert.AreEqual(config.Correction.AppLanguageOverrides, loaded.Correction.AppLanguageOverrides);
         Assert.AreEqual("do_nothing", loaded.Correction.UncertainLanguagePolicy);
+        Assert.AreEqual("disable_correction", loaded.Correction.MixedLanguagePolicy);
         loaded.Correction.AppLanguageOverrides.Add("NOTEPAD.EXE=de");
         Assert.ThrowsException<InvalidDataException>(() => ConfigValidator.Validate(loaded));
+    }
+
+    [TestMethod]
+    public void PerTokenPolicyRequiresApiEngine()
+    {
+        var config = AppConfig.Default();
+        config.Correction.MixedLanguagePolicy = "per_token";
+        Assert.ThrowsException<InvalidDataException>(() => ConfigValidator.Validate(config));
+        config.Correction.Engine = "api";
+        ConfigValidator.Validate(config);
     }
 
     [TestMethod]
