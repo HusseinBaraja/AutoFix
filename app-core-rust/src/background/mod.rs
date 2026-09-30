@@ -764,23 +764,48 @@ impl InputProcessor {
 
     /// Recheck the focused target and trigger permission before routing.
     fn dispatch_trigger(&mut self, request: CorrectionRequest, stamp: InputStamp) {
-        let frozen = request.pending_segment_id.is_some();
-        if !self.try_dispatch_trigger(request, stamp) && frozen {
-            // A failed live gate must not strand a reserved slot.
-            self.pipeline.cancel();
-            if let Some(session) = self.session_manager.active_mut() {
-                session.restore_pending();
-            }
-        }
+        self.dispatch_trigger_with(request, stamp, Self::input_stamp, SecurityGate::check);
     }
 
-    fn try_dispatch_trigger(&mut self, mut request: CorrectionRequest, stamp: InputStamp) -> bool {
-        self.pipeline.invalidate(&self.session_manager, stamp);
-        if !self.config.correction.enabled || stamp != Self::input_stamp() {
+    /// Dispatch through live input and security checks, releasing only the failed suffix.
+    fn dispatch_trigger_with(
+        &mut self,
+        request: CorrectionRequest,
+        stamp: InputStamp,
+        current_stamp: impl Fn() -> InputStamp,
+        check_target: impl FnOnce(TriggerKind, &AppConfig, &Database) -> SecurityDecision,
+    ) -> bool {
+        let segment_id = request.pending_segment_id;
+        let session_id = request.session_id;
+        let dispatched = self.try_dispatch_trigger(request, stamp, current_stamp, check_target);
+        if !dispatched {
+            if let (Some(id), Some(session)) = (segment_id, self.session_manager.active_mut()) {
+                if session.id() == session_id {
+                    for cancelled in session.restore_pending_from(id) {
+                        self.pipeline.cancel_segment(cancelled);
+                    }
+                }
+            }
+        }
+        dispatched
+    }
+
+    /// Check input both before and after slow policy, UIA, and dictionary reads.
+    fn try_dispatch_trigger(
+        &mut self,
+        mut request: CorrectionRequest,
+        stamp: InputStamp,
+        current_stamp: impl Fn() -> InputStamp,
+        check_target: impl FnOnce(TriggerKind, &AppConfig, &Database) -> SecurityDecision,
+    ) -> bool {
+        self.pipeline
+            .invalidate(&self.session_manager, current_stamp());
+        let frozen = request.pending_segment_id.is_some();
+        if !self.config.correction.enabled || !stamp.permits(current_stamp(), frozen) {
             return false;
         }
         if let SecurityDecision::Allowed { target } =
-            SecurityGate::check(request.trigger, &self.config, &self.database)
+            check_target(request.trigger, &self.config, &self.database)
         {
             if self.session_manager.active_matches(&target) {
                 let saved_override = match self
@@ -828,7 +853,7 @@ impl InputProcessor {
                         return false;
                     }
                 };
-                if stamp != Self::input_stamp() {
+                if !stamp.permits(current_stamp(), frozen) {
                     return false;
                 }
                 if let Some(session) = self.session_manager.active() {

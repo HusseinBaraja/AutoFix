@@ -42,8 +42,16 @@ impl Error for ConfigIoError {
     }
 }
 
+/// Normalize previously supported retry counts on read; writes remain strict.
 pub(crate) fn parse_config(input: &str) -> Result<AppConfig, ConfigIoError> {
-    let config = toml::from_str::<AppConfig>(input).map_err(ConfigIoError::Parse)?;
+    let mut config = toml::from_str::<AppConfig>(input).map_err(ConfigIoError::Parse)?;
+    if config.api.retry_count > 1 {
+        tracing::warn!(
+            retry_count = config.api.retry_count,
+            "legacy API retry count reduced to 1"
+        );
+        config.api.retry_count = 1;
+    }
     config.validate().map_err(ConfigIoError::Validation)?;
     Ok(config)
 }

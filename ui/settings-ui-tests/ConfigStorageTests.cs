@@ -5,6 +5,26 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class ConfigStorageTests
 {
+    /// <summary>Old retry counts load and import safely without relaxing save validation.</summary>
+    [TestMethod]
+    public void LegacyApiRetryCountsAreMigratedOnLoadAndImport()
+    {
+        using var fixture = TempConfigFixture.Create();
+        using var source = TempConfigFixture.Create();
+        foreach (var retries in new[] { 2, 255 })
+        {
+            var legacy = $"[api]\nretry_count = {retries}\n";
+            File.WriteAllText(fixture.Path, legacy);
+            Assert.AreEqual(1, fixture.Storage.LoadOrCreate().Api.RetryCount);
+            Assert.AreEqual(legacy, File.ReadAllText(fixture.Path));
+            File.WriteAllText(source.Path, legacy);
+            fixture.Storage.Import(source.Path);
+            Assert.AreEqual(1, fixture.Storage.Load(fixture.Path).Api.RetryCount);
+        }
+        File.WriteAllText(fixture.Path, "[api]\nretry_count = -1\n");
+        Assert.ThrowsException<InvalidDataException>(() => fixture.Storage.Load(fixture.Path));
+    }
+
     [TestMethod]
     public void ApiRetryCountAcceptsOnlyZeroOrOne()
     {

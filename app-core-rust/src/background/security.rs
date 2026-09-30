@@ -39,25 +39,40 @@ pub(crate) enum BlockReason {
     EngineBlocked,
     AllowlistRequired,
     UnsupportedTarget,
+    AppPolicyUnavailable,
 }
 
 pub(crate) struct SecurityGate;
 
 impl SecurityGate {
+    /// Missing application policy denies capture and engine execution for every trigger.
     pub(crate) fn check(
         trigger: TriggerKind,
         config: &AppConfig,
         database: &Database,
     ) -> SecurityDecision {
+        Self::check_with_detection(trigger, config, database, target::detect_focused_target)
+    }
+
+    /// Resolve policy before inspecting the target; a failed read is never an empty policy.
+    fn check_with_detection(
+        trigger: TriggerKind,
+        config: &AppConfig,
+        database: &Database,
+        detect: impl FnOnce() -> TargetDetection,
+    ) -> SecurityDecision {
         let app_rules = match database.app_rules().list() {
             Ok(app_rules) => app_rules,
             Err(error) => {
                 tracing::warn!("failed to load app rules for security gate: {}", error);
-                Vec::new()
+                return SecurityDecision::Blocked {
+                    reason: BlockReason::AppPolicyUnavailable,
+                    target: None,
+                };
             }
         };
 
-        check_detection(trigger, config, &app_rules, target::detect_focused_target())
+        check_detection(trigger, config, &app_rules, detect())
     }
 }
 
@@ -151,6 +166,7 @@ impl BlockReason {
             Self::EngineBlocked => "engine_blocked",
             Self::AllowlistRequired => "allowlist_required",
             Self::UnsupportedTarget => "unsupported_target",
+            Self::AppPolicyUnavailable => "app_policy_unavailable",
         }
     }
 }
@@ -313,6 +329,74 @@ fn normalize(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A partial database failure cannot authorize capture or outbound text with a healthy dictionary.
+    #[test]
+    fn unavailable_app_policy_blocks_all_triggers_even_when_dictionary_is_healthy() {
+        let path = std::env::temp_dir().join(format!(
+            "autofix-policy-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let database = Database::open(&path).unwrap();
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let mut rule = allow_rule("notepad.exe");
+        rule.api_engine_allowed = false;
+        database.app_rules().upsert(&rule).unwrap();
+        let mut config = AppConfig::default();
+        config.correction.engine = CorrectionEngine::Api;
+        assert!(matches!(
+            SecurityGate::check_with_detection(TriggerKind::Character, &config, &database, || {
+                TargetDetection::Available(target("notepad.exe"))
+            }),
+            SecurityDecision::Blocked {
+                reason: BlockReason::EngineBlocked,
+                ..
+            }
+        ));
+        connection.execute("DROP TABLE app_rules", []).unwrap();
+        assert!(database
+            .custom_dictionary()
+            .entries_for_app("notepad.exe")
+            .is_ok());
+        for mode in [RunMode::Blocklist, RunMode::Allowlist] {
+            config.general.run_mode = mode;
+            for engine in [CorrectionEngine::Local, CorrectionEngine::Api] {
+                config.correction.engine = engine;
+                for trigger in [
+                    TriggerKind::Tracking,
+                    TriggerKind::ManualShortcut,
+                    TriggerKind::WordCount,
+                    TriggerKind::Character,
+                    TriggerKind::FinalFixBeforeReanchor,
+                    TriggerKind::Undo,
+                ] {
+                    assert_eq!(
+                        SecurityGate::check_with_detection(trigger, &config, &database, || panic!(
+                            "policy failure must deny before capturing the target"
+                        )),
+                        SecurityDecision::Blocked {
+                            reason: BlockReason::AppPolicyUnavailable,
+                            target: None
+                        }
+                    );
+                    assert_eq!(
+                        SecurityGate::check(trigger, &config, &database),
+                        SecurityDecision::Blocked {
+                            reason: BlockReason::AppPolicyUnavailable,
+                            target: None
+                        }
+                    );
+                }
+            }
+        }
+        drop(connection);
+        drop(database);
+        std::fs::remove_file(path).unwrap();
+    }
     use crate::settings::RunMode;
 
     fn target(process_name: &str) -> FocusedTarget {

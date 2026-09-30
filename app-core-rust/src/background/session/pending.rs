@@ -9,15 +9,18 @@ pub(super) struct FrozenSegment {
 }
 
 impl FrozenSegment {
+    /// Return the memory-only segment identity used to cancel worker requests.
     pub(super) fn id(&self) -> u64 {
         self.id
     }
+    /// Expose the frozen typed text for exact range validation.
     pub(super) fn original(&self) -> &str {
         &self.original
     }
 }
 
 impl Session {
+    /// Include older frozen text as read-only context for newer corrections.
     pub(crate) fn correction_informative_context(&self) -> String {
         let mut context = self.informative_context.clone();
         for segment in &self.frozen_segments {
@@ -65,6 +68,7 @@ impl Session {
         (Some(id), cancelled)
     }
 
+    /// Verify that a frozen range still belongs to the known pre-caret typed prefix.
     pub(crate) fn pending_matches(&self, id: u64, original: &str) -> bool {
         !self.position_uncertain()
             && self.frozen_segments.iter().any(|segment| {
@@ -81,6 +85,7 @@ impl Session {
             )
     }
 
+    /// Return known typed text after a frozen segment that replacement must preserve.
     pub(crate) fn pending_following_text(&self, id: u64) -> Option<String> {
         let mut chars = 0;
         for segment in &self.frozen_segments {
@@ -144,6 +149,25 @@ impl Session {
         }
     }
 
+    /// Restore a failed dispatch and its newer reservations without disturbing older work.
+    /// A suffix can return to editable text while preserving document order.
+    pub(crate) fn restore_pending_from(&mut self, id: u64) -> Vec<u64> {
+        let Some(index) = self
+            .frozen_segments
+            .iter()
+            .position(|segment| segment.id == id)
+        else {
+            return Vec::new();
+        };
+        let restored = self.frozen_segments.split_off(index);
+        self.correction_floor -= restored
+            .iter()
+            .map(|segment| segment.original.chars().count())
+            .sum::<usize>();
+        self.versions.executable = self.versions.executable.wrapping_add(1);
+        restored.into_iter().map(|segment| segment.id).collect()
+    }
+
     /// A sequence-guarded initial capture excludes the entire known typed span,
     /// including frozen segments. It can establish their shared caret anchor.
     pub(crate) fn set_captured_informative_context(
@@ -170,12 +194,14 @@ mod tests {
         typing::{MovementSignal, TypedInput},
     };
 
+    /// Build a typed session without importing any target-application text.
     fn session(text: &str) -> Session {
         let mut session = Session::new(1, SessionKey::WindowHandle(1));
         session.input(TypedInput::Text(text.into()), &ContextConfig::default());
         session
     }
 
+    /// Ordered completion preserves Unicode suffixes and records undo only for changed segments.
     #[test]
     fn frozen_results_commit_in_order_and_preserve_unicode_new_typing_and_undo() {
         let limits = ContextConfig {
@@ -206,6 +232,7 @@ mod tests {
         assert!(!session.complete_pending(first, Some("duplicate"), &limits));
     }
 
+    /// Default overflow keeps the admitted range and leaves newer text editable.
     #[test]
     fn default_full_queue_skips_and_keeps_current_typing() {
         let limits = ContextConfig::default();
@@ -218,6 +245,7 @@ mod tests {
         assert_eq!(session.correction_informative_context(), "first.");
     }
 
+    /// Cancel-oldest releases capacity by retiring the original before admitting newer text.
     #[test]
     fn cancel_oldest_retires_original_and_admits_new_segment() {
         let limits = ContextConfig {
@@ -236,6 +264,7 @@ mod tests {
         assert_eq!(session.informative_context(), "teh new");
     }
 
+    /// Merge-newest restores only the latest frozen range and preserves older pending work.
     #[test]
     fn merge_newest_keeps_older_work_and_waits_for_another_trigger() {
         let limits = ContextConfig {
@@ -255,6 +284,7 @@ mod tests {
         assert!(session.freeze_pending(&limits).0.is_some());
     }
 
+    /// Manual override recovers all known pending text without reading target text.
     #[test]
     fn manual_override_restores_all_pending_text_in_document_order() {
         let limits = ContextConfig {
@@ -271,6 +301,7 @@ mod tests {
         assert!(!session.pending_matches(id, "first"));
     }
 
+    /// Backspace invalidates frozen work only when it crosses the active context boundary.
     #[test]
     fn edits_in_new_context_keep_pending_but_crossing_boundary_discards_it() {
         let limits = ContextConfig::default();
@@ -284,6 +315,7 @@ mod tests {
         assert_eq!(session.editable_context(), "");
     }
 
+    /// Movement, reanchoring, and buffer eviction invalidate the frozen range proof.
     #[test]
     fn movement_reanchor_and_buffer_eviction_invalidate_frozen_ranges() {
         let limits = ContextConfig::default();
@@ -305,6 +337,7 @@ mod tests {
         assert!(!session.pending_matches(id, "teh"));
     }
 
+    /// Initial informative capture cannot duplicate typed frozen text or lose its anchor.
     #[test]
     fn initial_capture_excludes_frozen_text_and_retains_its_anchor() {
         let limits = ContextConfig::default();
@@ -318,6 +351,7 @@ mod tests {
         assert_eq!(session.editable_context(), " next");
     }
 
+    /// The executable word limit retires known original text and invalidates pending ranges.
     #[test]
     fn word_limit_commits_originals_and_invalidates_all_pending_work() {
         let limits = ContextConfig {

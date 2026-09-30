@@ -33,6 +33,13 @@ pub(super) struct InputStamp {
     pub(super) sequence: u64,
 }
 
+impl InputStamp {
+    /// Frozen text tolerates later typing, but every request requires the same position.
+    pub(super) fn permits(self, current: Self, frozen: bool) -> bool {
+        self.position == current.position && (frozen || self.sequence == current.sequence)
+    }
+}
+
 struct Job {
     id: u64,
     request: CorrectionRequest,
@@ -64,18 +71,19 @@ struct ActiveRequest {
 }
 
 impl ActiveRequest {
+    /// Require the admitted session and range; only frozen work tolerates later typing.
     fn valid(&self, session: &Session, stamp: InputStamp) -> bool {
         if let Some(id) = self.request.pending_segment_id {
             return !self.cancelled.load(Ordering::Acquire)
                 && self.request.session_id == session.id()
-                && self.stamp.position == stamp.position
+                && self.stamp.permits(stamp, true)
                 && session.pending_matches(id, &self.request.executable_context);
         }
         !self.cancelled.load(Ordering::Acquire)
             && self.request.session_id == session.id()
             && self.request.versions == session.versions()
             && self.editable_snapshot == session.editable_context()
-            && self.stamp == stamp
+            && self.stamp.permits(stamp, false)
             && !self.request.executable_context.is_empty()
             && (self.request.selected_text
                 || self
@@ -94,6 +102,7 @@ pub(super) struct CorrectionPipeline {
 }
 
 impl CorrectionPipeline {
+    /// Start the correction worker using the configured local or API engine.
     pub(super) fn new() -> std::io::Result<Self> {
         Self::start(|job| {
             CorrectionEngines::with_api_config(job.api.clone())
@@ -101,6 +110,7 @@ impl CorrectionPipeline {
         })
     }
 
+    /// Start FIFO execution with one completion slot so no result can be overwritten.
     fn start(correct: impl Fn(&Job) -> CorrectionOutput + Send + 'static) -> std::io::Result<Self> {
         let mailbox = Arc::new((Mutex::new(Mailbox::default()), Condvar::new()));
         let worker_mailbox = Arc::clone(&mailbox);
@@ -143,6 +153,7 @@ impl CorrectionPipeline {
         })
     }
 
+    /// Snapshot engine settings and dictionary terms before handing work to the worker.
     pub(super) fn submit(
         &mut self,
         request: CorrectionRequest,
@@ -215,6 +226,7 @@ impl CorrectionPipeline {
         ready.notify_all();
     }
 
+    /// Cancel all admitted work and clear queued jobs, completions, and timeout feedback.
     pub(super) fn cancel(&mut self) {
         self.timeout_notice = false;
         for active in self.active.drain(..) {
@@ -227,6 +239,7 @@ impl CorrectionPipeline {
         ready.notify_all();
     }
 
+    /// Cancel one frozen segment without discarding other admitted requests.
     pub(super) fn cancel_segment(&mut self, segment_id: u64) {
         self.active.retain(|active| {
             if active.request.pending_segment_id == Some(segment_id) {
@@ -239,6 +252,7 @@ impl CorrectionPipeline {
         self.purge_cancelled();
     }
 
+    /// Remove cancelled jobs and orphan completions, waking the worker if blocked.
     fn purge_cancelled(&self) {
         let (lock, ready) = &*self.mailbox;
         let mut state = lock.lock().unwrap();
@@ -271,6 +285,7 @@ impl CorrectionPipeline {
         self.purge_cancelled();
     }
 
+    /// Allow a short manual wait without blocking the input hook or message loop.
     pub(super) fn wait_manual(&self) {
         let (lock, ready) = &*self.mailbox;
         let state = lock.lock().unwrap();
@@ -281,6 +296,7 @@ impl CorrectionPipeline {
             .unwrap();
     }
 
+    /// Consume eligible manual timeout feedback exactly once.
     pub(super) fn take_timeout_notice(&mut self) -> bool {
         std::mem::take(&mut self.timeout_notice)
     }
@@ -430,6 +446,7 @@ impl CorrectionPipeline {
     }
 }
 
+/// Require the tracked original and following text at the live caret without searching.
 fn exact_range_before_caret(
     live_before_caret: &str,
     known_before_caret: &str,
@@ -442,6 +459,7 @@ fn exact_range_before_caret(
 }
 
 impl Drop for CorrectionPipeline {
+    /// Stop publication and wake the worker without waiting for a synchronous provider.
     fn drop(&mut self) {
         self.cancel();
         let (lock, ready) = &*self.mailbox;

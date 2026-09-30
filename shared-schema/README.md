@@ -35,9 +35,15 @@ pending correction and skipping new triggers. Queue contents remain memory-only.
 
 API settings retain `timeout_manual_ms = 3000`, `timeout_auto_ms = 700`,
 `retry_count = 1`, and `fallback_to_local = false` defaults. Retry count accepts
-only 0 or 1 in both Rust and the settings UI. Both attempts share the trigger's
+only 0 or 1 for saves in both Rust and the settings UI. Both loaders normalize
+legacy counts above 1 to 1; loading does not rewrite the original file.
+Both attempts share the trigger's
 total timeout budget. `feedback.show_timeout_notice` defaults to true and applies
 only to a valid manual API timeout; automatic timeouts always stay silent.
+
+Unavailable application rules deny authorization for typed capture and every
+correction trigger, including API execution. An empty successfully read rule
+list is distinct from a failed read.
 
 The live replacement consumer is still a placeholder. Before enabling it, the
 mutation owner must enforce `silent` or explicit acceptance of a suggestion and

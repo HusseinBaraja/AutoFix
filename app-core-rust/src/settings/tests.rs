@@ -68,6 +68,7 @@ fn default_config_has_requested_values() {
     assert_eq!(config.logging.log_retention_days, None);
 }
 
+/// Save validation remains strict after legacy retry counts are migrated on read.
 #[test]
 fn api_retry_count_accepts_only_zero_or_one() {
     let mut config = AppConfig::default();
@@ -85,6 +86,12 @@ fn api_retry_count_accepts_only_zero_or_one() {
     for retries in [2, 255] {
         config.api.retry_count = retries;
         assert_eq!(config.validate().unwrap_err().field(), "api.retry_count");
+        assert!(config_to_toml(&config).is_err());
+        let legacy = toml::to_string(&config).unwrap();
+        let loaded = super::toml_io::parse_config(&legacy).unwrap();
+        assert_eq!(loaded.api.retry_count, 1);
+        let saved = config_to_toml(&loaded).unwrap();
+        assert_eq!(super::toml_io::parse_config(&saved).unwrap(), loaded);
     }
     for manual in [false, true] {
         let mut config = AppConfig::default();

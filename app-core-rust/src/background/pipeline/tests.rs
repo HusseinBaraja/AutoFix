@@ -12,6 +12,7 @@ const STAMP: InputStamp = InputStamp {
     sequence: 12,
 };
 
+/// Only eligible manual API timeouts consume enabled timeout feedback.
 #[test]
 fn timeout_notice_is_manual_api_only_and_obeys_feedback_setting() {
     for trigger in [
@@ -63,6 +64,7 @@ fn timeout_notice_is_manual_api_only_and_obeys_feedback_setting() {
     }
 }
 
+/// Stale input, cancellation, and secure targets suppress timeout feedback.
 #[test]
 fn stale_cancelled_or_secure_timeouts_cannot_show_notices() {
     for invalidation in 0..5 {
@@ -118,6 +120,7 @@ fn stale_cancelled_or_secure_timeouts_cannot_show_notices() {
     }
 }
 
+/// Automatic timeout frees queue capacity without inspecting or modifying the live target.
 #[test]
 fn automatic_timeout_releases_frozen_slot_without_live_target_calls() {
     let config = AppConfig::default();
@@ -143,6 +146,7 @@ fn automatic_timeout_releases_frozen_slot_without_live_target_calls() {
     assert_eq!(manager.active().unwrap().editable_context(), " next");
 }
 
+/// Build a safe ordinary control with stable focus identity.
 fn target() -> FocusedTarget {
     FocusedTarget {
         process_id: 1,
@@ -160,6 +164,7 @@ fn target() -> FocusedTarget {
     }
 }
 
+/// Build a session containing only known text typed during this test.
 fn manager(config: &AppConfig, text: &str) -> SessionManager {
     let mut manager = SessionManager::new(config.context.clone());
     manager.focus(&target());
@@ -167,6 +172,7 @@ fn manager(config: &AppConfig, text: &str) -> SessionManager {
     manager
 }
 
+/// Build a manual request from the active session snapshot.
 fn request(manager: &SessionManager, config: &AppConfig) -> CorrectionRequest {
     let session = manager.active().unwrap();
     let mut request = triggers::manual(
@@ -185,6 +191,7 @@ fn request(manager: &SessionManager, config: &AppConfig) -> CorrectionRequest {
     request
 }
 
+/// Admit a manual snapshot against the stable test input stamp.
 fn submit(pipeline: &mut CorrectionPipeline, manager: &SessionManager, config: &AppConfig) {
     pipeline.submit(
         request(manager, config),
@@ -196,6 +203,7 @@ fn submit(pipeline: &mut CorrectionPipeline, manager: &SessionManager, config: &
     );
 }
 
+/// Freeze and admit an automatic range with its session-owned segment identity.
 fn submit_frozen(
     pipeline: &mut CorrectionPipeline,
     manager: &mut SessionManager,
@@ -224,6 +232,7 @@ fn submit_frozen(
     id
 }
 
+/// FIFO results survive continued typing and preserve the active suffix.
 #[test]
 fn delayed_frozen_corrections_keep_all_results_and_preserve_newer_typing() {
     let mut config = AppConfig::default();
@@ -288,6 +297,7 @@ fn delayed_frozen_corrections_keep_all_results_and_preserve_newer_typing() {
     assert!(pipeline.active.is_empty());
 }
 
+/// Cancelled output cannot publish over a newly admitted frozen segment.
 #[test]
 fn cancel_oldest_suppresses_late_transport_and_runs_new_segment() {
     let mut config = AppConfig::default();
@@ -327,6 +337,7 @@ fn cancel_oldest_suppresses_late_transport_and_runs_new_segment() {
     assert_eq!(manager.active().unwrap().informative_context(), "teh the");
 }
 
+/// Failed and suppressed corrections retire originals without importing engine output.
 #[test]
 fn frozen_failures_release_capacity_without_committing_engine_output() {
     let config = AppConfig::default();
@@ -372,6 +383,7 @@ fn frozen_failures_release_capacity_without_committing_engine_output() {
     }
 }
 
+/// Completion rejects position changes and input arriving during live security validation.
 #[test]
 fn frozen_result_revalidates_queued_position_and_input_during_security_check() {
     let config = AppConfig::default();
@@ -398,6 +410,7 @@ fn frozen_result_revalidates_queued_position_and_input_during_security_check() {
     }
 }
 
+/// Manual override cancels frozen publication and restores the complete typed scope.
 #[test]
 fn manual_override_cancels_frozen_completion_and_restores_full_scope() {
     let config = AppConfig::default();
@@ -427,6 +440,7 @@ fn manual_override_cancels_frozen_completion_and_restores_full_scope() {
     assert_eq!(manager.active().unwrap().informative_context(), "the next");
 }
 
+/// An unchanged frozen result retires only its original and preserves newer typing.
 #[test]
 fn unchanged_frozen_result_retires_only_its_segment_without_native_mutation() {
     let config = AppConfig::default();
@@ -449,6 +463,7 @@ fn unchanged_frozen_result_retires_only_its_segment_without_native_mutation() {
     assert_eq!(manager.active().unwrap().editable_context(), " next");
 }
 
+/// Hook input must enter the session before completion validates the live caret range.
 #[test]
 fn input_processor_defers_frozen_completion_until_hook_input_is_drained() {
     let config = AppConfig::default();
@@ -484,6 +499,7 @@ fn input_processor_defers_frozen_completion_until_hook_input_is_drained() {
     );
 }
 
+/// Wait for a worker completion with a bounded deadline to detect stalled tests.
 fn wait_completion(pipeline: &CorrectionPipeline) {
     let (lock, ready) = &*pipeline.mailbox;
     let (state, _) = ready
@@ -497,6 +513,7 @@ fn wait_completion(pipeline: &CorrectionPipeline) {
     );
 }
 
+/// Validate a stable live range and count replacement calls for the completion under test.
 fn finish(
     pipeline: &mut CorrectionPipeline,
     manager: &mut SessionManager,
@@ -523,6 +540,7 @@ fn finish(
     )
 }
 
+/// Confirmed replacement commits once and records the original span for undo.
 #[test]
 fn valid_result_replaces_once_then_records_commit_and_undo() {
     let config = AppConfig::default();
@@ -557,6 +575,7 @@ fn valid_result_replaces_once_then_records_commit_and_undo() {
     assert_eq!(manager.active().unwrap().informative_context(), "teh");
 }
 
+/// Invalidated snapshots cannot cross context, caret, or session boundaries.
 #[test]
 fn changed_context_movement_commit_and_recreated_session_discard_results() {
     let config = AppConfig::default();
@@ -608,6 +627,7 @@ fn changed_context_movement_commit_and_recreated_session_discard_results() {
     }
 }
 
+/// Security and hook races during completion prevent mutation.
 #[test]
 fn security_and_input_changes_during_live_validation_block_replacement() {
     let config = AppConfig::default();
@@ -649,6 +669,7 @@ fn security_and_input_changes_during_live_validation_block_replacement() {
     }
 }
 
+/// Text elsewhere in a control cannot substitute for an exact pre-caret range.
 #[test]
 fn live_range_must_match_exactly_before_caret() {
     let config = AppConfig::default();
@@ -680,6 +701,7 @@ fn live_range_must_match_exactly_before_caret() {
     }
 }
 
+/// Frozen replacement scope excludes and preserves all known following typed text.
 #[test]
 fn frozen_range_can_end_before_caret_but_never_include_following_text() {
     assert!(exact_range_before_caret(
@@ -708,6 +730,7 @@ fn frozen_range_can_end_before_caret_but_never_include_following_text() {
     ));
 }
 
+/// Only completed silent results above low confidence can reach replacement.
 #[test]
 fn failures_suggestions_and_low_confidence_never_commit_or_replace() {
     let config = AppConfig::default();
@@ -755,6 +778,7 @@ fn failures_suggestions_and_low_confidence_never_commit_or_replace() {
     }
 }
 
+/// Unchanged completion still requires a valid session and exact live caret range.
 #[test]
 fn unchanged_success_commits_only_after_validation() {
     let config = AppConfig::default();
@@ -775,6 +799,7 @@ fn unchanged_success_commits_only_after_validation() {
     assert_eq!(manager.active().unwrap().editable_context(), "");
 }
 
+/// Completion ownership rejects superseded, out-of-order, and duplicate results.
 #[test]
 fn superseded_reordered_and_duplicate_results_cannot_replace() {
     let config = AppConfig::default();
@@ -837,6 +862,7 @@ fn superseded_reordered_and_duplicate_results_cannot_replace() {
     assert_eq!(calls.get(), 1);
 }
 
+/// Slow correction execution leaves automatic input processing independent.
 #[test]
 fn slow_engine_never_blocks_automatic_input_and_keeps_only_latest_queued_work() {
     let config = AppConfig::default();
@@ -908,6 +934,7 @@ fn slow_engine_never_blocks_automatic_input_and_keeps_only_latest_queued_work() 
     ));
 }
 
+/// Changed selected-text results cannot mutate without proving the live caret endpoint.
 #[test]
 fn selected_text_result_is_discarded_without_caret_end_proof() {
     let config = AppConfig::default();
@@ -953,6 +980,7 @@ fn selected_text_result_is_discarded_without_caret_end_proof() {
         .undo_last_correction(&config.context));
 }
 
+/// Even unchanged selected-text results cannot retire an unproven caret range.
 #[test]
 fn unchanged_selection_is_discarded_without_caret_end_proof() {
     let config = AppConfig::default();

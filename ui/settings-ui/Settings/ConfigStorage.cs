@@ -41,7 +41,7 @@ public sealed class ConfigStorage
         return Load(ConfigPath);
     }
 
-    /// <summary>Loads TOML, normalizes legacy grammar categories, and rejects invalid settings.</summary>
+    /// <summary>Loads TOML, normalizes legacy grammar categories and retry counts, and rejects invalid settings.</summary>
     public AppConfig Load(string path)
     {
         var text = File.ReadAllText(path);
@@ -51,6 +51,10 @@ public sealed class ConfigStorage
             .Select(category => category == "punctuation" ? "spacing" : category)
             .Distinct()
             .ToList();
+        if (config.Api.RetryCount > 1)
+        {
+            config.Api.RetryCount = 1;
+        }
         ConfigValidator.Validate(config);
         return config;
     }

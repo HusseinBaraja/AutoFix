@@ -55,6 +55,8 @@ named `AutoFix/provider-profile/<preset>`; callers can store it with
 Manual and automatic requests default to 3000 ms and 700 ms respectively.
 `api.retry_count` accepts only 0 or 1 (default 1); retries share one total
 deadline, including credential access, transport, and response validation.
+Loading legacy settings reduces retry counts above 1 to 1 without rewriting
+the file. Saving still rejects unsupported retry counts.
 The caller stops waiting at that deadline and discards late transport results.
 WinHTTP operations also use the remaining budget, including each response read,
 so trickling responses cannot renew the timeout.
@@ -129,7 +131,9 @@ off by default; when enabled, a selected span outside the typed segment becomes
 temporary executable context for that request, while text before and after it
 stays informative. V1 discards selected results because it cannot prove which
 selection end is the live caret.
-App rules and the hard security gate are checked before routing. A matching app
+App rules and the hard security gate are checked before routing. Application
+policy must be readable: a failed app-rule read blocks capture and correction
+for every trigger and engine, even if dictionary reads still work. A matching app
 rule permits typed-input tracking only when it allows a word-count or character
 trigger. Manual-shortcut permission alone does not enable continuous capture.
 Manual-only rules can still use the opt-in arbitrary-selection shortcut path.
@@ -190,6 +194,11 @@ its typed text back into the active executable context, and waits for the next
 trigger. Manual correction cancels pending work and restores its original text
 to the active context before taking its selection or caret snapshot.
 Automatic triggers never wait for correction. Manual shortcuts
+retain strict input snapshots. Frozen dispatch checks the position generation
+before and after live policy and dictionary reads, so newer typing does not
+cancel earlier work. A refused dispatch restores that segment and newer
+reservations to the active context while preserving older admitted segments.
+Manual shortcuts
 can wait up to 20 ms on the input processor, then continue asynchronously. Hooks
 and the Windows message loop remain independent. Pending hook input is drained
 before a manual snapshot. Every request includes a unique memory-only session ID,
