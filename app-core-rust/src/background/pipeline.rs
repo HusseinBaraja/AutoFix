@@ -3,6 +3,7 @@
 
 use std::{
     collections::VecDeque,
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Condvar, Mutex,
@@ -19,8 +20,9 @@ use super::{
 };
 use crate::{
     correction::{
-        ApiEngineConfig, ConfidenceBehavior, ConfidenceTier, CorrectionEngines, CorrectionInput,
-        CorrectionOutput, EngineKind, EngineStatus, NoChangeReason, TriggerType,
+        ApiCorrectionEngine, ApiEngineConfig, ConfidenceBehavior, ConfidenceTier, CorrectionEngine,
+        CorrectionEngines, CorrectionInput, CorrectionOutput, EngineKind, EngineStatus,
+        NoChangeReason, SendAuthorization, TriggerType,
     },
     settings::{AppConfig, ContextConfig},
 };
@@ -46,6 +48,7 @@ struct Job {
     input: CorrectionInput,
     api: ApiEngineConfig,
     cancelled: Arc<AtomicBool>,
+    authorization: SendAuthorization,
 }
 
 struct Completion {
@@ -94,6 +97,7 @@ impl ActiveRequest {
 }
 
 pub(super) struct CorrectionPipeline {
+    database_path: Option<PathBuf>,
     mailbox: Arc<(Mutex<Mailbox>, Condvar)>,
     worker: Option<JoinHandle<()>>,
     active: VecDeque<ActiveRequest>,
@@ -104,10 +108,21 @@ pub(super) struct CorrectionPipeline {
 impl CorrectionPipeline {
     /// Start the correction worker using the configured local or API engine.
     pub(super) fn new() -> std::io::Result<Self> {
-        Self::start(|job| {
-            CorrectionEngines::with_api_config(job.api.clone())
-                .correct_with(job.request.engine, &job.input)
+        Self::start(|job| match job.request.engine {
+            EngineKind::OpenAiCompatibleApi | EngineKind::CustomApi => {
+                ApiCorrectionEngine::new(job.request.engine, job.api.clone())
+                    .with_send_authorization(Arc::clone(&job.authorization))
+                    .correct(&job.input)
+            }
+            _ => CorrectionEngines::default().correct_with(job.request.engine, &job.input),
         })
+    }
+
+    /// Bind runtime API jobs to the same database used by app-rule writers.
+    pub(super) fn with_database(database: &crate::storage::Database) -> std::io::Result<Self> {
+        let mut pipeline = Self::new()?;
+        pipeline.database_path = database.path().map(PathBuf::from);
+        Ok(pipeline)
     }
 
     /// Start FIFO execution with one completion slot so no result can be overwritten.
@@ -145,6 +160,7 @@ impl CorrectionPipeline {
                 }
             })?;
         Ok(Self {
+            database_path: None,
             mailbox,
             worker: Some(worker),
             active: VecDeque::new(),
@@ -169,6 +185,13 @@ impl CorrectionPipeline {
         let id = self.next_id;
         self.next_id = self.next_id.checked_add(1).expect("request ID exhausted");
         let cancelled = Arc::new(AtomicBool::new(false));
+        let authorization = super::security::api_send_authorization(
+            self.database_path.clone(),
+            config.clone(),
+            target.clone(),
+            request.trigger,
+            Arc::clone(&cancelled),
+        );
         let input = CorrectionInput {
             // Following selected text can inform the engine, but remains read-only.
             informative_context: if request.following_context.is_empty() {
@@ -222,6 +245,7 @@ impl CorrectionPipeline {
             input,
             api: (&config.api).into(),
             cancelled,
+            authorization,
         });
         ready.notify_all();
     }

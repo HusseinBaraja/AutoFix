@@ -1,6 +1,9 @@
 use std::{
     io,
-    sync::mpsc::{self, Receiver},
+    sync::{
+        mpsc::{self, Receiver},
+        Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -14,6 +17,9 @@ use super::{
 };
 
 const MAX_RESPONSE_BYTES: u64 = 256 * 1024;
+
+/// Acquire live authorization and retain its guard until the outbound send finishes.
+pub(crate) type SendAuthorization = Arc<dyn Fn() -> Option<Box<dyn Send>> + Send + Sync>;
 
 #[cfg(test)]
 mod timeout_tests;
@@ -64,6 +70,7 @@ pub enum ApiNotice {
 pub struct ApiCorrectionEngine {
     kind: EngineKind,
     config: Option<ApiEngineConfig>,
+    send_authorization: Option<SendAuthorization>,
 }
 
 impl ApiCorrectionEngine {
@@ -76,12 +83,23 @@ impl ApiCorrectionEngine {
         Self {
             kind,
             config: Some(config),
+            send_authorization: None,
         }
     }
 
     /// Keeps an API engine available in the registry before configuration.
     pub(crate) fn unconfigured(kind: EngineKind) -> Self {
-        Self { kind, config: None }
+        Self {
+            kind,
+            config: None,
+            send_authorization: None,
+        }
+    }
+
+    /// Runtime jobs must refresh revocable policy at each transport send, including retries.
+    pub(crate) fn with_send_authorization(mut self, authorization: SendAuthorization) -> Self {
+        self.send_authorization = Some(authorization);
+        self
     }
 
     /// Run network I/O off the caller's thread. The receiver can be polled
@@ -154,7 +172,7 @@ impl CorrectionEngine for ApiCorrectionEngine {
                 started,
             );
         };
-        let outcome = correct_api(config, input, started);
+        let outcome = correct_api(config, input, started, self.send_authorization.clone());
         match outcome {
             Ok(corrected) => completed_output(input, corrected, elapsed_ms(started)),
             Err(ApiError::Timeout) if config.fallback_to_local => {
@@ -215,6 +233,7 @@ fn correct_api(
     config: &ApiEngineConfig,
     input: &CorrectionInput,
     started: Instant,
+    authorization: Option<SendAuthorization>,
 ) -> Result<String, ApiError> {
     let timeout = match input.trigger_type {
         TriggerType::ManualShortcut => config.timeout_manual_ms,
@@ -229,7 +248,7 @@ fn correct_api(
     let config = config.clone();
     let input = input.clone();
     bounded_request(budget, started, move || {
-        correct_api_inner(&config, &input, started, budget)
+        correct_api_inner(&config, &input, started, budget, authorization.as_ref())
     })
 }
 
@@ -279,6 +298,7 @@ fn correct_api_inner(
     input: &CorrectionInput,
     started: Instant,
     deadline: Duration,
+    authorization: Option<&SendAuthorization>,
 ) -> Result<String, ApiError> {
     if started.elapsed() >= deadline {
         return Err(ApiError::Timeout);
@@ -314,7 +334,7 @@ fn correct_api_inner(
         let Some(remaining) = deadline.checked_sub(started.elapsed()) else {
             return Err(ApiError::Timeout);
         };
-        let outcome = winhttp::post(&endpoint, &key, &payload, remaining)
+        let outcome = winhttp::post(&endpoint, &key, &payload, remaining, authorization)
             .and_then(|body| parse_response(&body, input));
         if started.elapsed() >= deadline {
             return Err(ApiError::Timeout);

@@ -45,6 +45,14 @@ Unavailable application rules deny authorization for typed capture and every
 correction trigger, including API execution. An empty successfully read rule
 list is distinct from a failed read.
 
+Queued API work must refresh app-rule authorization and cancellation at every
+outbound send, including retries. The runtime holds a SQLite writer reservation
+from the fresh policy read until the send returns, so IPC and settings UI rule
+writes serialize with transmission. A revocation is effective when its write
+commits; previously transmitted data cannot be recalled. Missing, unreadable,
+or busy policy storage denies sending immediately. Denied frozen work releases
+its slot and retires its original text through failed completion.
+
 The live replacement consumer is still a placeholder. Before enabling it, the
 mutation owner must enforce `silent` or explicit acceptance of a suggestion and
 recheck process, focused target, security gate, caret, and context/executable

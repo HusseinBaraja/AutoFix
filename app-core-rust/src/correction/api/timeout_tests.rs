@@ -265,3 +265,33 @@ fn direct_engine_config_rejects_retry_counts_above_one() {
         })
     ));
 }
+
+/// A retry needs fresh authorization even after the first attempt was permitted.
+#[test]
+fn revoked_send_authorization_prevents_api_retry() {
+    let Some(mut provider) = Provider::start(vec![(503, Duration::ZERO, String::new())]) else {
+        return;
+    };
+    provider.config.timeout_manual_ms = 1_000;
+    let sends = Arc::new(AtomicU64::new(0));
+    let attempts = Arc::clone(&sends);
+    let authorize: SendAuthorization = Arc::new(move || {
+        (attempts.fetch_add(1, Ordering::SeqCst) == 0).then(|| Box::new(()) as Box<dyn Send>)
+    });
+    let output = ApiCorrectionEngine::new(EngineKind::CustomApi, provider.config.clone())
+        .with_send_authorization(authorize)
+        .correct(&input(TriggerType::ManualShortcut));
+    assert!(
+        matches!(
+            output.status,
+            EngineStatus::Error(EngineFailure {
+                kind: EngineFailureKind::InvalidInput,
+                retryable: false,
+                ..
+            })
+        ),
+        "{output:?}"
+    );
+    assert_eq!(sends.load(Ordering::SeqCst), 2);
+    provider.finish(1);
+}

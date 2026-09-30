@@ -12,6 +12,7 @@ mod local_rule;
 mod mixed_language;
 
 pub(crate) use api::valid_base_url;
+pub(crate) use api::SendAuthorization;
 pub use api::{ApiCorrectionEngine, ApiEngineConfig, ApiNotice};
 pub use contract::{
     ConfidenceBehavior, ConfidenceBehaviorSettings, ConfidenceTier, CorrectionChange,

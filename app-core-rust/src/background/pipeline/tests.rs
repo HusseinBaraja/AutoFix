@@ -12,6 +12,166 @@ const STAMP: InputStamp = InputStamp {
     sequence: 12,
 };
 
+/// A real queued API job must not transmit after revocation commits behind an earlier send.
+#[test]
+fn queued_api_job_is_denied_after_rule_revocation_and_releases_its_slot() {
+    use crate::storage::{AppRule, Database};
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    let id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let profile = format!("queue-policy-{}-{id}", std::process::id());
+    if let Err(error) = crate::secrets::set_secret(&profile, "test-key") {
+        eprintln!("skipping provider test: credential store unavailable: {error}");
+        return;
+    }
+    struct Cleanup {
+        profile: String,
+        path: PathBuf,
+    }
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            if let Err(error) = crate::secrets::delete_secret(&self.profile) {
+                eprintln!("test credential cleanup failed: {error}");
+            }
+            if let Err(error) = std::fs::remove_file(&self.path) {
+                eprintln!("test database cleanup failed: {error}");
+            }
+        }
+    }
+    let cleanup = Cleanup {
+        profile: profile.clone(),
+        path: std::env::temp_dir().join(format!(
+            "autofix-queue-policy-{}-{id}.sqlite",
+            std::process::id()
+        )),
+    };
+    let database = Database::open(&cleanup.path).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (sent, received) = mpsc::channel();
+    let (release, wait) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let started = Instant::now();
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        started.elapsed() < Duration::from_secs(3),
+                        "missing first API send"
+                    );
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0; 4096];
+        loop {
+            let count = stream.read(&mut buffer).unwrap();
+            assert_ne!(count, 0);
+            request.extend_from_slice(&buffer[..count]);
+            if let Some(at) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&request[..at]);
+                let length: usize = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length: ")
+                            .and_then(|length| length.trim().parse().ok())
+                    })
+                    .unwrap();
+                if request.len() >= at + 4 + length {
+                    break;
+                }
+            }
+        }
+        sent.send(()).unwrap();
+        wait.recv_timeout(Duration::from_secs(2)).unwrap();
+        let body = serde_json::json!({"choices": [{"message": {"content":
+            "{\"corrected_executable_text\":\"First.\",\"edits\":[]}"}}]})
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        listener
+    });
+    let mut config = AppConfig::default();
+    config.correction.engine = crate::settings::CorrectionEngine::Api;
+    config.api.provider_preset = profile;
+    config.api.base_url = Some(format!("http://127.0.0.1:{port}/v1"));
+    config.api.timeout_auto_ms = 2_000;
+    config.context.pending_queue_size = 2;
+    let mut manager = manager(&config, "First.");
+    let mut pipeline = CorrectionPipeline::with_database(&database).unwrap();
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    received.recv_timeout(Duration::from_secs(3)).unwrap();
+    manager.input(TypedInput::Text(" Second.".into()));
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    manager.input(TypedInput::Text(" next".into()));
+    assert_eq!(pipeline.mailbox.0.lock().unwrap().jobs.len(), 1);
+    // Release the first send. Completion backpressure keeps the second job queued
+    // while the rule writer waits for the transport's send guard to drop.
+    release.send(()).unwrap();
+    database
+        .app_rules()
+        .upsert(&AppRule {
+            process_name: "notepad.exe".into(),
+            window_title_pattern: None,
+            list_behavior: "allowlist".into(),
+            manual_shortcut_allowed: true,
+            word_count_trigger_allowed: true,
+            character_trigger_allowed: true,
+            local_engine_allowed: true,
+            api_engine_allowed: false,
+        })
+        .unwrap();
+    wait_completion(&pipeline);
+    assert!(!pipeline.finish(
+        &mut manager,
+        &config.context,
+        || STAMP,
+        |_| None,
+        |_, _| panic!("revoked target must not be captured"),
+        |_, _, _| panic!("revoked target must not be edited")
+    ));
+    wait_completion(&pipeline);
+    assert!(!pipeline.finish(
+        &mut manager,
+        &config.context,
+        || STAMP,
+        |_| panic!("denied send must complete silently"),
+        |_, _| panic!("denied send must not capture"),
+        |_, _, _| panic!("denied send must not replace")
+    ));
+    let listener = server.join().unwrap();
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    assert!(pipeline.active.is_empty());
+    assert_eq!(
+        manager.active().unwrap().informative_context(),
+        "First. Second."
+    );
+    assert_eq!(manager.active().unwrap().editable_context(), " next");
+    assert!(!pipeline.take_timeout_notice());
+}
+
 /// Only eligible manual API timeouts consume enabled timeout feedback.
 #[test]
 fn timeout_notice_is_manual_api_only_and_obeys_feedback_setting() {

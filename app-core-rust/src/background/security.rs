@@ -5,6 +5,9 @@ use crate::{
 
 use super::target::{self, CorrectionEligibility, FocusedTarget, TargetDetection};
 
+mod outbound;
+pub(super) use outbound::api_send_authorization;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TriggerKind {
     Tracking,

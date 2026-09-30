@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+mod app_policy;
 mod logs;
 mod migrations;
 mod repositories;
@@ -11,6 +12,7 @@ use std::path::Path;
 
 use rusqlite::{Connection, Result};
 
+pub(crate) use app_policy::AppPolicyGuard;
 use logs::{CorrectionMetadataRepository, DebugEventRepository};
 use repositories::{
     AppRuleRepository, CustomDictionaryRepository, LanguageOverrideRepository,
@@ -25,6 +27,14 @@ pub(crate) struct Database {
 }
 
 impl Database {
+    /// File identity for fresh policy reads on a separate transport connection.
+    pub(crate) fn path(&self) -> Option<&Path> {
+        self.connection
+            .path()
+            .filter(|path| !path.is_empty())
+            .map(Path::new)
+    }
+
     pub(crate) fn open(path: &Path) -> Result<Self> {
         let connection = Connection::open(path)?;
         migrations::migrate(&connection)?;

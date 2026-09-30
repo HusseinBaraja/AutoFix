@@ -289,7 +289,8 @@ impl RuntimeComponents {
 
 impl InputWorker {
     fn start(config: AppConfig, database: Database) -> Result<Self, BackgroundError> {
-        let pipeline = CorrectionPipeline::new().map_err(BackgroundError::InputWorker)?;
+        let pipeline =
+            CorrectionPipeline::with_database(&database).map_err(BackgroundError::InputWorker)?;
         let queue = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
         let worker_queue = Arc::clone(&queue);
         let (done_sender, done) = mpsc::channel();

@@ -16,7 +16,9 @@ use windows_sys::Win32::{
     },
 };
 
-use super::{failure_error, invalid, ApiError, EngineFailureKind, MAX_RESPONSE_BYTES};
+use super::{
+    failure_error, invalid, ApiError, EngineFailureKind, SendAuthorization, MAX_RESPONSE_BYTES,
+};
 
 struct Endpoint<'a> {
     secure: bool,
@@ -117,6 +119,7 @@ pub(super) fn post(
     key: &str,
     body: &str,
     timeout: Duration,
+    authorization: Option<&SendAuthorization>,
 ) -> Result<String, ApiError> {
     let started = Instant::now();
     let endpoint = parse(url)?;
@@ -179,6 +182,11 @@ pub(super) fn post(
         "Content-Type: application/json\r\nAuthorization: Bearer {key}\r\n"
     ));
     let body_len = u32::try_from(body.len()).map_err(|_| invalid("API request is too large"))?;
+    // Rule writes cannot commit between the fresh policy read and this send.
+    // Acquire inside the transport thread, never around the caller's bounded wait.
+    let send_guard = authorization
+        .map(|authorize| authorize().ok_or_else(|| invalid("API send authorization revoked")))
+        .transpose()?;
     set_remaining_timeout(&request, started, timeout)?;
     if unsafe {
         WinHttpSendRequest(
@@ -194,6 +202,7 @@ pub(super) fn post(
     {
         return Err(last_error());
     }
+    drop(send_guard);
     set_remaining_timeout(&request, started, timeout)?;
     if unsafe { WinHttpReceiveResponse(request.0, null_mut()) } == 0 {
         return Err(last_error());
@@ -334,11 +343,40 @@ fn last_error() -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::correction::EngineFailure;
     use std::{
         io::{Read, Write},
         net::TcpListener,
         thread,
     };
+
+    /// Revocation at the last transport boundary must send neither headers nor captured text.
+    #[test]
+    fn denied_send_authorization_never_connects_to_provider() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let authorize: SendAuthorization = std::sync::Arc::new(|| None);
+        let outcome = post(
+            &format!("http://127.0.0.1:{port}/v1/chat/completions"),
+            "test-key",
+            "captured text and dictionary",
+            Duration::from_secs(1),
+            Some(&authorize),
+        );
+        assert!(matches!(
+            outcome,
+            Err(ApiError::Failure(EngineFailure {
+                kind: EngineFailureKind::InvalidInput,
+                retryable: false,
+                ..
+            }))
+        ));
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
 
     #[test]
     fn trickling_response_cannot_extend_the_total_read_budget() {
@@ -374,6 +412,7 @@ mod tests {
             "test-key",
             "{}",
             Duration::from_millis(100),
+            None,
         );
         assert!(matches!(result, Err(ApiError::Timeout)));
         assert!(started.elapsed() < Duration::from_millis(350));
@@ -418,6 +457,7 @@ mod tests {
             "test-key",
             "{}",
             Duration::from_secs(2),
+            None,
         )
         .unwrap();
         assert!(body.contains("corrected_executable_text"));

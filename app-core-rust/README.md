@@ -216,7 +216,16 @@ generation changes, movement occurs, backspace crosses a frozen boundary, the
 typed buffer evicts its anchor, executable context commits, or configuration reloads.
 Cancellation prevents queued work from
 starting and suppresses late publication; a running synchronous API transport can
-finish within its configured timeout. Completion rechecks the live security gate
+finish within its configured timeout. API jobs also recheck cancellation and the
+current app rules immediately before each outbound send, including retries.
+The transport acquires a SQLite writer reservation before reading policy and
+holds it until the send returns. This serializes authorization with app-rule
+writes from IPC and the settings UI, including when SQLite uses WAL mode.
+Revocation takes effect when the rule write commits: a send already holding the
+reservation may finish first, and transmitted data cannot be recalled. Missing,
+unreadable, or busy policy storage denies the send without waiting or retrying.
+Denied frozen jobs retire their original text and release queue capacity through
+normal failed completion. Completion rechecks the live security gate
 and focused target, then input generations again after those checks. Completions
 wait for hook input to be processed and retire frozen ranges in document order.
 Before a changed result reaches replacement, completion also requires a stable
