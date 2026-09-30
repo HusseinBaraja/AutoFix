@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::correction::{ConfidenceBehavior, CorrectionMode, GrammarCategory};
+use crate::correction::{
+    ConfidenceBehavior, ConfidenceBehaviorSettings, CorrectionMode, GrammarCategory,
+    MixedLanguagePolicy, UncertainLanguagePolicy,
+};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub(crate) struct AppConfig {
@@ -14,6 +17,24 @@ pub(crate) struct AppConfig {
     pub(crate) api: ApiConfig,
     pub(crate) feedback: FeedbackConfig,
     pub(crate) logging: LoggingConfig,
+}
+
+impl AppConfig {
+    /// Snapshot confidence settings, honoring the user's suggestion preference.
+    pub(crate) fn confidence_behavior(&self) -> ConfidenceBehaviorSettings {
+        let medium = self.correction.medium_confidence_behavior;
+        ConfidenceBehaviorSettings {
+            high: self.correction.high_confidence_behavior,
+            medium: if medium == ConfidenceBehavior::Suggestion
+                && !self.feedback.show_medium_confidence_suggestions
+            {
+                ConfidenceBehavior::DoNothing
+            } else {
+                medium
+            },
+            low: ConfidenceBehavior::DoNothing,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -113,6 +134,14 @@ pub(crate) struct CorrectionConfig {
     pub(crate) medium_confidence_behavior: ConfidenceBehavior,
     pub(crate) low_confidence_behavior: ConfidenceBehavior,
     pub(crate) enabled_grammar_categories: Vec<GrammarCategory>,
+    #[serde(default)]
+    pub(crate) preferred_language: Option<String>,
+    #[serde(default)]
+    pub(crate) app_language_overrides: Vec<String>,
+    #[serde(default)]
+    pub(crate) uncertain_language_policy: UncertainLanguagePolicy,
+    #[serde(default)]
+    pub(crate) mixed_language_policy: MixedLanguagePolicy,
 }
 
 fn default_true() -> bool {
@@ -120,6 +149,7 @@ fn default_true() -> bool {
 }
 
 impl Default for CorrectionConfig {
+    /// Starts with local typos, conservative language policies, and low confidence blocked.
     fn default() -> Self {
         Self {
             enabled: true,
@@ -129,6 +159,10 @@ impl Default for CorrectionConfig {
             medium_confidence_behavior: ConfidenceBehavior::Suggestion,
             low_confidence_behavior: ConfidenceBehavior::DoNothing,
             enabled_grammar_categories: Vec::new(),
+            preferred_language: None,
+            app_language_overrides: Vec::new(),
+            uncertain_language_policy: UncertainLanguagePolicy::default(),
+            mixed_language_policy: MixedLanguagePolicy::default(),
         }
     }
 }

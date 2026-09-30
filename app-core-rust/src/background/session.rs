@@ -44,6 +44,7 @@ pub(crate) struct Session {
     // Informative text is known session text before the executable segment.
     // It is never an editable replacement target.
     informative_context: String,
+    detected_language: Option<String>,
     executable: TypedSession,
     pending_corrections: VecDeque<PendingCorrection>,
     correction_undo_history: Vec<CorrectionUndo>,
@@ -120,11 +121,13 @@ fn forward_skipped_start(before_typing: &str, informative: &str, old: &str) -> O
 }
 
 impl Session {
+    /// Creates a memory-only session with no captured context or cached language.
     fn new(window: isize, key: SessionKey) -> Self {
         let mut executable = TypedSession::new();
         executable.focus(Some((window, key)));
         Self {
             informative_context: String::new(),
+            detected_language: None,
             executable,
             pending_corrections: VecDeque::new(),
             correction_undo_history: Vec::new(),
@@ -136,6 +139,16 @@ impl Session {
 
     pub(crate) fn informative_context(&self) -> &str {
         &self.informative_context
+    }
+
+    /// Returns the language cached for this focused session, never persisted to disk.
+    pub(crate) fn detected_language(&self) -> Option<&str> {
+        self.detected_language.as_deref()
+    }
+
+    /// Updates the session detection without changing the editable text or caret.
+    pub(crate) fn set_detected_language(&mut self, language: Option<String>) {
+        self.detected_language = language;
     }
 
     pub(crate) fn executable_context(&self) -> String {

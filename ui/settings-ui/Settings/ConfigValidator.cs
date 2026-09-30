@@ -8,6 +8,8 @@ public static class ConfigValidator
     private static readonly HashSet<string> Modes = ["typos_only", "typos_plus_grammar"];
     private static readonly HashSet<string> Engines = ["local", "api"];
     private static readonly HashSet<string> Confidence = ["do_nothing", "suggestion", "silent"];
+    private static readonly HashSet<string> UncertainLanguagePolicies = ["high_confidence_typos_only", "do_nothing", "correct_normally"];
+    private static readonly HashSet<string> MixedLanguagePolicies = ["disable_correction", "dominant_language_only", "per_token"];
 
     /// <summary>Validates settings before they are saved or applied.</summary>
     public static void Validate(AppConfig config)
@@ -37,6 +39,26 @@ public static class ConfigValidator
     {
         RequireChoice("correction.mode", config.Correction.Mode, Modes);
         RequireChoice("correction.engine", config.Correction.Engine, Engines);
+        RequireChoice("correction.uncertain_language_policy", config.Correction.UncertainLanguagePolicy, UncertainLanguagePolicies);
+        RequireChoice("correction.mixed_language_policy", config.Correction.MixedLanguagePolicy, MixedLanguagePolicies);
+        if (config.Correction.MixedLanguagePolicy == "per_token" && config.Correction.Engine != "api")
+        {
+            throw Invalid("correction.mixed_language_policy", "per-token correction requires the API engine");
+        }
+        if (config.Correction.PreferredLanguage is { } tag && !ValidLanguageTag(tag))
+        {
+            throw Invalid("correction.preferred_language", "must be a BCP 47 language tag");
+        }
+        var apps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in config.Correction.AppLanguageOverrides)
+        {
+            var parts = entry.Split('=', 2);
+            if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0])
+                || !ValidLanguageTag(parts[1].Trim()) || !apps.Add(parts[0].Trim()))
+            {
+                throw Invalid("correction.app_language_overrides", "must contain unique process names and valid language tags");
+            }
+        }
         RequireChoice(
             "correction.high_confidence_behavior",
             config.Correction.HighConfidenceBehavior,
@@ -54,6 +76,89 @@ public static class ConfigValidator
         {
             throw Invalid("correction.enabled_grammar_categories", "must be empty unless grammar mode is enabled");
         }
+        var categories = GrammarCategories.All.Select(category => category.Value).ToHashSet();
+        if (config.Correction.EnabledGrammarCategories.Any(category => !categories.Contains(category))
+            || config.Correction.EnabledGrammarCategories.Count != config.Correction.EnabledGrammarCategories.Distinct().Count())
+        {
+            throw Invalid("correction.enabled_grammar_categories", "contains an unknown or duplicate category");
+        }
+    }
+
+    /// <summary>Checks RFC 5646 structure without requiring IANA-registered subtags.</summary>
+    private static bool ValidLanguageTag(string tag)
+    {
+        string[] grandfathered = [
+            "en-GB-oed", "i-ami", "i-bnn", "i-default", "i-enochian", "i-hak", "i-klingon",
+            "i-lux", "i-mingo", "i-navajo", "i-pwn", "i-tao", "i-tay", "i-tsu", "sgn-BE-FR",
+            "sgn-BE-NL", "sgn-CH-DE", "art-lojban", "cel-gaulish", "no-bok", "no-nyn",
+            "zh-guoyu", "zh-hakka", "zh-min", "zh-min-nan", "zh-xiang"
+        ];
+        if (grandfathered.Contains(tag, StringComparer.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        var parts = tag.Split('-');
+        if (parts.Any(part => part.Length is < 1 or > 8 || !part.All(char.IsAsciiLetterOrDigit)))
+        {
+            return false;
+        }
+        if (parts[0].Equals("x", StringComparison.OrdinalIgnoreCase))
+        {
+            return parts.Length > 1;
+        }
+        if (parts[0].Length is < 2 or > 8 || !parts[0].All(char.IsAsciiLetter))
+        {
+            return false;
+        }
+        var index = 1;
+        if (parts[0].Length <= 3)
+        {
+            for (var count = 0; count < 3 && index < parts.Length
+                && parts[index].Length == 3 && parts[index].All(char.IsAsciiLetter); count++)
+            {
+                index++;
+            }
+        }
+        if (index < parts.Length && parts[index].Length == 4 && parts[index].All(char.IsAsciiLetter))
+        {
+            index++;
+        }
+        if (index < parts.Length && ((parts[index].Length == 2 && parts[index].All(char.IsAsciiLetter))
+            || (parts[index].Length == 3 && parts[index].All(char.IsAsciiDigit))))
+        {
+            index++;
+        }
+        var variants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (index < parts.Length && (parts[index].Length >= 5
+            || (parts[index].Length == 4 && char.IsAsciiDigit(parts[index][0]))))
+        {
+            if (!variants.Add(parts[index++]))
+            {
+                return false;
+            }
+        }
+        var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (index < parts.Length)
+        {
+            if (parts[index].Equals("x", StringComparison.OrdinalIgnoreCase))
+            {
+                return index + 1 < parts.Length;
+            }
+            if (parts[index].Length != 1 || !extensions.Add(parts[index++]))
+            {
+                return false;
+            }
+            var payloadStart = index;
+            while (index < parts.Length && parts[index].Length >= 2)
+            {
+                index++;
+            }
+            if (index == payloadStart)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>Restricts API providers, endpoints, and request settings.</summary>

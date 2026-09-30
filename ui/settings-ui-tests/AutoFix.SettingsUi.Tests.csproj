@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+    <None Include="..\..\shared-schema\language-tag-cases.json" Link="language-tag-cases.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

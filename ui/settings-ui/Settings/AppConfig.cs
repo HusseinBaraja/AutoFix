@@ -119,6 +119,18 @@ public sealed class CorrectionConfig
 
     [JsonPropertyName("enabled_grammar_categories")]
     public List<string> EnabledGrammarCategories { get; set; } = [];
+
+    [JsonPropertyName("preferred_language")]
+    public string? PreferredLanguage { get; set; }
+
+    [JsonPropertyName("app_language_overrides")]
+    public List<string> AppLanguageOverrides { get; set; } = [];
+
+    [JsonPropertyName("uncertain_language_policy")]
+    public string UncertainLanguagePolicy { get; set; } = "high_confidence_typos_only";
+
+    [JsonPropertyName("mixed_language_policy")]
+    public string MixedLanguagePolicy { get; set; } = "dominant_language_only";
 }
 
 public sealed class ApiConfig

@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use crate::correction::{ConfidenceBehavior, CorrectionMode, GrammarCategory};
+use crate::correction::{ConfidenceBehavior, CorrectionMode, GrammarCategory, MixedLanguagePolicy};
 
 use super::{
     model::{CorrectionEngine, RunMode},
@@ -131,12 +131,50 @@ fn validate_non_empty_list(
     Ok(())
 }
 
+/// Rejects malformed language settings and incompatible grammar, engine, or confidence choices.
 fn validate_correction(config: &AppConfig) -> Result<(), ConfigValidationError> {
+    if config
+        .correction
+        .preferred_language
+        .as_deref()
+        .is_some_and(|tag| !crate::correction::language::valid_language_tag(tag))
+    {
+        return Err(ConfigValidationError::new(
+            "correction.preferred_language",
+            "must be a BCP 47 language tag",
+        ));
+    }
+    let mut apps = std::collections::HashSet::new();
+    for entry in &config.correction.app_language_overrides {
+        let Some((app, tag)) = entry.split_once('=') else {
+            return Err(ConfigValidationError::new(
+                "correction.app_language_overrides",
+                "use process.exe=language-tag",
+            ));
+        };
+        if app.trim().is_empty()
+            || !crate::correction::language::valid_language_tag(tag.trim())
+            || !apps.insert(app.trim().to_ascii_lowercase())
+        {
+            return Err(ConfigValidationError::new(
+                "correction.app_language_overrides",
+                "must contain unique process names and valid language tags",
+            ));
+        }
+    }
     match config.general.run_mode {
         RunMode::Blocklist | RunMode::Allowlist => {}
     }
     match config.correction.engine {
         CorrectionEngine::Local | CorrectionEngine::Api => {}
+    }
+    if config.correction.mixed_language_policy == MixedLanguagePolicy::PerToken
+        && config.correction.engine != CorrectionEngine::Api
+    {
+        return Err(ConfigValidationError::new(
+            "correction.mixed_language_policy",
+            "per-token correction requires the API engine",
+        ));
     }
     match config.correction.mode {
         CorrectionMode::TyposOnly if !config.correction.enabled_grammar_categories.is_empty() => {
@@ -158,9 +196,16 @@ fn validate_correction(config: &AppConfig) -> Result<(), ConfigValidationError> 
             GrammarCategory::Agreement
             | GrammarCategory::Capitalization
             | GrammarCategory::Clarity
-            | GrammarCategory::Punctuation
             | GrammarCategory::Tense
-            | GrammarCategory::WordOrder => {}
+            | GrammarCategory::WordOrder
+            | GrammarCategory::MissingPunctuation
+            | GrammarCategory::ExtraPunctuation
+            | GrammarCategory::RepeatedWords
+            | GrammarCategory::Articles
+            | GrammarCategory::Prepositions
+            | GrammarCategory::Spacing
+            | GrammarCategory::Apostrophes
+            | GrammarCategory::Homophones => {}
         }
     }
 

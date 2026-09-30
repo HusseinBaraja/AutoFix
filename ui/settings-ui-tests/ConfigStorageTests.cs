@@ -5,6 +5,27 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class ConfigStorageTests
 {
+    /// <summary>Saved confidence choices round-trip and imported unsafe low-tier behavior fails validation.</summary>
+    [TestMethod]
+    public void ConfidenceSettingsRoundTripAndRejectUnsafeLowBehavior()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var config = AppConfig.Default();
+        config.Correction.HighConfidenceBehavior = "do_nothing";
+        config.Correction.MediumConfidenceBehavior = "silent";
+        fixture.Storage.Save(config);
+        var loaded = fixture.Storage.Load(fixture.Path);
+        Assert.AreEqual("do_nothing", loaded.Correction.HighConfidenceBehavior);
+        Assert.AreEqual("silent", loaded.Correction.MediumConfidenceBehavior);
+        Assert.AreEqual("do_nothing", loaded.Correction.LowConfidenceBehavior);
+        foreach (var behavior in new[] { "silent", "suggestion" })
+        {
+            File.WriteAllText(fixture.Path, File.ReadAllText(fixture.Path).Replace("low_confidence_behavior = \"do_nothing\"", $"low_confidence_behavior = \"{behavior}\""));
+            Assert.ThrowsException<InvalidDataException>(() => fixture.Storage.Load(fixture.Path));
+            fixture.Storage.Save(config);
+        }
+    }
+
     [TestMethod]
     public void ApiDefaultsKeepFallbackOffAndRequireSecureCustomEndpoint()
     {
@@ -44,6 +65,105 @@ public sealed class ConfigStorageTests
         fixture.Storage.Save(config);
 
         Assert.IsTrue(fixture.Storage.Load(fixture.Path).Shortcuts.CorrectArbitrarySelection);
+    }
+
+    /// <summary>Language policies survive storage while duplicate process overrides are rejected.</summary>
+    [TestMethod]
+    public void LanguageSettingsRoundTripAndRejectDuplicateApp()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var config = AppConfig.Default();
+        config.Correction.PreferredLanguage = "en-US";
+        config.Correction.AppLanguageOverrides = ["notepad.exe=fr-FR"];
+        config.Correction.UncertainLanguagePolicy = "do_nothing";
+        config.Correction.MixedLanguagePolicy = "disable_correction";
+        fixture.Storage.Save(config);
+        var loaded = fixture.Storage.Load(fixture.Path);
+        Assert.AreEqual("en-US", loaded.Correction.PreferredLanguage);
+        CollectionAssert.AreEqual(config.Correction.AppLanguageOverrides, loaded.Correction.AppLanguageOverrides);
+        Assert.AreEqual("do_nothing", loaded.Correction.UncertainLanguagePolicy);
+        Assert.AreEqual("disable_correction", loaded.Correction.MixedLanguagePolicy);
+        loaded.Correction.AppLanguageOverrides.Add("NOTEPAD.EXE=de");
+        Assert.ThrowsException<InvalidDataException>(() => ConfigValidator.Validate(loaded));
+    }
+
+    /// <summary>Per-token policy is rejected for local correction and accepted for the API engine.</summary>
+    [TestMethod]
+    public void PerTokenPolicyRequiresApiEngine()
+    {
+        var config = AppConfig.Default();
+        config.Correction.MixedLanguagePolicy = "per_token";
+        Assert.ThrowsException<InvalidDataException>(() => ConfigValidator.Validate(config));
+        config.Correction.Engine = "api";
+        ConfigValidator.Validate(config);
+    }
+
+    /// <summary>Both language settings accept complete tags and reject malformed tags before saving.</summary>
+    [TestMethod]
+    public void LanguageTagsMatchSharedCasesAndInvalidSavesPreserveFile()
+    {
+        using var fixture = TempConfigFixture.Create();
+        fixture.Storage.Save(AppConfig.Default());
+        var original = File.ReadAllText(fixture.Path);
+        var cases = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(
+            File.ReadAllText(System.IO.Path.Combine(AppContext.BaseDirectory, "language-tag-cases.json")))!;
+        foreach (var item in cases)
+        {
+            var tag = item[0].GetString()!;
+            var valid = item[1].GetBoolean();
+            foreach (var appOverride in new[] { false, true })
+            {
+                var config = AppConfig.Default();
+                var field = appOverride ? "correction.app_language_overrides" : "correction.preferred_language";
+                if (appOverride)
+                {
+                    config.Correction.AppLanguageOverrides = [$"notepad.exe={tag}"];
+                }
+                else
+                {
+                    config.Correction.PreferredLanguage = tag;
+                }
+                if (valid)
+                {
+                    fixture.Storage.Save(config);
+                    var loaded = fixture.Storage.Load(fixture.Path);
+                    if (appOverride)
+                    {
+                        CollectionAssert.AreEqual(config.Correction.AppLanguageOverrides, loaded.Correction.AppLanguageOverrides);
+                    }
+                    else
+                    {
+                        Assert.AreEqual(tag, loaded.Correction.PreferredLanguage);
+                    }
+                    fixture.Storage.Save(AppConfig.Default());
+                }
+                else
+                {
+                    // App overrides intentionally trim the tag around '='.
+                    if (appOverride && tag.Trim() != tag)
+                    {
+                        continue;
+                    }
+                    var error = Assert.ThrowsException<InvalidDataException>(() => fixture.Storage.Save(config), tag);
+                    StringAssert.Contains(error.Message, field);
+                    Assert.AreEqual(original, File.ReadAllText(fixture.Path), tag);
+                }
+            }
+        }
+    }
+
+    /// <summary>Legacy punctuation config normalizes to the supported spacing category on load.</summary>
+    [TestMethod]
+    public void LegacyPunctuationCategoryLoadsAsSpacing()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var config = AppConfig.Default();
+        config.Correction.Mode = "typos_plus_grammar";
+        config.Correction.EnabledGrammarCategories = ["spacing"];
+        fixture.Storage.Save(config);
+        File.WriteAllText(fixture.Path, File.ReadAllText(fixture.Path).Replace("\"spacing\"", "\"punctuation\""));
+
+        CollectionAssert.AreEqual(new[] { "spacing" }, fixture.Storage.Load(fixture.Path).Correction.EnabledGrammarCategories);
     }
 
     [TestMethod]

@@ -9,6 +9,8 @@ use super::{CorrectionInput, CorrectionOutput, EngineFailure, EngineFailureKind,
 pub trait CorrectionEngine: Send + Sync {
     /// Identifies the implementation without inferring it from task difficulty.
     fn kind(&self) -> EngineKind;
+    /// Reports whether this implementation can correct a BCP 47 language tag.
+    fn supports_language(&self, language_tag: &str) -> bool;
     /// Corrects the executable span for either correction mode.
     fn correct(&self, input: &CorrectionInput) -> CorrectionOutput;
 }
@@ -60,6 +62,10 @@ impl CorrectionEngine for OpenAiCompatibleApiEngine {
     fn kind(&self) -> EngineKind {
         self.0.kind()
     }
+    /// Delegates language support to the configured API engine.
+    fn supports_language(&self, language_tag: &str) -> bool {
+        self.0.supports_language(language_tag)
+    }
     /// Delegates correction to the configured API engine.
     fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {
         self.0.correct(input)
@@ -70,6 +76,10 @@ impl CorrectionEngine for CustomApiEngine {
     /// Returns the custom API kind.
     fn kind(&self) -> EngineKind {
         self.0.kind()
+    }
+    /// Delegates language support to the configured custom API engine.
+    fn supports_language(&self, language_tag: &str) -> bool {
+        self.0.supports_language(language_tag)
     }
     /// Delegates correction to the configured API engine.
     fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {
@@ -83,6 +93,11 @@ impl CorrectionEngine for LocalRuleEngine {
         EngineKind::LocalRule
     }
 
+    /// Restricts deterministic spelling and grammar rules to English language tags.
+    fn supports_language(&self, language_tag: &str) -> bool {
+        super::local_rule::is_english_tag(language_tag)
+    }
+
     /// Applies the local rules to the executable span.
     fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {
         local_rule::correct(input)
@@ -92,10 +107,17 @@ impl CorrectionEngine for LocalRuleEngine {
 macro_rules! placeholder_engine {
     ($engine:ty, $kind:expr) => {
         impl CorrectionEngine for $engine {
+            /// Identifies the registered placeholder implementation.
             fn kind(&self) -> EngineKind {
                 $kind
             }
 
+            /// Advertises no language support until the engine is implemented.
+            fn supports_language(&self, _language_tag: &str) -> bool {
+                false
+            }
+
+            /// Returns unavailable while preserving the original executable text.
             fn correct(&self, input: &CorrectionInput) -> CorrectionOutput {
                 CorrectionOutput::failed(
                     input.executable_context.clone(),

@@ -71,11 +71,22 @@ public static class ConfigFormMapper
         config.Context.ExecutableContextMaxWords = Int(values, "context.executable_context_max_words");
     }
 
+    /// <summary>Maps correction cards to config and clears grammar permissions in typos-only mode.</summary>
     private static void ApplyCorrection(AppConfig config, IReadOnlyDictionary<string, SettingCardViewModel> values)
     {
         config.Correction.Enabled = Toggle(values, "correction.enabled");
         config.Correction.Mode = Dropdown(values, "correction.mode");
+        config.Correction.EnabledGrammarCategories = config.Correction.Mode == "typos_plus_grammar"
+            ? GrammarCategories.All
+                .Where(category => Toggle(values, $"correction.enabled_grammar_categories.{category.Value}"))
+                .Select(category => category.Value)
+                .ToList()
+            : [];
         config.Correction.Engine = Dropdown(values, "correction.engine");
+        config.Correction.PreferredLanguage = NullWhenEmpty(Text(values, "correction.preferred_language"));
+        config.Correction.AppLanguageOverrides = List(values, "correction.app_language_overrides");
+        config.Correction.UncertainLanguagePolicy = Dropdown(values, "correction.uncertain_language_policy");
+        config.Correction.MixedLanguagePolicy = Dropdown(values, "correction.mixed_language_policy");
         config.Correction.HighConfidenceBehavior = Dropdown(values, "correction.high_confidence_behavior");
         config.Correction.MediumConfidenceBehavior = Dropdown(values, "correction.medium_confidence_behavior");
         config.Correction.LowConfidenceBehavior = Dropdown(values, "correction.low_confidence_behavior");

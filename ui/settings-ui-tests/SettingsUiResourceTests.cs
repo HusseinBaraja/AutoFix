@@ -8,6 +8,16 @@ public sealed class SettingsUiResourceTests
     private static readonly XNamespace Presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
     private static readonly XNamespace Xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
 
+    /// <summary>Dropdown resources bind availability so the fixed low-confidence choice cannot be edited.</summary>
+    [TestMethod]
+    public void SettingDropdownsHonorAvailabilityToKeepLowConfidenceFixed()
+    {
+        var window = LoadXaml("MainWindow.xaml");
+        var dropdown = window.Descendants(Presentation + "ComboBox")
+            .Single(combo => (string?)combo.Attribute("ItemsSource") == "{Binding Options}");
+        Assert.AreEqual("{Binding IsAvailable}", (string?)dropdown.Attribute("IsEnabled"));
+    }
+
     [TestMethod]
     public void TextBoxesUseStockTemplateInsideRoundedShells()
     {

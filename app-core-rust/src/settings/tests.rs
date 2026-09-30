@@ -10,6 +10,7 @@ use super::{
     AppConfig, ValidateConfig,
 };
 
+/// Product defaults preserve conservative context, language, grammar, and confidence settings.
 #[test]
 fn default_config_has_requested_values() {
     let config = AppConfig::default();
@@ -28,6 +29,16 @@ fn default_config_has_requested_values() {
     assert!(config.correction.enabled);
     assert_eq!(config.correction.mode, CorrectionMode::TyposOnly);
     assert_eq!(config.correction.engine, CorrectionEngine::Local);
+    assert_eq!(config.correction.preferred_language, None);
+    assert!(config.correction.app_language_overrides.is_empty());
+    assert_eq!(
+        config.correction.uncertain_language_policy,
+        crate::correction::UncertainLanguagePolicy::HighConfidenceTyposOnly
+    );
+    assert_eq!(
+        config.correction.mixed_language_policy,
+        crate::correction::MixedLanguagePolicy::DominantLanguageOnly
+    );
     assert_eq!(
         config.correction.high_confidence_behavior,
         ConfidenceBehavior::Silent
@@ -49,6 +60,35 @@ fn default_config_has_requested_values() {
     assert!(!config.logging.redacted_debug_mode_enabled);
     assert!(!config.logging.full_text_debug_mode_enabled);
     assert_eq!(config.logging.log_retention_days, None);
+}
+
+/// Confidence preferences survive TOML while feedback can suppress, never silently apply, suggestions.
+#[test]
+fn confidence_preferences_round_trip_and_feedback_only_disables_suggestions() {
+    let mut config = AppConfig::default();
+    let defaults = crate::correction::ConfidenceBehaviorSettings::default();
+    assert_eq!(config.confidence_behavior(), defaults);
+    config.feedback.show_medium_confidence_suggestions = false;
+    assert_eq!(
+        config.confidence_behavior().medium,
+        ConfidenceBehavior::DoNothing
+    );
+    config.correction.high_confidence_behavior = ConfidenceBehavior::DoNothing;
+    config.correction.medium_confidence_behavior = ConfidenceBehavior::Silent;
+    let encoded = config_to_toml(&config).unwrap();
+    let loaded = super::toml_io::parse_config(&encoded).unwrap();
+    assert_eq!(
+        loaded.correction.high_confidence_behavior,
+        ConfidenceBehavior::DoNothing
+    );
+    assert_eq!(
+        loaded.confidence_behavior().medium,
+        ConfidenceBehavior::Silent
+    );
+    assert_eq!(
+        loaded.confidence_behavior().low,
+        ConfidenceBehavior::DoNothing
+    );
 }
 
 #[test]
@@ -82,6 +122,7 @@ fn arbitrary_selection_setting_round_trips_and_legacy_config_stays_strict() {
     );
 }
 
+/// A full TOML config loads typed correction categories and the remaining user settings.
 #[test]
 fn parses_full_user_config() {
     let config = super::toml_io::parse_config(
@@ -152,7 +193,7 @@ log_retention_days = 30
     assert_eq!(config.correction.mode, CorrectionMode::TyposPlusGrammar);
     assert_eq!(
         config.correction.enabled_grammar_categories,
-        vec![GrammarCategory::Agreement, GrammarCategory::Punctuation]
+        vec![GrammarCategory::Agreement, GrammarCategory::Spacing]
     );
     assert_eq!(config.logging.log_retention_days, Some(30));
 }
@@ -165,6 +206,85 @@ fn rejects_invalid_confidence_behavior() {
     let error = config.validate().unwrap_err();
 
     assert_eq!(error.field(), "correction.low_confidence_behavior");
+}
+
+/// Language settings round-trip and reject malformed tags and duplicate app overrides.
+#[test]
+fn language_settings_round_trip_and_validate() {
+    let mut config = AppConfig::default();
+    config.correction.preferred_language = Some("en-US".into());
+    config.correction.app_language_overrides = vec!["notepad.exe=fr-FR".into()];
+    config.correction.uncertain_language_policy =
+        crate::correction::UncertainLanguagePolicy::DoNothing;
+    config.correction.mixed_language_policy =
+        crate::correction::MixedLanguagePolicy::DisableCorrection;
+    let encoded = config_to_toml(&config).unwrap();
+    assert_eq!(
+        super::toml_io::parse_config(&encoded).unwrap().correction,
+        config.correction
+    );
+    config
+        .correction
+        .app_language_overrides
+        .push("NOTEPAD.EXE=de".into());
+    assert_eq!(
+        config.validate().unwrap_err().field(),
+        "correction.app_language_overrides"
+    );
+    config.correction.app_language_overrides.clear();
+    config.correction.preferred_language = Some("invalid tag".into());
+    assert_eq!(
+        config.validate().unwrap_err().field(),
+        "correction.preferred_language"
+    );
+}
+
+/// Per-token mixed-language correction requires explicit API engine selection.
+#[test]
+fn per_token_policy_requires_api_engine() {
+    let mut config = AppConfig::default();
+    config.correction.mixed_language_policy = crate::correction::MixedLanguagePolicy::PerToken;
+    assert_eq!(
+        config.validate().unwrap_err().field(),
+        "correction.mixed_language_policy"
+    );
+    config.correction.engine = CorrectionEngine::Api;
+    assert!(config.validate().is_ok());
+}
+
+/// Persisted settings reject malformed tags in both preferences and app overrides.
+#[test]
+fn language_tag_settings_match_shared_cases() {
+    let cases: Vec<(String, bool)> = serde_json::from_str(include_str!(
+        "../../../shared-schema/language-tag-cases.json"
+    ))
+    .unwrap();
+    for (tag, valid) in cases {
+        for app_override in [false, true] {
+            let mut config = AppConfig::default();
+            let field = if app_override {
+                config.correction.app_language_overrides = vec![format!("notepad.exe={tag}")];
+                "correction.app_language_overrides"
+            } else {
+                config.correction.preferred_language = Some(tag.clone());
+                "correction.preferred_language"
+            };
+            if valid {
+                let encoded = config_to_toml(&config).unwrap();
+                assert_eq!(
+                    super::toml_io::parse_config(&encoded).unwrap().correction,
+                    config.correction
+                );
+            } else {
+                // App overrides intentionally trim the tag around '='.
+                if app_override && tag.trim() != tag {
+                    continue;
+                }
+                assert_eq!(config.validate().unwrap_err().field(), field, "{tag}");
+                assert!(config_to_toml(&config).is_err(), "{tag}");
+            }
+        }
+    }
 }
 
 #[test]

@@ -22,8 +22,27 @@ confidence, no-change reason, latency, and completion/error/timeout status.
 `LocalRuleEngine`, `LocalMlEngine`, `OpenAiCompatibleApiEngine`, and
 `CustomApiEngine` implement the same interface. `LocalRuleEngine` provides fast,
 deterministic English correction for a conservative list of clear misspellings.
-In grammar mode it also supports enabled capitalization, punctuation, agreement,
-and tense rules; clarity and word-order rules are not implemented. It preserves
+The engine interface reports supported BCP 47 tags. Language selection uses
+read-only informative context and executable context, then resolves a primary
+language from a per-app override, global preference, or the session detection.
+The conservative detector recognizes English from function words and script
+families for other text; it leaves ambiguous Latin text unknown. Detection is
+memory-only per focused session. `correction.preferred_language` accepts a BCP
+47 tag, and `correction.app_language_overrides` accepts entries such as
+`notepad.exe=fr-FR`. Unknown and mixed text default to high-confidence typo
+edits only, with no grammar or translation. `correction.uncertain_language_policy`
+can instead skip correction or use normal correction. For mixed text,
+`correction.mixed_language_policy` defaults to correcting only the dominant
+language; it can disable correction or correct per token with the API engine.
+Structured tokens, names, explicit protected terms, and words in other scripts
+remain protected. The local rule engine supports English only; API engines can
+receive other language tags. The router still only logs requests,
+so these policies do not yet change target application text.
+In grammar mode it applies only enabled categories. Conservative local rules
+cover capitalization, sentence-ending punctuation on manual correction, extra
+punctuation, repeated words, subject-verb agreement, a/an articles, a few
+prepositions and homophones, spacing, contractions, and tense. Clarity and
+word-order rules are API-only. It preserves
 custom-dictionary entries, explicit protected terms, and detectable names,
 emails, URLs, paths, handles, hashtags, code identifiers, and product names.
 `OpenAiCompatibleApiEngine` and `CustomApiEngine` send non-streaming
@@ -35,14 +54,31 @@ named `AutoFix/provider-profile/<preset>`; callers can store it with
 Manual and automatic requests default to 3000 ms and 700 ms respectively;
 retries share the request's time budget. `ApiCorrectionEngine::submit` runs the
 request on a worker thread so the caller can keep processing typing. Fallback
-to the local rule engine is off by default. API results contain only
-replacement text for the executable span and are rejected if protected terms
-disappear. `ApiCorrectionEngine::notice_for` marks manual failures for a small
+to the local rule engine is off by default. API results must include categorized
+edits for the executable span. The engine rejects disabled grammar categories,
+unlisted changes, invalid offsets, and changed protected terms. API typo edits
+must match the local engine's known spelling replacements.
+`ApiCorrectionEngine::notice_for` marks manual failures for a small
 notice and automatic failures for silent handling. The local ML engine remains
 a placeholder. The background router and replacement path are still
 placeholders, so this engine is not yet invoked by live typing.
 Engine selection is explicit per request; neither local nor API routing depends
 on task difficulty, and both correction modes are accepted by every engine.
+
+Confidence decisions are shared by the local and API engines. High confidence
+defaults to silent apply. Medium confidence defaults to a suggestion only for a
+manual shortcut with an available suggestion UI; word-count, character, and
+final-fix triggers do nothing. Setting `correction.medium_confidence_behavior`
+to `silent` enables medium corrections for every trigger. Low confidence is
+always blocked, including requests that bypass config validation.
+`CorrectionInput.suggestion_ui_available` defaults to false; v1 has no suggestion
+UI. `feedback.show_medium_confidence_suggestions` can suppress manual suggestions
+when building the runtime policy, but never enables silent apply. Outputs include
+an explicit `behavior`: only `silent` authorizes replacement; `suggestion`
+requires user acceptance. Suppressed outputs preserve the original executable
+text and discard edit details. Local results prioritize silent edits over
+suggested edits when both occur in one request. The background router snapshots
+the saved confidence policy, but target replacement remains a placeholder.
 
 The keyboard session tracker is implemented. It keeps up to 4,096 characters
 typed during the current engine run in memory and exposes only the known text

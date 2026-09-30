@@ -6,6 +6,24 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class ConfigFormMapperTests
 {
+    /// <summary>Form confidence choices persist while unsafe low-confidence behavior is rejected.</summary>
+    [TestMethod]
+    public void ConfidenceChoicesMapAndInvalidLowBehaviorIsRejected()
+    {
+        var sections = SettingsSkeleton.CreateSections();
+        Card(sections, "correction.high_confidence_behavior").SelectedValue = "do_nothing";
+        Card(sections, "correction.medium_confidence_behavior").SelectedValue = "silent";
+        var config = ConfigFormMapper.BuildConfig(sections);
+        Assert.AreEqual("do_nothing", config.Correction.HighConfidenceBehavior);
+        Assert.AreEqual("silent", config.Correction.MediumConfidenceBehavior);
+        Assert.AreEqual("do_nothing", config.Correction.LowConfidenceBehavior);
+
+        Card(sections, "correction.low_confidence_behavior").SelectedValue = "silent";
+        var error = Assert.ThrowsException<InvalidDataException>(() => ConfigFormMapper.BuildConfig(sections));
+        Assert.AreEqual("correction.low_confidence_behavior: must be do_nothing", error.Message);
+    }
+
+    /// <summary>Edited settings cards map to the corresponding typed config values.</summary>
     [TestMethod]
     public void BuildConfigMapsEditedCards()
     {
@@ -15,6 +33,10 @@ public sealed class ConfigFormMapperTests
         Card(sections, "shortcuts.correct_arbitrary_selection").IsEnabled = true;
         Card(sections, "triggers.characters").TextValue = "., ?, !";
         Card(sections, "api.timeout_auto_ms").TextValue = "900";
+        Card(sections, "correction.preferred_language").TextValue = "en-US";
+        Card(sections, "correction.app_language_overrides").TextValue = "notepad.exe=fr-FR, chrome.exe=de-DE";
+        Card(sections, "correction.uncertain_language_policy").SelectedValue = "do_nothing";
+        Card(sections, "correction.mixed_language_policy").SelectedValue = "disable_correction";
         Card(sections, "feedback.show_timeout_notice").IsEnabled = false;
 
         var config = ConfigFormMapper.BuildConfig(sections);
@@ -24,7 +46,32 @@ public sealed class ConfigFormMapperTests
         Assert.IsTrue(config.Shortcuts.CorrectArbitrarySelection);
         CollectionAssert.AreEqual(new[] { ".", "?", "!" }, config.Triggers.Characters);
         Assert.AreEqual(900, config.Api.TimeoutAutoMs);
+        Assert.AreEqual("en-US", config.Correction.PreferredLanguage);
+        CollectionAssert.AreEqual(new[] { "notepad.exe=fr-FR", "chrome.exe=de-DE" }, config.Correction.AppLanguageOverrides);
+        Assert.AreEqual("do_nothing", config.Correction.UncertainLanguagePolicy);
+        Assert.AreEqual("disable_correction", config.Correction.MixedLanguagePolicy);
         Assert.IsFalse(config.Feedback.ShowTimeoutNotice);
+    }
+
+    /// <summary>Grammar switches round-trip and typo-only mode clears all grammar permissions.</summary>
+    [TestMethod]
+    public void GrammarCategoriesRoundTripAndTyposModeDisablesThem()
+    {
+        var config = AppConfig.Default();
+        config.Correction.Mode = "typos_plus_grammar";
+        config.Correction.EnabledGrammarCategories = ["capitalization", "homophones"];
+        var sections = SettingsSkeleton.CreateSections(config);
+
+        Assert.IsTrue(Card(sections, "correction.enabled_grammar_categories.capitalization").IsEnabled);
+        Assert.IsFalse(Card(sections, "correction.enabled_grammar_categories.spacing").IsEnabled);
+        CollectionAssert.AreEqual(config.Correction.EnabledGrammarCategories, ConfigFormMapper.BuildConfig(sections).Correction.EnabledGrammarCategories);
+
+        Card(sections, "correction.enabled_grammar_categories.homophones").IsEnabled = false;
+        Card(sections, "correction.enabled_grammar_categories.spacing").IsEnabled = true;
+        CollectionAssert.AreEqual(new[] { "capitalization", "spacing" }, ConfigFormMapper.BuildConfig(sections).Correction.EnabledGrammarCategories);
+
+        Card(sections, "correction.mode").SelectedValue = "typos_only";
+        Assert.AreEqual(0, ConfigFormMapper.BuildConfig(sections).Correction.EnabledGrammarCategories.Count);
     }
 
     [TestMethod]

@@ -13,14 +13,23 @@ pub enum GrammarCategory {
     Agreement,
     Capitalization,
     Clarity,
-    Punctuation,
     Tense,
     WordOrder,
+    MissingPunctuation,
+    ExtraPunctuation,
+    RepeatedWords,
+    Articles,
+    Prepositions,
+    #[serde(alias = "punctuation")]
+    Spacing,
+    Apostrophes,
+    Homophones,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfidenceBehavior {
+    #[default]
     DoNothing,
     Suggestion,
     Silent,
@@ -33,23 +42,79 @@ pub struct ConfidenceBehaviorSettings {
     pub low: ConfidenceBehavior,
 }
 
+impl Default for ConfidenceBehaviorSettings {
+    /// Silently applies high confidence, suggests medium, and always blocks low.
+    fn default() -> Self {
+        Self {
+            high: ConfidenceBehavior::Silent,
+            medium: ConfidenceBehavior::Suggestion,
+            low: ConfidenceBehavior::DoNothing,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LanguageInfo {
-    /// User-selected or otherwise preferred BCP 47 language tag, when known.
+    /// Resolved BCP 47 language tag (app, global, then session detection).
     pub primary_language: Option<String>,
-    /// BCP 47 language tags detected in the executable span.
+    /// BCP 47 language tags detected from informative and executable context.
     pub detected_languages: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+impl LanguageInfo {
+    /// Reports multiple detections or a script incompatible with the primary language.
+    pub fn is_mixed(&self) -> bool {
+        self.detected_languages.len() > 1
+            || (self.detected_languages.len() == 1
+                && self.detected_languages[0].starts_with("und-")
+                && self.primary_language.as_deref().is_some_and(|primary| {
+                    let detected = self.detected_languages[0].as_str();
+                    let base = primary.split('-').next().unwrap_or("");
+                    !primary.eq_ignore_ascii_case(detected)
+                        && !matches!(
+                            (base, detected),
+                            ("ar", "und-Arab")
+                                | ("ru", "und-Cyrl")
+                                | ("hi", "und-Deva")
+                                | ("zh", "und-Hani")
+                        )
+                }))
+    }
+
+    /// Keeps missing, script-only, and preference-conflicting detections conservative.
+    pub fn is_uncertain(&self) -> bool {
+        if self.detected_languages.len() != 1 || self.detected_languages[0].starts_with("und-") {
+            return true;
+        }
+        self.primary_language.as_deref().is_some_and(|primary| {
+            let primary_base = primary.split('-').next().unwrap_or(primary);
+            let detected_base = self.detected_languages[0].split('-').next().unwrap_or("");
+            !primary_base.eq_ignore_ascii_case(detected_base)
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UncertainLanguagePolicy {
+    /// Apply only high-confidence typo edits to unknown or mixed text.
+    #[default]
+    HighConfidenceTyposOnly,
+    DoNothing,
+    CorrectNormally,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MixedLanguagePolicy {
-    /// Preserve words that do not belong to the primary language.
-    PreserveNonPrimary,
-    /// Correct each detected language using the same correction mode.
-    CorrectEachDetectedLanguage,
-    /// Correct only the primary language and leave other spans unchanged.
-    PrimaryLanguageOnly,
+    DisableCorrection,
+    /// Correct only tokens in the dominant language.
+    #[default]
+    #[serde(alias = "preserve_non_primary", alias = "primary_language_only")]
+    DominantLanguageOnly,
+    /// Correct each token only when the selected engine supports this policy.
+    #[serde(alias = "correct_each_detected_language")]
+    PerToken,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -74,13 +139,20 @@ pub struct CorrectionInput {
     /// in typos-only mode.
     pub enabled_grammar_categories: Vec<GrammarCategory>,
     pub language_info: LanguageInfo,
+    #[serde(default)]
     pub mixed_language_policy: MixedLanguagePolicy,
+    #[serde(default)]
+    pub uncertain_language_policy: UncertainLanguagePolicy,
     /// Accepted spellings which engines may use as correction candidates.
     pub custom_dictionary: Vec<String>,
     /// Exact terms which engines must not modify.
     pub protected_terms: Vec<String>,
     pub trigger_type: TriggerType,
     pub confidence_behavior: ConfidenceBehaviorSettings,
+    /// True only when the caller can display a suggestion for this request.
+    /// V1 has no suggestion UI, so omitted capabilities fail closed.
+    #[serde(default)]
+    pub suggestion_ui_available: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -143,6 +215,7 @@ pub enum NoChangeReason {
     ConfidenceBelowConfiguredBehavior,
     AllCandidatesProtected,
     UnsupportedLanguage,
+    UncertainLanguage,
     EngineUnavailable,
     TimedOut,
     EngineError,
@@ -181,6 +254,10 @@ pub struct CorrectionOutput {
     pub corrected_executable_text: String,
     pub changes_needed: bool,
     pub confidence: ConfidenceTier,
+    /// Only `Silent` authorizes automatic replacement. `Suggestion` requires
+    /// explicit user acceptance; `DoNothing` never authorizes replacement.
+    #[serde(default)]
+    pub behavior: ConfidenceBehavior,
     /// `None` means the engine cannot provide structured change details.
     pub changes: Option<Vec<CorrectionChange>>,
     /// Present whenever `changes_needed` is false.
@@ -190,7 +267,8 @@ pub struct CorrectionOutput {
 }
 
 impl CorrectionOutput {
-    /// Records a completed correction and optional structured edits.
+    /// Records a completed candidate and optional structured edits. Engines
+    /// must attach the confidence disposition before returning it to callers.
     pub fn changed(
         corrected_executable_text: String,
         confidence: ConfidenceTier,
@@ -201,6 +279,7 @@ impl CorrectionOutput {
             corrected_executable_text,
             changes_needed: true,
             confidence,
+            behavior: ConfidenceBehavior::DoNothing,
             changes,
             no_change_reason: None,
             engine_latency_ms,
@@ -219,6 +298,7 @@ impl CorrectionOutput {
             corrected_executable_text: executable_text,
             changes_needed: false,
             confidence,
+            behavior: ConfidenceBehavior::DoNothing,
             changes: Some(Vec::new()),
             no_change_reason: Some(reason),
             engine_latency_ms,
@@ -232,6 +312,7 @@ impl CorrectionOutput {
             corrected_executable_text: executable_text,
             changes_needed: false,
             confidence: ConfidenceTier::Low,
+            behavior: ConfidenceBehavior::DoNothing,
             changes: None,
             no_change_reason: Some(NoChangeReason::TimedOut),
             engine_latency_ms,
@@ -245,6 +326,7 @@ impl CorrectionOutput {
             corrected_executable_text: executable_text,
             changes_needed: false,
             confidence: ConfidenceTier::Low,
+            behavior: ConfidenceBehavior::DoNothing,
             changes: None,
             no_change_reason: Some(NoChangeReason::EngineError),
             engine_latency_ms,

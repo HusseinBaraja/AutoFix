@@ -1,8 +1,10 @@
 use std::time::Instant;
 
+use super::confidence::behavior_for;
+
 use super::{
     ConfidenceBehavior, ConfidenceTier, CorrectionChange, CorrectionChangeKind, CorrectionInput,
-    CorrectionMode, CorrectionOutput, GrammarCategory, NoChangeReason,
+    CorrectionMode, CorrectionOutput, GrammarCategory, NoChangeReason, UncertainLanguagePolicy,
 };
 
 #[derive(Debug)]
@@ -30,6 +32,36 @@ pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
     let started = Instant::now();
     let original = &input.executable_context;
 
+    if super::mixed_language::disabled(input) {
+        return CorrectionOutput::unchanged(
+            original.clone(),
+            ConfidenceTier::Low,
+            NoChangeReason::UncertainLanguage,
+            elapsed_ms(started),
+        );
+    }
+    if input.language_info.is_mixed()
+        && input.mixed_language_policy == super::MixedLanguagePolicy::PerToken
+    {
+        return CorrectionOutput::unchanged(
+            original.clone(),
+            ConfidenceTier::Low,
+            NoChangeReason::UnsupportedLanguage,
+            elapsed_ms(started),
+        );
+    }
+
+    if input.language_info.is_uncertain()
+        && input.uncertain_language_policy == UncertainLanguagePolicy::DoNothing
+    {
+        return CorrectionOutput::unchanged(
+            original.clone(),
+            ConfidenceTier::Low,
+            NoChangeReason::UncertainLanguage,
+            elapsed_ms(started),
+        );
+    }
+
     if !supports_english(input) {
         return CorrectionOutput::unchanged(
             original.clone(),
@@ -41,18 +73,26 @@ pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
 
     let words = words(original);
     let protected = protected_ranges(input, &words);
-    let mut candidates = typo_candidates(input, &words);
+    let mut candidates = typo_candidates(&words);
 
-    if input.mode == CorrectionMode::TyposPlusGrammar {
+    if input.mode == CorrectionMode::TyposPlusGrammar
+        && (!input.language_info.is_uncertain()
+            || input.uncertain_language_policy == UncertainLanguagePolicy::CorrectNormally)
+    {
         grammar_candidates(input, &words, &mut candidates);
     }
 
-    // Prefer typo edits when two conservative rules point at the same source.
+    // Prefer typo edits, then article replacements that can include enabled
+    // capitalization, when conservative rules share a source span.
     candidates.sort_by_key(|candidate| {
         (
             candidate.start_byte,
             candidate.end_byte,
-            !matches!(candidate.kind, CorrectionChangeKind::Typo),
+            match candidate.kind {
+                CorrectionChangeKind::Typo => 0,
+                CorrectionChangeKind::Grammar(GrammarCategory::Articles) => 1,
+                CorrectionChangeKind::Grammar(_) => 2,
+            },
         )
     });
 
@@ -62,6 +102,18 @@ pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
     let mut blocked_confidence = None;
 
     for candidate in candidates {
+        if !super::mixed_language::edit_allowed(input, candidate.start_byte, candidate.end_byte) {
+            protected_count += 1;
+            continue;
+        }
+        if input.language_info.is_uncertain()
+            && input.uncertain_language_policy == UncertainLanguagePolicy::HighConfidenceTyposOnly
+            && (candidate.kind != CorrectionChangeKind::Typo
+                || candidate.confidence != ConfidenceTier::High)
+        {
+            suppressed_count += 1;
+            continue;
+        }
         if intersects_any(candidate.start_byte, candidate.end_byte, &protected) {
             protected_count += 1;
             lower_confidence(&mut blocked_confidence, candidate.confidence);
@@ -101,6 +153,16 @@ pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
         );
     }
 
+    // A single result has one disposition. Apply eligible silent edits first
+    // rather than combining a suggestion with edits authorized for replacement.
+    if selected
+        .iter()
+        .any(|candidate| behavior_for(input, candidate.confidence) == ConfidenceBehavior::Silent)
+    {
+        selected.retain(|candidate| {
+            behavior_for(input, candidate.confidence) == ConfidenceBehavior::Silent
+        });
+    }
     selected.sort_by_key(|candidate| candidate.start_byte);
     let confidence = selected
         .iter()
@@ -128,7 +190,10 @@ pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
         );
     }
 
-    CorrectionOutput::changed(corrected, confidence, Some(changes), elapsed_ms(started))
+    super::confidence::enforce(
+        input,
+        CorrectionOutput::changed(corrected, confidence, Some(changes), elapsed_ms(started)),
+    )
 }
 
 /// Converts elapsed time to a saturating millisecond count.
@@ -151,20 +216,11 @@ fn supports_english(input: &CorrectionInput) -> bool {
 }
 
 /// Recognizes English BCP 47 tags without treating other languages as English.
-fn is_english_tag(language: &str) -> bool {
+pub(super) fn is_english_tag(language: &str) -> bool {
     language.eq_ignore_ascii_case("en")
         || language
             .get(..3)
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("en-"))
-}
-
-/// Selects the configured action for a candidate's confidence tier.
-fn behavior_for(input: &CorrectionInput, tier: ConfidenceTier) -> ConfidenceBehavior {
-    match tier {
-        ConfidenceTier::High => input.confidence_behavior.high,
-        ConfidenceTier::Medium => input.confidence_behavior.medium,
-        ConfidenceTier::Low => input.confidence_behavior.low,
-    }
 }
 
 /// Ranks confidence from low to high for conservative result reporting.
@@ -184,17 +240,13 @@ fn lower_confidence(current: &mut Option<ConfidenceTier>, candidate: ConfidenceT
 }
 
 /// Finds known misspellings while preserving case and sentence starts.
-fn typo_candidates(input: &CorrectionInput, words: &[Word<'_>]) -> Vec<Candidate> {
-    let capitalization_enabled = grammar_enabled(input, GrammarCategory::Capitalization);
+fn typo_candidates(words: &[Word<'_>]) -> Vec<Candidate> {
     words
         .iter()
         .filter_map(|word| {
             let lower = word.text.to_ascii_lowercase();
             let (replacement, confidence) = typo_replacement(&lower)?;
-            let mut replacement = preserve_case(word.text, replacement)?;
-            if capitalization_enabled && is_sentence_start(input, word.start_byte) {
-                replacement = capitalize_first(&replacement);
-            }
+            let replacement = preserve_case(word.text, replacement)?;
             Some(word_candidate(
                 word,
                 replacement,
@@ -252,6 +304,21 @@ fn typo_replacement(word: &str) -> Option<(&'static str, ConfidenceTier)> {
         "alot" => ("a lot", Medium),
         _ => return None,
     })
+}
+
+/// Accepts only a known spelling replacement when an API labels an edit a typo.
+pub(super) fn is_known_typo_change(original: &str, replacement: &str) -> bool {
+    typo_replacement(&original.to_ascii_lowercase())
+        .and_then(|(expected, _)| preserve_case(original, expected))
+        .is_some_and(|expected| expected == replacement)
+}
+
+/// Accepts only known high-confidence spellings, preserving the source casing.
+pub(super) fn is_high_confidence_typo_change(original: &str, replacement: &str) -> bool {
+    typo_replacement(&original.to_ascii_lowercase())
+        .filter(|(_, confidence)| *confidence == ConfidenceTier::High)
+        .and_then(|(expected, _)| preserve_case(original, expected))
+        .is_some_and(|expected| expected == replacement)
 }
 
 /// Adds candidates only for enabled grammar categories.
@@ -318,8 +385,151 @@ fn grammar_candidates(input: &CorrectionInput, words: &[Word<'_>], out: &mut Vec
         }
     }
 
-    if grammar_enabled(input, GrammarCategory::Punctuation) {
-        punctuation_candidates(&input.executable_context, out);
+    if grammar_enabled(input, GrammarCategory::Spacing) {
+        spacing_candidates(&input.executable_context, out);
+    }
+    if grammar_enabled(input, GrammarCategory::ExtraPunctuation) {
+        extra_punctuation_candidates(&input.executable_context, out);
+    }
+    if grammar_enabled(input, GrammarCategory::MissingPunctuation)
+        && input.trigger_type == super::TriggerType::ManualShortcut
+        && words.len() >= 3
+        && input
+            .executable_context
+            .chars()
+            .last()
+            .is_some_and(char::is_alphabetic)
+    {
+        let at = input.executable_context.len();
+        let char_at = input.executable_context.chars().count();
+        out.push(Candidate {
+            start_byte: at,
+            end_byte: at,
+            start_char: char_at,
+            end_char: char_at,
+            replacement: ".".into(),
+            kind: CorrectionChangeKind::Grammar(GrammarCategory::MissingPunctuation),
+            confidence: ConfidenceTier::Medium,
+        });
+    }
+    for pair in words.windows(2) {
+        if !only_whitespace_between(input, &pair[0], &pair[1]) {
+            continue;
+        }
+        let left = pair[0].text.to_ascii_lowercase();
+        let right = pair[1].text.to_ascii_lowercase();
+        if grammar_enabled(input, GrammarCategory::RepeatedWords)
+            && left == right
+            && !matches!(left.as_str(), "had" | "that")
+        {
+            out.push(Candidate {
+                start_byte: pair[0].end_byte,
+                end_byte: pair[1].end_byte,
+                start_char: pair[0].end_char,
+                end_char: pair[1].end_char,
+                replacement: String::new(),
+                kind: CorrectionChangeKind::Grammar(GrammarCategory::RepeatedWords),
+                confidence: ConfidenceTier::High,
+            });
+        }
+        if grammar_enabled(input, GrammarCategory::Articles) {
+            let replacement = match (left.as_str(), right.chars().next()) {
+                ("a", _) if matches!(right.as_str(), "hour" | "honest" | "honor" | "heir") => {
+                    Some("an")
+                }
+                ("a", Some('a' | 'e' | 'i' | 'o' | 'u'))
+                    if !right.starts_with("uni") && !right.starts_with("use") && right != "one" =>
+                {
+                    Some("an")
+                }
+                (
+                    "an",
+                    Some(
+                        'b' | 'c' | 'd' | 'f' | 'g' | 'h' | 'j' | 'k' | 'l' | 'm' | 'n' | 'p' | 'q'
+                        | 'r' | 's' | 't' | 'v' | 'w' | 'x' | 'y' | 'z',
+                    ),
+                ) if !matches!(right.as_str(), "hour" | "honest" | "honor" | "heir") => Some("a"),
+                ("an", _)
+                    if right.starts_with("uni") || right.starts_with("use") || right == "one" =>
+                {
+                    Some("a")
+                }
+                _ => None,
+            };
+            if let Some(mut replacement) =
+                replacement.and_then(|value| preserve_case(pair[0].text, value))
+            {
+                if grammar_enabled(input, GrammarCategory::Capitalization)
+                    && is_sentence_start(input, pair[0].start_byte)
+                {
+                    replacement = capitalize_first(&replacement);
+                }
+                out.push(word_candidate(
+                    &pair[0],
+                    replacement,
+                    CorrectionChangeKind::Grammar(GrammarCategory::Articles),
+                    ConfidenceTier::Medium,
+                ));
+            }
+        }
+        if grammar_enabled(input, GrammarCategory::Prepositions) {
+            let replacement = match (left.as_str(), right.as_str()) {
+                ("depend" | "depends", "of") => Some("on"),
+                ("interested", "on") => Some("in"),
+                ("listen" | "listening", "on") => Some("to"),
+                _ => None,
+            };
+            if let Some(replacement) =
+                replacement.and_then(|value| preserve_case(pair[1].text, value))
+            {
+                out.push(word_candidate(
+                    &pair[1],
+                    replacement,
+                    CorrectionChangeKind::Grammar(GrammarCategory::Prepositions),
+                    ConfidenceTier::Medium,
+                ));
+            }
+        }
+        if grammar_enabled(input, GrammarCategory::Homophones) {
+            let replacement = match (left.as_str(), right.as_str()) {
+                ("your", "welcome" | "right") => Some("you're"),
+                ("their", "is" | "are") => Some("there"),
+                ("its", "a" | "an") => Some("it's"),
+                _ => None,
+            };
+            if let Some(replacement) =
+                replacement.and_then(|value| preserve_case(pair[0].text, value))
+            {
+                out.push(word_candidate(
+                    &pair[0],
+                    replacement,
+                    CorrectionChangeKind::Grammar(GrammarCategory::Homophones),
+                    ConfidenceTier::Medium,
+                ));
+            }
+        }
+    }
+    if grammar_enabled(input, GrammarCategory::Apostrophes) {
+        for word in words {
+            let replacement = match word.text.to_ascii_lowercase().as_str() {
+                "dont" => Some("don't"),
+                "cant" => Some("can't"),
+                "wont" => Some("won't"),
+                "isnt" => Some("isn't"),
+                "arent" => Some("aren't"),
+                "wasnt" => Some("wasn't"),
+                _ => None,
+            };
+            if let Some(replacement) = replacement.and_then(|value| preserve_case(word.text, value))
+            {
+                out.push(word_candidate(
+                    word,
+                    replacement,
+                    CorrectionChangeKind::Grammar(GrammarCategory::Apostrophes),
+                    ConfidenceTier::High,
+                ));
+            }
+        }
     }
 }
 
@@ -359,7 +569,7 @@ fn tense_replacement(auxiliary: &str, verb: &str) -> Option<&'static str> {
 }
 
 /// Removes spaces directly before supported punctuation marks.
-fn punctuation_candidates(text: &str, out: &mut Vec<Candidate>) {
+fn spacing_candidates(text: &str, out: &mut Vec<Candidate>) {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut index = 0;
     while index < chars.len() {
@@ -381,7 +591,27 @@ fn punctuation_candidates(text: &str, out: &mut Vec<Candidate>) {
                 start_char: start_index,
                 end_char: index,
                 replacement: String::new(),
-                kind: CorrectionChangeKind::Grammar(GrammarCategory::Punctuation),
+                kind: CorrectionChangeKind::Grammar(GrammarCategory::Spacing),
+                confidence: ConfidenceTier::High,
+            });
+        }
+    }
+}
+
+/// Removes a second consecutive mark, excluding ellipses and mixed punctuation.
+fn extra_punctuation_candidates(text: &str, out: &mut Vec<Candidate>) {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    for index in 1..chars.len() {
+        if chars[index].1 == chars[index - 1].1
+            && matches!(chars[index].1, '!' | '?' | ',' | ';' | ':')
+        {
+            out.push(Candidate {
+                start_byte: chars[index].0,
+                end_byte: chars.get(index + 1).map_or(text.len(), |entry| entry.0),
+                start_char: index,
+                end_char: index + 1,
+                replacement: String::new(),
+                kind: CorrectionChangeKind::Grammar(GrammarCategory::ExtraPunctuation),
                 confidence: ConfidenceTier::High,
             });
         }
@@ -463,8 +693,11 @@ fn protected_ranges(input: &CorrectionInput, words: &[Word<'_>]) -> Vec<(usize, 
     }
 
     for word in words {
-        if looks_like_identifier_or_product(word.text)
-            || (is_title_case(word.text) && !is_sentence_start(input, word.start_byte))
+        if (looks_like_identifier_or_product(word.text)
+            && !(input.language_info.is_mixed()
+                && input.mixed_language_policy == super::MixedLanguagePolicy::PerToken
+                && !word.text.is_ascii()))
+            || is_title_case(word.text)
         {
             ranges.push((word.start_byte, word.end_byte));
         }
@@ -482,6 +715,12 @@ fn protected_ranges(input: &CorrectionInput, words: &[Word<'_>]) -> Vec<(usize, 
     }
 
     ranges
+}
+
+/// Apply the same structured-token protection to API response edits.
+pub(super) fn is_protected_edit(input: &CorrectionInput, start: usize, end: usize) -> bool {
+    let words = words(&input.executable_context);
+    intersects_any(start, end, &protected_ranges(input, &words))
 }
 
 /// Adds whole-term, case-sensitive protected matches.
@@ -708,6 +947,7 @@ mod tests {
         ConfidenceBehaviorSettings, LanguageInfo, MixedLanguagePolicy, TriggerType,
     };
 
+    /// Builds an English request with silent medium edits to exercise local rule candidates.
     fn input(text: &str, mode: CorrectionMode) -> CorrectionInput {
         CorrectionInput {
             informative_context: String::new(),
@@ -718,26 +958,29 @@ mod tests {
                 primary_language: Some("en-US".to_owned()),
                 detected_languages: vec!["en-US".to_owned()],
             },
-            mixed_language_policy: MixedLanguagePolicy::PreserveNonPrimary,
+            mixed_language_policy: MixedLanguagePolicy::DominantLanguageOnly,
+            uncertain_language_policy: UncertainLanguagePolicy::default(),
             custom_dictionary: Vec::new(),
             protected_terms: Vec::new(),
             trigger_type: TriggerType::ManualShortcut,
+            suggestion_ui_available: true,
             confidence_behavior: ConfidenceBehaviorSettings {
                 high: ConfidenceBehavior::Silent,
-                medium: ConfidenceBehavior::Suggestion,
+                medium: ConfidenceBehavior::Silent,
                 low: ConfidenceBehavior::DoNothing,
             },
         }
     }
 
+    /// Typo mode corrects known misspellings while leaving ambiguous names untouched.
     #[test]
-    fn typos_only_changes_only_clear_misspellings_and_preserves_layout_and_case() {
+    fn typos_only_changes_clear_misspellings_and_preserves_ambiguous_names() {
         let output = correct(&input("Teh  wierd, teh!", CorrectionMode::TyposOnly));
 
-        assert_eq!(output.corrected_executable_text, "The  weird, the!");
+        assert_eq!(output.corrected_executable_text, "Teh  weird, the!");
         assert_eq!(output.confidence, ConfidenceTier::High);
-        assert_eq!(output.changes.as_ref().unwrap().len(), 3);
-        assert_eq!(output.changes.as_ref().unwrap()[1].start_char, 5);
+        assert_eq!(output.changes.as_ref().unwrap().len(), 2);
+        assert_eq!(output.changes.as_ref().unwrap()[0].start_char, 5);
     }
 
     #[test]
@@ -771,13 +1014,12 @@ mod tests {
         );
     }
 
+    /// Grammar candidates require explicit category permission and report their edit kind.
     #[test]
     fn grammar_mode_applies_only_enabled_categories() {
         let mut request = input("i have went home .", CorrectionMode::TyposPlusGrammar);
-        request.enabled_grammar_categories = vec![
-            GrammarCategory::Capitalization,
-            GrammarCategory::Punctuation,
-        ];
+        request.enabled_grammar_categories =
+            vec![GrammarCategory::Capitalization, GrammarCategory::Spacing];
 
         let output = correct(&request);
 
@@ -786,7 +1028,7 @@ mod tests {
             matches!(
                 change.kind,
                 CorrectionChangeKind::Grammar(GrammarCategory::Capitalization)
-                    | CorrectionChangeKind::Grammar(GrammarCategory::Punctuation)
+                    | CorrectionChangeKind::Grammar(GrammarCategory::Spacing)
             )
         }));
     }
@@ -808,13 +1050,66 @@ mod tests {
         );
     }
 
+    /// Each conservative grammar rule is enabled only by its corresponding category.
+    #[test]
+    fn suggested_grammar_rules_require_their_categories() {
+        let cases = [
+            (
+                GrammarCategory::MissingPunctuation,
+                "we are ready",
+                "we are ready.",
+            ),
+            (GrammarCategory::ExtraPunctuation, "ready!!", "ready!"),
+            (GrammarCategory::RepeatedWords, "the the book", "the book"),
+            (GrammarCategory::Articles, "a apple", "an apple"),
+            (
+                GrammarCategory::Prepositions,
+                "depend of us",
+                "depend on us",
+            ),
+            (GrammarCategory::Spacing, "ready !", "ready!"),
+            (GrammarCategory::Apostrophes, "dont go", "don't go"),
+            (
+                GrammarCategory::Homophones,
+                "your welcome",
+                "you're welcome",
+            ),
+        ];
+        for (category, original, expected) in cases {
+            let mut request = input(original, CorrectionMode::TyposPlusGrammar);
+            assert_eq!(correct(&request).corrected_executable_text, original);
+            request.enabled_grammar_categories = vec![category];
+            let output = correct(&request);
+            assert_eq!(output.corrected_executable_text, expected, "{category:?}");
+            assert!(output
+                .changes
+                .unwrap()
+                .iter()
+                .all(|change| { change.kind == CorrectionChangeKind::Grammar(category) }));
+        }
+    }
+
+    /// Article and sentence-case edits combine only when both categories are enabled.
+    #[test]
+    fn article_and_capitalization_combine_only_when_both_enabled() {
+        let mut request = input("a apple", CorrectionMode::TyposPlusGrammar);
+        request.enabled_grammar_categories =
+            vec![GrammarCategory::Articles, GrammarCategory::Capitalization];
+        assert_eq!(correct(&request).corrected_executable_text, "An apple");
+        request.enabled_grammar_categories = vec![GrammarCategory::Articles];
+        assert_eq!(correct(&request).corrected_executable_text, "an apple");
+        request.executable_context = "an university".into();
+        assert_eq!(correct(&request).corrected_executable_text, "a university");
+    }
+
+    /// Typo-only requests cannot enable grammar by carrying an inconsistent category list.
     #[test]
     fn typos_only_ignores_grammar_categories_even_if_input_is_inconsistent() {
         let mut request = input("i is ready .", CorrectionMode::TyposOnly);
         request.enabled_grammar_categories = vec![
             GrammarCategory::Agreement,
             GrammarCategory::Capitalization,
-            GrammarCategory::Punctuation,
+            GrammarCategory::Spacing,
         ];
 
         let output = correct(&request);
@@ -840,6 +1135,81 @@ mod tests {
         );
     }
 
+    /// Default confidence allows high-tier typos but leaves medium-tier candidates unchanged.
+    #[test]
+    fn default_policy_applies_high_and_leaves_medium_text_untouched() {
+        for trigger in [
+            TriggerType::ManualShortcut,
+            TriggerType::WordCount,
+            TriggerType::Character,
+            TriggerType::FinalFixBeforeReanchor,
+        ] {
+            let mut request = input("teh alot", CorrectionMode::TyposOnly);
+            request.trigger_type = trigger;
+            request.confidence_behavior = ConfidenceBehaviorSettings::default();
+            request.suggestion_ui_available = false;
+            let output = correct(&request);
+            assert_eq!(output.corrected_executable_text, "the alot");
+            assert_eq!(output.behavior, ConfidenceBehavior::Silent);
+            assert_eq!(output.confidence, ConfidenceTier::High);
+            assert_eq!(output.changes.unwrap().len(), 1);
+        }
+    }
+
+    /// Medium edits need a manual suggestion UI or an explicit silent-apply preference.
+    #[test]
+    fn medium_results_require_manual_suggestion_ui_or_explicit_silent_apply() {
+        for trigger in [
+            TriggerType::ManualShortcut,
+            TriggerType::WordCount,
+            TriggerType::Character,
+            TriggerType::FinalFixBeforeReanchor,
+        ] {
+            for available in [false, true] {
+                let mut request = input("alot", CorrectionMode::TyposOnly);
+                request.trigger_type = trigger;
+                request.confidence_behavior = ConfidenceBehaviorSettings::default();
+                request.suggestion_ui_available = available;
+                let output = correct(&request);
+                let suggested = trigger == TriggerType::ManualShortcut && available;
+                assert_eq!(output.changes_needed, suggested);
+                assert_eq!(
+                    output.corrected_executable_text,
+                    if suggested { "a lot" } else { "alot" }
+                );
+                assert_eq!(
+                    output.behavior,
+                    if suggested {
+                        ConfidenceBehavior::Suggestion
+                    } else {
+                        ConfidenceBehavior::DoNothing
+                    }
+                );
+                request.confidence_behavior.medium = ConfidenceBehavior::Silent;
+                let output = correct(&request);
+                assert_eq!(output.corrected_executable_text, "a lot");
+                assert_eq!(output.behavior, ConfidenceBehavior::Silent);
+            }
+        }
+    }
+
+    /// Suggested candidates cannot be bundled with edits authorized for silent replacement.
+    #[test]
+    fn mixed_dispositions_never_silently_apply_suggested_candidates() {
+        let mut request = input("teh alot", CorrectionMode::TyposOnly);
+        request.confidence_behavior = ConfidenceBehaviorSettings::default();
+        let output = correct(&request);
+        assert_eq!(output.corrected_executable_text, "the alot");
+        assert_eq!(output.behavior, ConfidenceBehavior::Silent);
+        request.confidence_behavior.high = ConfidenceBehavior::Suggestion;
+        request.confidence_behavior.medium = ConfidenceBehavior::Silent;
+        let output = correct(&request);
+        assert_eq!(output.corrected_executable_text, "teh a lot");
+        assert_eq!(output.behavior, ConfidenceBehavior::Silent);
+        request.confidence_behavior.high = ConfidenceBehavior::DoNothing;
+        assert_eq!(correct(&request).corrected_executable_text, "teh a lot");
+    }
+
     #[test]
     fn non_english_input_is_left_unchanged() {
         let mut request = input("teh", CorrectionMode::TyposOnly);
@@ -851,6 +1221,79 @@ mod tests {
         assert_eq!(
             output.no_change_reason,
             Some(NoChangeReason::UnsupportedLanguage)
+        );
+    }
+
+    /// Unknown text gates grammar and medium typos until normal correction is explicitly selected.
+    #[test]
+    fn unknown_language_defaults_to_high_confidence_typos_only() {
+        let mut request = input("teh alot i", CorrectionMode::TyposPlusGrammar);
+        request.language_info.detected_languages.clear();
+        request.enabled_grammar_categories = vec![GrammarCategory::Capitalization];
+        assert_eq!(correct(&request).corrected_executable_text, "the alot i");
+        request.uncertain_language_policy = UncertainLanguagePolicy::DoNothing;
+        assert_eq!(
+            correct(&request).no_change_reason,
+            Some(NoChangeReason::UncertainLanguage)
+        );
+        request.uncertain_language_policy = UncertainLanguagePolicy::CorrectNormally;
+        assert_eq!(correct(&request).corrected_executable_text, "the a lot I");
+    }
+
+    /// Sparse English clues cannot enable grammar in otherwise ambiguous Latin text.
+    #[test]
+    fn sparse_english_detection_keeps_grammar_disabled() {
+        let mut request = input("for you teh alot i", CorrectionMode::TyposPlusGrammar);
+        request.informative_context =
+            "école élève été forêt où êtes île hôtel âge cœur façade Noël dîner".into();
+        request.enabled_grammar_categories = vec![GrammarCategory::Capitalization];
+        request.language_info = super::super::language::resolve(
+            &request.informative_context,
+            &request.executable_context,
+            Some("en"),
+            None,
+            None,
+            UncertainLanguagePolicy::default(),
+        )
+        .info;
+        assert!(request.language_info.is_uncertain());
+        assert_eq!(
+            correct(&request).corrected_executable_text,
+            "for you the alot i"
+        );
+        request.uncertain_language_policy = UncertainLanguagePolicy::CorrectNormally;
+        assert_eq!(
+            correct(&request).corrected_executable_text,
+            "for you the a lot I"
+        );
+    }
+
+    /// Mixed text defaults to high-confidence dominant-language typos and honors disable policy.
+    #[test]
+    fn mixed_text_defaults_to_high_confidence_dominant_language_typos() {
+        let mut request = input("the and teh alot مرحبا", CorrectionMode::TyposPlusGrammar);
+        request.language_info.detected_languages = vec!["en".into(), "und-Arab".into()];
+        request.enabled_grammar_categories = vec![GrammarCategory::Capitalization];
+
+        assert_eq!(
+            correct(&request).corrected_executable_text,
+            "the and the alot مرحبا"
+        );
+        request.mixed_language_policy = MixedLanguagePolicy::DisableCorrection;
+        assert_eq!(
+            correct(&request).no_change_reason,
+            Some(NoChangeReason::UncertainLanguage)
+        );
+        request.mixed_language_policy = MixedLanguagePolicy::PerToken;
+        assert_eq!(
+            correct(&request).no_change_reason,
+            Some(NoChangeReason::UnsupportedLanguage)
+        );
+        request.language_info.detected_languages = vec!["und-Arab".into()];
+        request.mixed_language_policy = MixedLanguagePolicy::DisableCorrection;
+        assert_eq!(
+            correct(&request).no_change_reason,
+            Some(NoChangeReason::UncertainLanguage)
         );
     }
 

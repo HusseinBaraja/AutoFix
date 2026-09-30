@@ -416,8 +416,18 @@ public sealed partial class MainWindowViewModel
         }
     }
 
+    /// <summary>Updates grammar availability on mode changes and autosaves edited setting values.</summary>
     private void SettingChanged(object? sender, PropertyChangedEventArgs args)
     {
+        if (sender is SettingCardViewModel { Path: "correction.mode" } mode
+            && args.PropertyName == nameof(SettingCardViewModel.SelectedValue))
+        {
+            foreach (var category in Sections.SelectMany(section => section.Settings)
+                         .Where(setting => setting.Path.StartsWith("correction.enabled_grammar_categories.", StringComparison.Ordinal)))
+            {
+                category.IsAvailable = mode.SelectedValue == "typos_plus_grammar";
+            }
+        }
         if (args.PropertyName is nameof(SettingCardViewModel.IsEnabled)
             or nameof(SettingCardViewModel.SelectedValue)
             or nameof(SettingCardViewModel.Hotkey)

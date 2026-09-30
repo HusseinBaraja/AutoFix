@@ -8,24 +8,28 @@ namespace AutoFix.SettingsUi.ViewModels;
 public static class SettingsSkeleton
 {
     private static readonly ShortcutsConfig DefaultShortcuts = new();
+    /// <summary>Offers app blocking or allowlisting as the runtime scope.</summary>
     public static ObservableCollection<OptionItem> RunModes() =>
     [
         new("Blocklist", "blocklist"),
         new("Allowlist", "allowlist"),
     ];
 
+    /// <summary>Offers typo correction with optional grammar edits.</summary>
     public static ObservableCollection<OptionItem> Modes() =>
     [
         new("Typos only", "typos_only"),
         new("Typos + grammar", "typos_plus_grammar"),
     ];
 
+    /// <summary>Offers explicit local or API engine selection.</summary>
     public static ObservableCollection<OptionItem> Engines() =>
     [
         new("Local", "local"),
         new("API", "api"),
     ];
 
+    /// <summary>Lists provider profiles whose keys live in Windows Credential Manager.</summary>
     public static ObservableCollection<OptionItem> ApiProviders() =>
     [
         new("OpenAI compatible", "openai_compatible"),
@@ -35,16 +39,35 @@ public static class SettingsSkeleton
         new("Custom endpoint", "custom"),
     ];
 
+    /// <summary>Lists no-action, suggestion, and silent-apply confidence dispositions.</summary>
     public static ObservableCollection<OptionItem> ConfidenceBehaviors() =>
     [
         new("Do nothing", "do_nothing"),
-        new("Suggest", "suggestion"),
+        new("Suggest when available", "suggestion"),
         new("Apply silently", "silent"),
     ];
 
+    /// <summary>Offers conservative typo-only, blocked, or normal handling of unknown text.</summary>
+    public static ObservableCollection<OptionItem> UncertainLanguagePolicies() =>
+    [
+        new("High-confidence typos only", "high_confidence_typos_only"),
+        new("Do nothing", "do_nothing"),
+        new("Correct normally", "correct_normally"),
+    ];
+
+    /// <summary>Offers blocked, dominant-language, or API per-token handling of mixed text.</summary>
+    public static ObservableCollection<OptionItem> MixedLanguagePolicies() =>
+    [
+        new("Disable correction", "disable_correction"),
+        new("Correct dominant language only", "dominant_language_only"),
+        new("Correct per token (API)", "per_token"),
+    ];
+
+    /// <summary>Builds settings sections from the product defaults.</summary>
     public static ObservableCollection<SettingsSectionViewModel> CreateSections() =>
         CreateSections(AppConfig.Default());
 
+    /// <summary>Builds editable cards from saved settings and fixes low confidence to no action.</summary>
     public static ObservableCollection<SettingsSectionViewModel> CreateSections(AppConfig config) =>
     [
         Section("General", "Startup and app run scope",
@@ -70,9 +93,23 @@ public static class SettingsSkeleton
         [
             Toggle("Correction enabled", "Allow AutoFix to apply corrections.", "correction.enabled", config.Correction.Enabled),
             Dropdown("Correction mode", "Choose typos only or grammar-aware correction.", "correction.mode", config.Correction.Mode, Modes()),
-            Dropdown("High confidence behavior", "Behavior when correction confidence is high.", "correction.high_confidence_behavior", config.Correction.HighConfidenceBehavior, ConfidenceBehaviors()),
-            Dropdown("Medium confidence behavior", "Behavior when correction confidence is medium.", "correction.medium_confidence_behavior", config.Correction.MediumConfidenceBehavior, ConfidenceBehaviors()),
-            Dropdown("Low confidence behavior", "Recommended: do nothing for safety.", "correction.low_confidence_behavior", config.Correction.LowConfidenceBehavior, ConfidenceBehaviors()),
+            Text("Preferred language", "Optional BCP 47 tag, such as en-US. Empty uses automatic detection.", "correction.preferred_language", config.Correction.PreferredLanguage ?? ""),
+            Text("App language overrides", "Comma-separated process.exe=language-tag entries.", "correction.app_language_overrides", ConfigValue.Join(config.Correction.AppLanguageOverrides)),
+            Dropdown("Unknown language", "How to handle text whose language is unclear.", "correction.uncertain_language_policy", config.Correction.UncertainLanguagePolicy, UncertainLanguagePolicies()),
+            Dropdown("Mixed-language text", "Disable correction, use the dominant language, or correct each token with the API engine.", "correction.mixed_language_policy", config.Correction.MixedLanguagePolicy, MixedLanguagePolicies()),
+            ..GrammarCategorySettings(config),
+            Dropdown("High confidence behavior", "Default: apply silently for manual and automatic triggers.", "correction.high_confidence_behavior", config.Correction.HighConfidenceBehavior, ConfidenceBehaviors()),
+            Dropdown("Medium confidence behavior", "Default: suggest on manual correction when suggestion UI is available; otherwise do nothing. Automatic triggers do nothing unless Apply silently is selected. Suggestion UI is not available in v1.", "correction.medium_confidence_behavior", config.Correction.MediumConfidenceBehavior, ConfidenceBehaviors()),
+            new SettingCardViewModel
+            {
+                Title = "Low confidence behavior",
+                Description = "Always do nothing. Low-confidence corrections are disabled.",
+                Kind = "Dropdown",
+                Path = "correction.low_confidence_behavior",
+                SelectedValue = "do_nothing",
+                Options = [new("Do nothing", "do_nothing")],
+                IsAvailable = false,
+            },
         ]),
         Section("Engines", "Local and API correction providers",
         [
@@ -100,7 +137,7 @@ public static class SettingsSkeleton
             Toggle("Tray state enabled", "Show correction state through tray status.", "feedback.tray_state_enabled", config.Feedback.TrayStateEnabled),
             Toggle("Applied notification", "Notify after a correction is applied.", "feedback.show_correction_applied_notification", config.Feedback.ShowCorrectionAppliedNotification),
             Toggle("Show skipped reason", "Explain why a correction did not run.", "feedback.show_skipped_reason", config.Feedback.ShowSkippedReason),
-            Toggle("Show medium-confidence suggestions", "Surface suggestions instead of applying automatically.", "feedback.show_medium_confidence_suggestions", config.Feedback.ShowMediumConfidenceSuggestions),
+            Toggle("Show medium-confidence suggestions", "Allow manual suggestions when suggestion UI is available. This never enables silent apply. Suggestion UI is not available in v1.", "feedback.show_medium_confidence_suggestions", config.Feedback.ShowMediumConfidenceSuggestions),
             Toggle("Show blocked-app notice", "Notify when current app is blocked.", "feedback.show_blocked_app_notice", config.Feedback.ShowBlockedAppNotice),
             Toggle("Show timeout notice", "Notify when correction times out.", "feedback.show_timeout_notice", config.Feedback.ShowTimeoutNotice),
         ]),
@@ -133,8 +170,27 @@ public static class SettingsSkeleton
         return section;
     }
 
+    /// <summary>Creates a boolean card bound to its config field.</summary>
     private static SettingCardViewModel Toggle(string title, string description, string path, bool value) =>
         new() { Title = title, Description = description, Kind = "Toggle", Path = path, IsEnabled = value };
+
+    /// <summary>Builds category switches available only when grammar mode is enabled.</summary>
+    private static IEnumerable<SettingCardViewModel> GrammarCategorySettings(AppConfig config)
+    {
+        foreach (var category in GrammarCategories.All)
+        {
+            yield return new SettingCardViewModel
+            {
+                Title = category.Label,
+                Description = category.Description,
+                Kind = "Toggle",
+                Path = $"correction.enabled_grammar_categories.{category.Value}",
+                IsEnabled = config.Correction.Mode == "typos_only"
+                    || config.Correction.EnabledGrammarCategories.Contains(category.Value),
+                IsAvailable = config.Correction.Mode == "typos_plus_grammar",
+            };
+        }
+    }
 
     private static SettingCardViewModel Dropdown(
         string title,

@@ -8,6 +8,25 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class SettingsSkeletonTests
 {
+    /// <summary>Confidence controls show product defaults and keep the low-tier control disabled.</summary>
+    [TestMethod]
+    public void ConfidenceControlsExposeDefaultsAndFixLowToDoNothing()
+    {
+        var cards = SettingsSkeleton.CreateSections()
+            .Single(section => section.Name == "Correction").Settings;
+        var high = cards.Single(card => card.Path == "correction.high_confidence_behavior");
+        var medium = cards.Single(card => card.Path == "correction.medium_confidence_behavior");
+        var low = cards.Single(card => card.Path == "correction.low_confidence_behavior");
+
+        Assert.AreEqual("silent", high.SelectedValue);
+        Assert.AreEqual("suggestion", medium.SelectedValue);
+        Assert.IsTrue(high.IsAvailable && medium.IsAvailable);
+        CollectionAssert.AreEquivalent(new[] { "silent", "suggestion", "do_nothing" }, medium.Options.Select(option => option.Value).ToArray());
+        Assert.AreEqual("do_nothing", low.SelectedValue);
+        Assert.IsFalse(low.IsAvailable);
+        CollectionAssert.AreEqual(new[] { "do_nothing" }, low.Options.Select(option => option.Value).ToArray());
+    }
+
     [TestMethod]
     public void CreateSectionsIncludesExpectedSettingsAreas()
     {
@@ -101,6 +120,20 @@ public sealed class SettingsSkeletonTests
         CollectionAssert.AreEqual(
             new[] { "typos_only", "typos_plus_grammar" },
             correction.Options.Select(option => option.Value).ToArray());
+    }
+
+    /// <summary>The correction section exposes every category with availability tied to grammar mode.</summary>
+    [TestMethod]
+    public void CorrectionSectionOffersEveryGrammarCategory()
+    {
+        var cards = SettingsSkeleton.CreateSections()
+            .Single(section => section.Name == "Correction").Settings;
+        var categories = cards.Where(card => card.Path.StartsWith("correction.enabled_grammar_categories.")).ToArray();
+
+        CollectionAssert.AreEqual(
+            GrammarCategories.All.Select(category => $"correction.enabled_grammar_categories.{category.Value}").ToArray(),
+            categories.Select(card => card.Path).ToArray());
+        Assert.IsTrue(categories.All(card => card.IsEnabled && !card.IsAvailable));
     }
 
     [TestMethod]
