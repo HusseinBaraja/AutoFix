@@ -1,6 +1,7 @@
 use super::*;
 use crate::background::{
     context_capture::SelectionCapture,
+    target::FocusedElementId,
     triggers,
     typing::{MovementSignal, TypedInput},
 };
@@ -17,7 +18,7 @@ fn target() -> FocusedTarget {
         process_name: "notepad.exe".into(),
         window_handle: 1,
         window_title: "Notes".into(),
-        focused_element_id: None,
+        focused_element_id: Some(FocusedElementId::RuntimeId("editor".into())),
         is_elevated: false,
         is_password_or_protected: false,
         is_hidden_or_unavailable: false,
@@ -119,11 +120,13 @@ fn delayed_frozen_corrections_keep_all_results_and_preserve_newer_typing() {
     release_tx.send(()).unwrap();
     wait_completion(&pipeline);
     let expected_tail = " teh 尾";
+    let live = manager.active().unwrap().executable_context();
     assert!(pipeline.finish(
         &mut manager,
         &config.context,
         || stamp,
         |_| Some(target()),
+        |_, _| Some(live),
         |_, request, _| {
             assert_eq!(request.replacement_following_text, expected_tail);
             true
@@ -132,11 +135,17 @@ fn delayed_frozen_corrections_keep_all_results_and_preserve_newer_typing() {
     started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     release_tx.send(()).unwrap();
     wait_completion(&pipeline);
+    let live = format!(
+        "{}{}",
+        manager.active().unwrap().informative_context(),
+        manager.active().unwrap().executable_context()
+    );
     assert!(pipeline.finish(
         &mut manager,
         &config.context,
         || stamp,
         |_| Some(target()),
+        |_, _| Some(live),
         |_, request, _| {
             assert_eq!(request.executable_context, " teh");
             assert_eq!(request.replacement_following_text, " 尾");
@@ -208,11 +217,13 @@ fn frozen_failures_release_capacity_without_committing_engine_output() {
             }
         }
         let calls = Cell::new(0);
+        let live = manager.active().unwrap().executable_context();
         assert!(!pipeline.finish(
             &mut manager,
             &config.context,
             || STAMP,
             |_| if failure == 4 { None } else { Some(target()) },
+            |_, _| Some(live),
             |_, _, _| {
                 calls.set(calls.get() + 1);
                 false
@@ -250,6 +261,7 @@ fn frozen_result_revalidates_queued_position_and_input_during_security_check() {
                 });
                 Some(target())
             },
+            |_, _| panic!("raced input reached live range validation"),
             |_, _, _| panic!("raced input reached replacement")
         ));
     }
@@ -362,11 +374,17 @@ fn finish(
     replaced: &Cell<usize>,
     success: bool,
 ) -> bool {
+    let live = format!(
+        "{}{}",
+        manager.active().unwrap().informative_context(),
+        manager.active().unwrap().executable_context()
+    );
     pipeline.finish(
         manager,
         &config.context,
         || stamp,
         |_| Some(target()),
+        |_, _| Some(live),
         |_, _, _| {
             replaced.set(replaced.get() + 1);
             success
@@ -462,7 +480,7 @@ fn changed_context_movement_commit_and_recreated_session_discard_results() {
 #[test]
 fn security_and_input_changes_during_live_validation_block_replacement() {
     let config = AppConfig::default();
-    for change in 0..4 {
+    for change in 0..6 {
         let mut manager = manager(&config, "teh");
         let mut pipeline = CorrectionPipeline::new().unwrap();
         submit(&mut pipeline, &manager, &config);
@@ -484,14 +502,79 @@ fn security_and_input_changes_during_live_validation_block_replacement() {
                         });
                     }
                     3 => return None,
+                    4 => {
+                        target.focused_element_id =
+                            Some(FocusedElementId::RuntimeId("other".into()))
+                    }
+                    5 => target.focused_element_id = None,
                     _ => unreachable!(),
                 }
                 Some(target)
             },
+            |_, _| panic!("invalid result reached live range validation"),
             |_, _, _| panic!("invalid result reached replacement")
         ));
         assert_eq!(manager.active().unwrap().editable_context(), "teh");
     }
+}
+
+#[test]
+fn live_range_must_match_exactly_before_caret() {
+    let config = AppConfig::default();
+    for live in [
+        None,
+        Some("th e"),
+        Some("teh extra"),
+        Some("the"),
+        Some("teh teh extra"),
+    ] {
+        let mut manager = manager(&config, "teh");
+        let mut pipeline = CorrectionPipeline::new().unwrap();
+        submit_frozen(&mut pipeline, &mut manager, &config);
+        wait_completion(&pipeline);
+        let calls = Cell::new(0);
+        assert!(!pipeline.finish(
+            &mut manager,
+            &config.context,
+            || STAMP,
+            |_| Some(target()),
+            |_, _| live.map(str::to_owned),
+            |_, _, _| {
+                calls.set(calls.get() + 1);
+                true
+            }
+        ));
+        assert_eq!(calls.get(), 0);
+        assert_eq!(manager.active().unwrap().informative_context(), "teh");
+    }
+}
+
+#[test]
+fn frozen_range_can_end_before_caret_but_never_include_following_text() {
+    assert!(exact_range_before_caret(
+        "prefix teh next",
+        "teh next",
+        "teh",
+        " next"
+    ));
+    assert!(!exact_range_before_caret(
+        "prefix teh next",
+        "teh next",
+        "teh next",
+        " next"
+    ));
+    assert!(!exact_range_before_caret(
+        "prefix the next",
+        "teh next",
+        "teh",
+        " next"
+    ));
+    assert!(!exact_range_before_caret(
+        "prefix teh next!",
+        "teh next",
+        "teh",
+        " next"
+    ));
 }
 
 #[test]
@@ -548,11 +631,13 @@ fn unchanged_success_commits_only_after_validation() {
     let mut pipeline = CorrectionPipeline::new().unwrap();
     submit(&mut pipeline, &manager, &config);
     wait_completion(&pipeline);
+    let live = manager.active().unwrap().executable_context();
     assert!(pipeline.finish(
         &mut manager,
         &config.context,
         || STAMP,
         |_| Some(target()),
+        |_, _| Some(live),
         |_, _, _| panic!("unchanged text needs no replacement")
     ));
     assert_eq!(manager.active().unwrap().informative_context(), "hello");

@@ -432,6 +432,9 @@ impl InputProcessor {
                 SecurityDecision::Allowed { target } if config.correction.enabled => Some(target),
                 _ => None,
             },
+            |target, known_chars| {
+                context_capture::read_before_caret(target, &config.context, known_chars)
+            },
             ReplacementEngine::replace,
         );
     }

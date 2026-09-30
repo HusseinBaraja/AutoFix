@@ -283,6 +283,7 @@ impl CorrectionPipeline {
         limits: &ContextConfig,
         current_stamp: impl Fn() -> InputStamp,
         check_target: impl FnOnce(TriggerKind) -> Option<FocusedTarget>,
+        read_before_caret: impl FnOnce(&FocusedTarget, usize) -> Option<String>,
         replace: impl FnOnce(&FocusedTarget, &CorrectionRequest, &CorrectionOutput) -> bool,
     ) -> bool {
         self.invalidate(manager, current_stamp());
@@ -317,7 +318,9 @@ impl CorrectionPipeline {
             // Security/UIA calls can race with queued typing or focus changes.
             if target.correction_eligibility() != CorrectionEligibility::Allowed
                 || target.process_id != active.target.process_id
+                || target.process_name != active.target.process_name
                 || target.window_handle != active.target.window_handle
+                || target.focused_element_id != active.target.focused_element_id
                 || target.session_key() != active.target.session_key()
                 || !manager.active_matches(&target)
                 || current_stamp() != validation_stamp
@@ -329,7 +332,8 @@ impl CorrectionPipeline {
             }
             let original = &active.request.executable_context;
             if output.changes_needed {
-                if output.behavior != ConfidenceBehavior::Silent
+                if target.focused_element_id.is_none()
+                    || output.behavior != ConfidenceBehavior::Silent
                     || output.confidence == ConfidenceTier::Low
                     || output.corrected_executable_text == *original
                 {
@@ -350,6 +354,31 @@ impl CorrectionPipeline {
                     return false;
                 };
                 active.request.replacement_following_text = following;
+            }
+            if !active.request.selected_text {
+                let session = manager.active().unwrap();
+                let known_before_caret = format!(
+                    "{}{}",
+                    session.informative_context(),
+                    session.executable_context()
+                );
+                let Some(live_before_caret) =
+                    read_before_caret(&target, known_before_caret.chars().count())
+                else {
+                    return false;
+                };
+                // The exact tracked region must still end at the live caret.
+                // Never search elsewhere in the document for a similar span.
+                if !exact_range_before_caret(
+                    &live_before_caret,
+                    &known_before_caret,
+                    original,
+                    &active.request.replacement_following_text,
+                ) || current_stamp() != validation_stamp
+                    || !active.valid(session, current_stamp())
+                {
+                    return false;
+                }
             }
             // Even unchanged selections need target confirmation of the selection-end
             // caret before session completion. Do not infer it from engine success.
@@ -386,6 +415,17 @@ impl CorrectionPipeline {
         }
         applied
     }
+}
+
+fn exact_range_before_caret(
+    live_before_caret: &str,
+    known_before_caret: &str,
+    original: &str,
+    following: &str,
+) -> bool {
+    !original.is_empty()
+        && known_before_caret.ends_with(&format!("{original}{following}"))
+        && live_before_caret.ends_with(known_before_caret)
 }
 
 impl Drop for CorrectionPipeline {

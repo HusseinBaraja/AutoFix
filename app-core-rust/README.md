@@ -198,6 +198,12 @@ starting and suppresses late publication; a running synchronous API transport ca
 finish within its configured timeout. Completion rechecks the live security gate
 and focused target, then input generations again after those checks. Completions
 wait for hook input to be processed and retire frozen ranges in document order.
+Before a changed result reaches replacement, completion also requires a stable
+focused control identity and a fresh read-only TextPattern capture. The entire
+known session region must match exactly at the live caret, including text typed
+after a frozen segment. Missing captures or mismatches discard the result; no
+fuzzy search or replacement is attempted. Selected-text requests retain their
+separate selection confirmation path. Native replacement remains unavailable.
 Failed, suppressed, or refused frozen results release their slot and retire the
 original text without applying engine output. Results are
 consumed once. Only completed silent corrections above low confidence reach the
