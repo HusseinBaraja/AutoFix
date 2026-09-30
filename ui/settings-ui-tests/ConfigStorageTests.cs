@@ -6,6 +6,25 @@ namespace AutoFix.SettingsUi.Tests;
 public sealed class ConfigStorageTests
 {
     [TestMethod]
+    public void ApiRetryCountAcceptsOnlyZeroOrOne()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var config = AppConfig.Default();
+        foreach (var retries in new[] { 0, 1 })
+        {
+            config.Api.RetryCount = retries;
+            fixture.Storage.Save(config);
+            Assert.AreEqual(retries, fixture.Storage.Load(fixture.Path).Api.RetryCount);
+        }
+        foreach (var retries in new[] { -1, 2, 255 })
+        {
+            config.Api.RetryCount = retries;
+            var error = Assert.ThrowsException<InvalidDataException>(() => fixture.Storage.Save(config));
+            StringAssert.Contains(error.Message, "api.retry_count");
+        }
+    }
+
+    [TestMethod]
     public void PendingQueueSettingsPersistAndLegacyFilesDefaultToOneAndSkip()
     {
         using var fixture = TempConfigFixture.Create();

@@ -262,6 +262,12 @@ fn validate_api(config: &AppConfig) -> Result<(), ConfigValidationError> {
             "must be greater than zero",
         ));
     }
+    if config.api.retry_count > 1 {
+        return Err(ConfigValidationError::new(
+            "api.retry_count",
+            "must be 0 or 1",
+        ));
+    }
     if !(0.0..=2.0).contains(&config.api.temperature) {
         return Err(ConfigValidationError::new(
             "api.temperature",

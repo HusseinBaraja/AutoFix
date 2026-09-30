@@ -58,6 +58,7 @@ fn default_config_has_requested_values() {
     );
     assert_eq!(config.api.timeout_manual_ms, 3_000);
     assert_eq!(config.api.timeout_auto_ms, 700);
+    assert_eq!(config.api.retry_count, 1);
     assert_eq!(config.api.temperature, 0.0);
     assert!(!config.api.streaming);
     assert!(!config.api.fallback_to_local);
@@ -65,6 +66,37 @@ fn default_config_has_requested_values() {
     assert!(!config.logging.redacted_debug_mode_enabled);
     assert!(!config.logging.full_text_debug_mode_enabled);
     assert_eq!(config.logging.log_retention_days, None);
+}
+
+#[test]
+fn api_retry_count_accepts_only_zero_or_one() {
+    let mut config = AppConfig::default();
+    for retries in [0, 1] {
+        config.api.retry_count = retries;
+        let encoded = config_to_toml(&config).unwrap();
+        assert_eq!(
+            super::toml_io::parse_config(&encoded)
+                .unwrap()
+                .api
+                .retry_count,
+            retries
+        );
+    }
+    for retries in [2, 255] {
+        config.api.retry_count = retries;
+        assert_eq!(config.validate().unwrap_err().field(), "api.retry_count");
+    }
+    for manual in [false, true] {
+        let mut config = AppConfig::default();
+        let field = if manual {
+            config.api.timeout_manual_ms = 0;
+            "api.timeout_manual_ms"
+        } else {
+            config.api.timeout_auto_ms = 0;
+            "api.timeout_auto_ms"
+        };
+        assert_eq!(config.validate().unwrap_err().field(), field);
+    }
 }
 
 #[test]
@@ -204,7 +236,7 @@ base_url = "https://example.test/v1"
 model = "typo-model"
 timeout_manual_ms = 3000
 timeout_auto_ms = 700
-retry_count = 2
+retry_count = 1
 fallback_to_local = true
 temperature = 0.0
 streaming = false

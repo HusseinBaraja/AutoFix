@@ -14,6 +14,7 @@ mod shortcuts;
 mod target;
 #[cfg(test)]
 mod tests;
+mod timeout_notice;
 mod triggers;
 mod typing;
 
@@ -437,6 +438,9 @@ impl InputProcessor {
             },
             ReplacementEngine::replace,
         );
+        if self.pipeline.take_timeout_notice() {
+            timeout_notice::show();
+        }
     }
 
     /// Processes a guarded input batch, captures context, and snapshots correction policies.

@@ -33,6 +33,12 @@ request, restores its typed text into the active context alongside new typing,
 and waits for the next automatic trigger. Older settings files default to one
 pending correction and skipping new triggers. Queue contents remain memory-only.
 
+API settings retain `timeout_manual_ms = 3000`, `timeout_auto_ms = 700`,
+`retry_count = 1`, and `fallback_to_local = false` defaults. Retry count accepts
+only 0 or 1 in both Rust and the settings UI. Both attempts share the trigger's
+total timeout budget. `feedback.show_timeout_notice` defaults to true and applies
+only to a valid manual API timeout; automatic timeouts always stay silent.
+
 The live replacement consumer is still a placeholder. Before enabling it, the
 mutation owner must enforce `silent` or explicit acceptance of a suggestion and
 recheck process, focused target, security gate, caret, and context/executable

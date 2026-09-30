@@ -15,6 +15,9 @@ use super::{
 
 const MAX_RESPONSE_BYTES: u64 = 256 * 1024;
 
+#[cfg(test)]
+mod timeout_tests;
+
 /// Accepts HTTPS endpoints and loopback HTTP endpoints supported by WinHTTP.
 pub(crate) fn valid_base_url(base: &str) -> bool {
     winhttp::validate_base(base).is_ok()
@@ -53,6 +56,7 @@ impl Default for ApiEngineConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiNotice {
     None,
+    ManualTimeout,
     ManualFailure,
 }
 
@@ -98,7 +102,11 @@ impl ApiCorrectionEngine {
         if input.trigger_type == TriggerType::ManualShortcut
             && !matches!(output.status, EngineStatus::Completed)
         {
-            ApiNotice::ManualFailure
+            if output.status == EngineStatus::TimedOut {
+                ApiNotice::ManualTimeout
+            } else {
+                ApiNotice::ManualFailure
+            }
         } else {
             ApiNotice::None
         }
@@ -208,6 +216,72 @@ fn correct_api(
     input: &CorrectionInput,
     started: Instant,
 ) -> Result<String, ApiError> {
+    let timeout = match input.trigger_type {
+        TriggerType::ManualShortcut => config.timeout_manual_ms,
+        _ => config.timeout_auto_ms,
+    };
+    if timeout == 0 || config.retry_count > 1 {
+        return Err(invalid(
+            "API timeout must be positive and retry count must be 0 or 1",
+        ));
+    }
+    let budget = Duration::from_millis(timeout);
+    let config = config.clone();
+    let input = input.clone();
+    bounded_request(budget, started, move || {
+        correct_api_inner(&config, &input, started, budget)
+    })
+}
+
+/// WinHTTP timeouts apply to individual operations, not the entire request.
+/// Stop waiting at the shared deadline and drop any late transport result.
+fn bounded_request(
+    budget: Duration,
+    started: Instant,
+    request: impl FnOnce() -> Result<String, ApiError> + Send + 'static,
+) -> Result<String, ApiError> {
+    if started.elapsed() >= budget {
+        return Err(ApiError::Timeout);
+    }
+    let (sender, receiver) = mpsc::sync_channel(1);
+    thread::Builder::new()
+        .name("autofix-api-transport".into())
+        .spawn(move || {
+            let _ = sender.send(request());
+        })
+        .map_err(|_| {
+            failure_error(
+                EngineFailureKind::Transport,
+                "Cannot start API request",
+                false,
+            )
+        })?;
+    let remaining = budget
+        .checked_sub(started.elapsed())
+        .ok_or(ApiError::Timeout)?;
+    let outcome = receiver
+        .recv_timeout(remaining)
+        .map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => ApiError::Timeout,
+            mpsc::RecvTimeoutError::Disconnected => {
+                failure_error(EngineFailureKind::Transport, "API request stopped", false)
+            }
+        })?;
+    if started.elapsed() >= budget {
+        return Err(ApiError::Timeout);
+    }
+    outcome
+}
+
+fn correct_api_inner(
+    config: &ApiEngineConfig,
+    input: &CorrectionInput,
+    started: Instant,
+    deadline: Duration,
+) -> Result<String, ApiError> {
+    if started.elapsed() >= deadline {
+        return Err(ApiError::Timeout);
+    }
     let endpoint = endpoint(config)?;
     if config.model.trim().is_empty()
         || !config.temperature.is_finite()
@@ -234,27 +308,19 @@ fn correct_api(
     if key.contains(['\r', '\n']) {
         return Err(invalid("Invalid API credential"));
     }
-    let timeout = match input.trigger_type {
-        TriggerType::ManualShortcut => config.timeout_manual_ms,
-        _ => config.timeout_auto_ms,
-    };
-    if timeout == 0 {
-        return Err(invalid("API timeout must be positive"));
-    }
-    let deadline = Duration::from_millis(timeout);
-    let payload = payload(config, input);
+    let payload = payload(config, input).to_string();
     for attempt in 0..=config.retry_count {
         let Some(remaining) = deadline.checked_sub(started.elapsed()) else {
             return Err(ApiError::Timeout);
         };
-        let outcome = winhttp::post(&endpoint, &key, &payload.to_string(), remaining)
+        let outcome = winhttp::post(&endpoint, &key, &payload, remaining)
             .and_then(|body| parse_response(&body, input));
         if started.elapsed() >= deadline {
             return Err(ApiError::Timeout);
         }
         match outcome {
             Ok(text) => return Ok(text),
-            Err(ApiError::Timeout) => return Err(ApiError::Timeout),
+            Err(ApiError::Timeout) if attempt < config.retry_count => continue,
             Err(ApiError::Failure(error)) if error.retryable && attempt < config.retry_count => {
                 continue
             }
@@ -485,7 +551,7 @@ mod tests {
     };
 
     /// Builds a typo-only API request with default confidence and language protections.
-    fn input(trigger_type: TriggerType) -> CorrectionInput {
+    pub(super) fn input(trigger_type: TriggerType) -> CorrectionInput {
         CorrectionInput {
             informative_context: "Read only context".into(),
             executable_context: "teh AutoFix".into(),
@@ -550,7 +616,7 @@ mod tests {
     }
 
     /// Wraps categorized edit fixtures in the provider chat-completion response envelope.
-    fn response(corrected: &str, edits: Value) -> String {
+    pub(super) fn response(corrected: &str, edits: Value) -> String {
         json!({"choices":[{"message":{"content":json!({
             "corrected_executable_text": corrected,
             "edits": edits,
@@ -748,7 +814,7 @@ mod tests {
         let failed = CorrectionOutput::timed_out(manual.executable_context.clone(), 700);
         assert_eq!(
             ApiCorrectionEngine::notice_for(&manual, &failed),
-            ApiNotice::ManualFailure
+            ApiNotice::ManualTimeout
         );
         assert_eq!(
             ApiCorrectionEngine::notice_for(&automatic, &failed),

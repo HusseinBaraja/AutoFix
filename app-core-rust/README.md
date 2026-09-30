@@ -52,15 +52,27 @@ DeepSeek; `custom` requires a base URL. HTTPS is required except for loopback
 HTTP. The provider preset selects a generic Windows Credential Manager entry
 named `AutoFix/provider-profile/<preset>`; callers can store it with
 `secrets::set_secret`. API keys are never put in TOML or diagnostic logs.
-Manual and automatic requests default to 3000 ms and 700 ms respectively;
-retries share the request's time budget. `ApiCorrectionEngine::submit` runs the
+Manual and automatic requests default to 3000 ms and 700 ms respectively.
+`api.retry_count` accepts only 0 or 1 (default 1); retries share one total
+deadline, including credential access, transport, and response validation.
+The caller stops waiting at that deadline and discards late transport results.
+WinHTTP operations also use the remaining budget, including each response read,
+so trickling responses cannot renew the timeout.
+`ApiCorrectionEngine::submit` runs the
 request on a worker thread so the caller can keep processing typing. Fallback
 to the local rule engine is off by default. API results must include categorized
 edits for the executable span. The engine rejects disabled grammar categories,
 unlisted changes, invalid offsets, and changed protected terms. API typo edits
 must match the local engine's known spelling replacements.
-`ApiCorrectionEngine::notice_for` marks manual failures for a small
-notice and automatic failures for silent handling. The local ML engine remains
+Automatic timeouts silently skip correction and release frozen queue capacity.
+Valid manual API timeouts show a small, disabled, no-activate notice near the
+bottom-right work area for 2.5 seconds. `feedback.show_timeout_notice` defaults
+to true and can disable it. Repeated notices coalesce; cancelled, stale, and
+secure-target results cannot show a notice. Opt-in local fallback follows the
+same confidence and completion checks as normal local correction and suppresses
+the timeout notice when it completes.
+`ApiCorrectionEngine::notice_for` distinguishes manual timeout and failure
+feedback from silent automatic handling. The local ML engine remains
 a placeholder. Live triggers invoke these engines on the correction worker.
 The native replacement path remains a placeholder.
 Engine selection is explicit per request; neither local nor API routing depends

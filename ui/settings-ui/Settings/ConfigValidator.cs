@@ -192,9 +192,9 @@ public static class ConfigValidator
         RequireText("api.model", config.Api.Model);
         RequirePositive("api.timeout_manual_ms", config.Api.TimeoutManualMs);
         RequirePositive("api.timeout_auto_ms", config.Api.TimeoutAutoMs);
-        if (config.Api.RetryCount is < 0 or > 255)
+        if (config.Api.RetryCount is < 0 or > 1)
         {
-            throw Invalid("api.retry_count", "must be between 0 and 255");
+            throw Invalid("api.retry_count", "must be 0 or 1");
         }
         if (config.Api.Temperature is < 0 or > 2)
         {

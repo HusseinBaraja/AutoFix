@@ -20,7 +20,7 @@ use super::{
 use crate::{
     correction::{
         ApiEngineConfig, ConfidenceBehavior, ConfidenceTier, CorrectionEngines, CorrectionInput,
-        CorrectionOutput, EngineStatus, NoChangeReason, TriggerType,
+        CorrectionOutput, EngineKind, EngineStatus, NoChangeReason, TriggerType,
     },
     settings::{AppConfig, ContextConfig},
 };
@@ -60,6 +60,7 @@ struct ActiveRequest {
     editable_snapshot: String,
     stamp: InputStamp,
     cancelled: Arc<AtomicBool>,
+    show_timeout_notice: bool,
 }
 
 impl ActiveRequest {
@@ -89,6 +90,7 @@ pub(super) struct CorrectionPipeline {
     worker: Option<JoinHandle<()>>,
     active: VecDeque<ActiveRequest>,
     next_id: u64,
+    timeout_notice: bool,
 }
 
 impl CorrectionPipeline {
@@ -137,6 +139,7 @@ impl CorrectionPipeline {
             worker: Some(worker),
             active: VecDeque::new(),
             next_id: 1,
+            timeout_notice: false,
         })
     }
 
@@ -198,6 +201,7 @@ impl CorrectionPipeline {
             editable_snapshot: session.editable_context(),
             stamp,
             cancelled: Arc::clone(&cancelled),
+            show_timeout_notice: config.feedback.show_timeout_notice,
         });
         let (lock, ready) = &*self.mailbox;
         let mut state = lock.lock().unwrap();
@@ -212,6 +216,7 @@ impl CorrectionPipeline {
     }
 
     pub(super) fn cancel(&mut self) {
+        self.timeout_notice = false;
         for active in self.active.drain(..) {
             active.cancelled.store(true, Ordering::Release);
         }
@@ -276,6 +281,10 @@ impl CorrectionPipeline {
             .unwrap();
     }
 
+    pub(super) fn take_timeout_notice(&mut self) -> bool {
+        std::mem::take(&mut self.timeout_notice)
+    }
+
     /// Take once: duplicates and reordered completions cannot reach the mutation owner.
     pub(super) fn finish(
         &mut self,
@@ -286,6 +295,7 @@ impl CorrectionPipeline {
         read_before_caret: impl FnOnce(&FocusedTarget, usize) -> Option<String>,
         replace: impl FnOnce(&FocusedTarget, &CorrectionRequest, &CorrectionOutput) -> bool,
     ) -> bool {
+        self.timeout_notice = false;
         self.invalidate(manager, current_stamp());
         let completion = {
             let (lock, ready) = &*self.mailbox;
@@ -309,7 +319,15 @@ impl CorrectionPipeline {
         // outputs and refused mutation. Frozen original text retires unchanged.
         let applied = (|| {
             let output = completion.output;
-            if output.status != EngineStatus::Completed {
+            let notify_timeout = output.status == EngineStatus::TimedOut
+                && active.show_timeout_notice
+                && active.request.trigger == TriggerKind::ManualShortcut
+                && matches!(
+                    active.request.engine,
+                    EngineKind::OpenAiCompatibleApi | EngineKind::CustomApi
+                );
+            // Silent failures release their slot without another potentially slow UIA call.
+            if output.status != EngineStatus::Completed && !notify_timeout {
                 return false;
             }
             let Some(target) = check_target(active.request.trigger) else {
@@ -328,6 +346,10 @@ impl CorrectionPipeline {
                     .active()
                     .is_none_or(|session| !active.valid(session, current_stamp()))
             {
+                return false;
+            }
+            if output.status != EngineStatus::Completed {
+                self.timeout_notice = notify_timeout;
                 return false;
             }
             let original = &active.request.executable_context;

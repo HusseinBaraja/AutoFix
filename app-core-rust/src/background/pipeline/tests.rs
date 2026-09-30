@@ -12,6 +12,137 @@ const STAMP: InputStamp = InputStamp {
     sequence: 12,
 };
 
+#[test]
+fn timeout_notice_is_manual_api_only_and_obeys_feedback_setting() {
+    for trigger in [
+        TriggerKind::ManualShortcut,
+        TriggerKind::WordCount,
+        TriggerKind::Character,
+    ] {
+        for engine in [EngineKind::CustomApi, EngineKind::LocalRule] {
+            for enabled in [false, true] {
+                let mut config = AppConfig::default();
+                config.feedback.show_timeout_notice = enabled;
+                let mut manager = manager(&config, "teh");
+                let mut pipeline = CorrectionPipeline::start(|job| {
+                    CorrectionOutput::timed_out(job.input.executable_context.clone(), 700)
+                })
+                .unwrap();
+                let mut request = request(&manager, &config);
+                request.trigger = trigger;
+                request.engine = engine;
+                pipeline.submit(
+                    request,
+                    manager.active().unwrap(),
+                    target(),
+                    STAMP,
+                    &config,
+                    Vec::new(),
+                );
+                wait_completion(&pipeline);
+                let calls = Cell::new(0);
+                assert!(!finish(
+                    &mut pipeline,
+                    &mut manager,
+                    &config,
+                    STAMP,
+                    &calls,
+                    true
+                ));
+                assert_eq!(
+                    pipeline.take_timeout_notice(),
+                    enabled
+                        && trigger == TriggerKind::ManualShortcut
+                        && engine == EngineKind::CustomApi
+                );
+                assert!(!pipeline.take_timeout_notice());
+                assert_eq!(calls.get(), 0);
+                assert_eq!(manager.active().unwrap().editable_context(), "teh");
+            }
+        }
+    }
+}
+
+#[test]
+fn stale_cancelled_or_secure_timeouts_cannot_show_notices() {
+    for invalidation in 0..5 {
+        let config = AppConfig::default();
+        let mut manager = manager(&config, "teh");
+        let mut pipeline = CorrectionPipeline::start(|job| {
+            CorrectionOutput::timed_out(job.input.executable_context.clone(), 700)
+        })
+        .unwrap();
+        let mut request = request(&manager, &config);
+        request.engine = EngineKind::CustomApi;
+        pipeline.submit(
+            request,
+            manager.active().unwrap(),
+            target(),
+            STAMP,
+            &config,
+            Vec::new(),
+        );
+        wait_completion(&pipeline);
+        match invalidation {
+            0 => pipeline.cancel(),
+            1 => {
+                manager.input(TypedInput::Text(" next".into()));
+            }
+            2 => {
+                manager.input(TypedInput::Uncertain(MovementSignal::FocusChange));
+            }
+            _ => {}
+        }
+        let current = Cell::new(STAMP);
+        assert!(!pipeline.finish(
+            &mut manager,
+            &config.context,
+            || current.get(),
+            |_| {
+                let mut live = target();
+                if invalidation == 3 {
+                    live.is_password_or_protected = true;
+                }
+                if invalidation == 4 {
+                    current.set(InputStamp {
+                        sequence: STAMP.sequence + 1,
+                        ..STAMP
+                    });
+                }
+                Some(live)
+            },
+            |_, _| panic!("timeout must not read target text"),
+            |_, _, _| panic!("timeout must not replace text"),
+        ));
+        assert!(!pipeline.take_timeout_notice());
+    }
+}
+
+#[test]
+fn automatic_timeout_releases_frozen_slot_without_live_target_calls() {
+    let config = AppConfig::default();
+    let mut manager = manager(&config, "teh");
+    let mut pipeline = CorrectionPipeline::start(|job| {
+        CorrectionOutput::timed_out(job.input.executable_context.clone(), 700)
+    })
+    .unwrap();
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    wait_completion(&pipeline);
+    manager.input(TypedInput::Text(" next".into()));
+    assert!(!pipeline.finish(
+        &mut manager,
+        &config.context,
+        || STAMP,
+        |_| panic!("automatic timeout must skip live security/UIA calls"),
+        |_, _| panic!("automatic timeout must not capture text"),
+        |_, _, _| panic!("automatic timeout must not replace text"),
+    ));
+    assert!(!pipeline.take_timeout_notice());
+    assert!(pipeline.active.is_empty());
+    assert_eq!(manager.active().unwrap().informative_context(), "teh");
+    assert_eq!(manager.active().unwrap().editable_context(), " next");
+}
+
 fn target() -> FocusedTarget {
     FocusedTarget {
         process_id: 1,
