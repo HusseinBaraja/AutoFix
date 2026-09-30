@@ -778,7 +778,7 @@ fn slow_engine_never_blocks_automatic_input_and_keeps_only_latest_queued_work() 
 }
 
 #[test]
-fn selected_text_completes_without_importing_following_text() {
+fn selected_text_result_is_discarded_without_caret_end_proof() {
     let config = AppConfig::default();
     let mut manager = manager(&config, "teh later");
     let session = manager.active().unwrap();
@@ -805,7 +805,7 @@ fn selected_text_completes_without_importing_following_text() {
     pipeline.submit(request, session, target(), STAMP, &config, Vec::new());
     wait_completion(&pipeline);
     let calls = Cell::new(0);
-    assert!(finish(
+    assert!(!finish(
         &mut pipeline,
         &mut manager,
         &config,
@@ -813,16 +813,17 @@ fn selected_text_completes_without_importing_following_text() {
         &calls,
         true
     ));
-    assert_eq!(manager.active().unwrap().informative_context(), "the");
-    assert_eq!(manager.active().unwrap().editable_context(), "");
-    assert!(manager
+    assert_eq!(calls.get(), 0);
+    assert_eq!(manager.active().unwrap().informative_context(), "");
+    assert_eq!(manager.active().unwrap().editable_context(), "teh later");
+    assert!(!manager
         .active_mut()
         .unwrap()
         .undo_last_correction(&config.context));
 }
 
 #[test]
-fn unchanged_selection_still_requires_target_confirmation() {
+fn unchanged_selection_is_discarded_without_caret_end_proof() {
     let config = AppConfig::default();
     let mut manager = manager(&config, "hello later");
     let session = manager.active().unwrap();
@@ -857,7 +858,7 @@ fn unchanged_selection_still_requires_target_confirmation() {
         &calls,
         false
     ));
-    assert_eq!(calls.get(), 1);
+    assert_eq!(calls.get(), 0);
     assert_eq!(manager.active().unwrap().editable_context(), "hello later");
     assert_eq!(manager.active().unwrap().informative_context(), "");
 }

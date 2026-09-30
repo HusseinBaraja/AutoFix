@@ -115,15 +115,15 @@ An outside or unreadable selection blocks
 the shortcut by default. The `shortcuts.correct_arbitrary_selection` setting is
 off by default; when enabled, a selected span outside the typed segment becomes
 temporary executable context for that request, while text before and after it
-stays informative. The session has a completion path to commit corrected selected
-text into informative context and record undo after target replacement succeeds.
+stays informative. V1 discards selected results because it cannot prove which
+selection end is the live caret.
 App rules and the hard security gate are checked before routing. A matching app
 rule permits typed-input tracking only when it allows a word-count or character
 trigger. Manual-shortcut permission alone does not enable continuous capture.
 Manual-only rules can still use the opt-in arbitrary-selection shortcut path.
 The correction pipeline invokes the selected engine and validates completions.
-Successful unchanged results commit the original executable segment into
-informative context. Changed and selected-text results require confirmation from
+Successful unchanged caret-range results commit the original executable segment into
+informative context. Changed caret-range results require confirmation from
 the replacement owner before session completion or undo recording; the native
 placeholder currently refuses confirmation. If the provider cannot
 read before the caret, informative context is empty and typing continues.
@@ -202,8 +202,9 @@ Before a changed result reaches replacement, completion also requires a stable
 focused control identity and a fresh read-only TextPattern capture. The entire
 known session region must match exactly at the live caret, including text typed
 after a frozen segment. Missing captures or mismatches discard the result; no
-fuzzy search or replacement is attempted. Selected-text requests retain their
-separate selection confirmation path. Native replacement remains unavailable.
+fuzzy search or replacement is attempted. Selected-text results are discarded
+because their replacement range cannot be proven before the caret. Native
+replacement remains unavailable.
 Failed, suppressed, or refused frozen results release their slot and retire the
 original text without applying engine output. Results are
 consumed once. Only completed silent corrections above low confidence reach the

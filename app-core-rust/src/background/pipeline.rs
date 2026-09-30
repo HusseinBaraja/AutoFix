@@ -355,49 +355,40 @@ impl CorrectionPipeline {
                 };
                 active.request.replacement_following_text = following;
             }
-            if !active.request.selected_text {
-                let session = manager.active().unwrap();
-                let known_before_caret = format!(
-                    "{}{}",
-                    session.informative_context(),
-                    session.executable_context()
-                );
-                let Some(live_before_caret) =
-                    read_before_caret(&target, known_before_caret.chars().count())
-                else {
-                    return false;
-                };
-                // The exact tracked region must still end at the live caret.
-                // Never search elsewhere in the document for a similar span.
-                if !exact_range_before_caret(
-                    &live_before_caret,
-                    &known_before_caret,
-                    original,
-                    &active.request.replacement_following_text,
-                ) || current_stamp() != validation_stamp
-                    || !active.valid(session, current_stamp())
-                {
-                    return false;
-                }
+            // A selection does not prove which end contains the live caret.
+            // V1 only completes corrections of collapsed, pre-caret ranges.
+            if active.request.selected_text {
+                return false;
             }
-            // Even unchanged selections need target confirmation of the selection-end
-            // caret before session completion. Do not infer it from engine success.
-            if (output.changes_needed || active.request.selected_text)
-                && !replace(&target, &active.request, &output)
+            let session = manager.active().unwrap();
+            let known_before_caret = format!(
+                "{}{}",
+                session.informative_context(),
+                session.executable_context()
+            );
+            let Some(live_before_caret) =
+                read_before_caret(&target, known_before_caret.chars().count())
+            else {
+                return false;
+            };
+            // The exact tracked region must still end at the live caret.
+            // Never search elsewhere in the document for a similar span.
+            if !exact_range_before_caret(
+                &live_before_caret,
+                &known_before_caret,
+                original,
+                &active.request.replacement_following_text,
+            ) || current_stamp() != validation_stamp
+                || !active.valid(session, current_stamp())
             {
+                return false;
+            }
+            if output.changes_needed && !replace(&target, &active.request, &output) {
                 return false;
             }
             let session = manager.active_mut().unwrap();
             if let Some(id) = segment_id {
                 session.complete_pending(id, Some(&output.corrected_executable_text), limits)
-            } else if active.request.selected_text {
-                session.complete_selected_correction(
-                    original,
-                    &output.corrected_executable_text,
-                    &active.request.informative_context,
-                    active.request.versions,
-                    limits,
-                )
             } else if output.changes_needed {
                 session.queue_correction(original.clone(), output.corrected_executable_text)
                     && session.apply_next_correction(limits)
