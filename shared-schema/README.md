@@ -37,6 +37,8 @@ Cancelled, duplicate, stale, or reordered completions must be discarded before
 mutation. Integration verification must cover typing or moving focus while an
 API request is pending, cancellation followed by a late response, duplicate and
 out-of-order results, a target becoming secure, and interrupted replacement with
-rollback and clipboard/undo recovery. Current engine and session tests verify
-individual safeguards; they cannot establish these end-to-end guarantees until
-the live consumer exists.
+rollback and clipboard/undo recovery. The async pipeline now tests stale and
+reordered result rejection, typing/focus changes, security revalidation, and
+session completion only after a replacement callback confirms success. Native
+replacement remains unavailable; these tests cannot establish target mutation,
+rollback, clipboard recovery, or target undo until the native consumer exists.

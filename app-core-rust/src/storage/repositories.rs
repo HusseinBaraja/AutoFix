@@ -108,6 +108,16 @@ pub(crate) struct CustomDictionaryRepository<'a> {
 }
 
 impl<'a> CustomDictionaryRepository<'a> {
+    /// Protect global and app entries even when language detection is uncertain.
+    pub(crate) fn entries_for_app(&self, process_name: &str) -> Result<Vec<String>> {
+        let mut statement = self.connection.prepare(
+            "select distinct entry from custom_dictionary_entries
+             where app_process_name is null or app_process_name = ?1
+             order by entry",
+        )?;
+        let entries = statement.query_map([process_name], |row| row.get(0))?;
+        entries.collect()
+    }
     pub(super) fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }

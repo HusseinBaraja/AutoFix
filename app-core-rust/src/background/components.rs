@@ -11,7 +11,6 @@ use crate::{
 };
 
 pub(crate) struct NamedPipeIpcServer(crate::ipc::NamedPipeIpcServer);
-pub(crate) struct CorrectionEngineRouter;
 pub(crate) struct ReplacementEngine;
 
 impl NamedPipeIpcServer {
@@ -44,37 +43,21 @@ impl NamedPipeIpcServer {
     }
 }
 
-impl CorrectionEngineRouter {
-    /// Record request metadata while the correction engine is still a placeholder.
-    pub(crate) fn submit(request: CorrectionRequest) {
-        tracing::info!(
-            trigger = request.trigger.as_str(),
-            executable_chars = request.executable_context.chars().count(),
-            informative_chars = request.informative_context.chars().count(),
-            following_chars = request.following_context.chars().count(),
-            selected_text = request.selected_text,
-            temporary_selection = request.temporary_selection,
-            primary_language = request.language_info.primary_language.as_deref().unwrap_or("unknown"),
-            detected_language_count = request.language_info.detected_languages.len(),
-            uncertain_language = request.language_info.is_uncertain(),
-            ?request.uncertain_language_policy,
-            ?request.mixed_language_policy,
-            ?request.confidence_behavior,
-            ?request.versions,
-            "correction request accepted by placeholder router"
-        );
-    }
-    pub(crate) fn initialize(_config: &AppConfig) -> Self {
-        tracing::info!("correction engine router placeholder initialized");
-        Self
-    }
-
-    pub(crate) fn shutdown(self) {
-        tracing::info!("correction engine router placeholder shut down");
-    }
-}
-
 impl ReplacementEngine {
+    /// Native mutation is a separate feature. Refuse success until it can preserve
+    /// clipboard, target undo, and the verified executable range atomically.
+    pub(crate) fn replace(
+        _target: &super::target::FocusedTarget,
+        request: &CorrectionRequest,
+        _output: &crate::correction::CorrectionOutput,
+    ) -> bool {
+        tracing::debug!(
+            session_id = request.session_id,
+            trigger = request.trigger.as_str(),
+            "correction validated; native replacement unavailable"
+        );
+        false
+    }
     pub(crate) fn initialize() -> Self {
         tracing::info!("replacement engine placeholder initialized");
         Self

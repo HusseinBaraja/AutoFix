@@ -57,6 +57,8 @@ fn queued_typing_before_or_during_capture_never_enters_informative_context() {
 fn delayed_key_from_previous_focus_cannot_enter_session() {
     let config = AppConfig::default();
     let mut processor = super::InputProcessor {
+        pipeline: super::CorrectionPipeline::new().unwrap(),
+        processed_input_sequence: super::input_listener::current_input_sequence(),
         session_manager: super::SessionManager::new(config.context.clone()),
         config,
         database: crate::storage::Database::open_memory().unwrap(),
@@ -90,6 +92,8 @@ fn delayed_key_from_previous_focus_cannot_enter_session() {
 fn later_character_trigger_keeps_full_editable_snapshot() {
     let config = AppConfig::default();
     let mut processor = super::InputProcessor {
+        pipeline: super::CorrectionPipeline::new().unwrap(),
+        processed_input_sequence: super::input_listener::current_input_sequence(),
         session_manager: super::SessionManager::new(config.context.clone()),
         config,
         database: crate::storage::Database::open_memory().unwrap(),

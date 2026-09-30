@@ -6,6 +6,7 @@ mod informative_context;
 mod input_listener;
 mod message_loop;
 mod paths;
+mod pipeline;
 mod process_group;
 mod security;
 mod session;
@@ -36,9 +37,10 @@ use crate::{
 
 use self::{
     admin::reject_elevated_process,
-    components::{CorrectionEngineRouter, NamedPipeIpcServer, ReplacementEngine},
+    components::{NamedPipeIpcServer, ReplacementEngine},
     input_listener::{InputEvent, InputListener},
     paths::RuntimePaths,
+    pipeline::{CorrectionPipeline, InputStamp},
     process_group::SiblingDisappearanceMonitor,
     security::{SecurityDecision, SecurityGate, TriggerKind},
     session::{MovementResolution, SessionManager},
@@ -59,7 +61,6 @@ struct RuntimeComponents {
     global_shortcut: GlobalShortcutListener,
     input_listener: InputListener,
     input_worker: InputWorker,
-    correction_engine_router: CorrectionEngineRouter,
     replacement_engine: ReplacementEngine,
     process_group_monitor: SiblingDisappearanceMonitor,
     shutdown_requested: Arc<AtomicBool>,
@@ -99,6 +100,8 @@ fn capture_if_current<T>(
 }
 
 struct InputProcessor {
+    pipeline: CorrectionPipeline,
+    processed_input_sequence: u64,
     config: AppConfig,
     session_manager: SessionManager,
     database: Database,
@@ -215,7 +218,6 @@ impl RuntimeComponents {
             global_shortcut: GlobalShortcutListener::initialize(config),
             input_listener,
             input_worker,
-            correction_engine_router: CorrectionEngineRouter::initialize(config),
             replacement_engine: ReplacementEngine::initialize(),
             process_group_monitor: SiblingDisappearanceMonitor::new(),
             shutdown_requested,
@@ -225,7 +227,6 @@ impl RuntimeComponents {
     fn shutdown(self) {
         self.input_worker.shutdown();
         self.replacement_engine.shutdown();
-        self.correction_engine_router.shutdown();
         drop(self.input_listener);
         self.global_shortcut.shutdown();
         self.ipc_server.shutdown();
@@ -235,6 +236,10 @@ impl RuntimeComponents {
         message_loop::run_until_exit(|event| {
             match event {
                 message_loop::MessageLoopEvent::Hotkey(id) => {
+                    let events = self.input_listener.drain();
+                    if !events.is_empty() {
+                        self.input_worker.send(InputWork::Events(events));
+                    }
                     self.input_worker.send(InputWork::Shortcut(id))
                 }
                 message_loop::MessageLoopEvent::Poll => {
@@ -279,6 +284,7 @@ impl RuntimeComponents {
 
 impl InputWorker {
     fn start(config: AppConfig, database: Database) -> Result<Self, BackgroundError> {
+        let pipeline = CorrectionPipeline::new().map_err(BackgroundError::InputWorker)?;
         let queue = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
         let worker_queue = Arc::clone(&queue);
         let (done_sender, done) = mpsc::channel();
@@ -286,6 +292,8 @@ impl InputWorker {
             .name("autofix-input-processing".into())
             .spawn(move || {
                 let mut processor = InputProcessor {
+                    pipeline,
+                    processed_input_sequence: input_listener::current_input_sequence(),
                     session_manager: SessionManager::new(config.context.clone()),
                     config,
                     database,
@@ -295,21 +303,33 @@ impl InputWorker {
                         let (lock, ready) = &*worker_queue;
                         let mut pending = lock.lock().unwrap();
                         while pending.is_empty() {
-                            pending = ready.wait(pending).unwrap();
+                            let (next, timeout) = ready
+                                .wait_timeout(pending, Duration::from_millis(10))
+                                .unwrap();
+                            pending = next;
+                            if timeout.timed_out() && pending.is_empty() {
+                                break;
+                            }
                         }
-                        pending.pop_front().unwrap()
+                        pending.pop_front()
+                    };
+                    let Some(work) = work else {
+                        processor.finish_correction();
+                        continue;
                     };
                     match work {
                         InputWork::Events(events) => processor.process_input(events),
                         InputWork::Shortcut(id) => processor.process_shortcut(id),
                         InputWork::Tick => processor.session_manager.prune_exited(),
                         InputWork::Config(config) => {
+                            processor.pipeline.cancel();
                             processor
                                 .session_manager
                                 .update_limits(config.context.clone());
                             processor.config = *config;
                         }
                         InputWork::Reset => {
+                            processor.pipeline.cancel();
                             processor
                                 .session_manager
                                 .deactivate(MovementSignal::UnknownPosition);
@@ -325,6 +345,7 @@ impl InputWorker {
                             let _ = release.recv();
                         }
                     }
+                    processor.finish_correction();
                 }
                 let _ = done_sender.send(());
             })
@@ -381,6 +402,28 @@ impl InputWorker {
 }
 
 impl InputProcessor {
+    fn input_stamp() -> InputStamp {
+        InputStamp {
+            position: input_listener::current_position_generation(),
+            sequence: input_listener::current_input_sequence(),
+        }
+    }
+
+    fn finish_correction(&mut self) {
+        let config = &self.config;
+        let database = &self.database;
+        self.pipeline.finish(
+            &mut self.session_manager,
+            &config.context,
+            Self::input_stamp,
+            |trigger| match SecurityGate::check(trigger, config, database) {
+                SecurityDecision::Allowed { target } if config.correction.enabled => Some(target),
+                _ => None,
+            },
+            ReplacementEngine::replace,
+        );
+    }
+
     /// Processes a guarded input batch, captures context, and snapshots correction policies.
     fn process_input(&mut self, events: Vec<InputEvent>) {
         let mut pending_requests = Vec::new();
@@ -401,6 +444,7 @@ impl InputProcessor {
                         .input(typing::TypedInput::Uncertain(MovementSignal::MouseClick));
                 }
                 InputEvent::Key(key) => {
+                    self.processed_input_sequence = key.input_sequence;
                     if key.matches_shortcut(&self.config.shortcuts.correct)
                         || key.matches_shortcut(&self.config.shortcuts.undo)
                     {
@@ -486,7 +530,7 @@ impl InputProcessor {
                         if self.final_fix_before_reanchor_allowed(&self.database) {
                             tracing::info!(
                                 typed_chars = old.chars().count(),
-                                "smart final-fix eligible at reanchor; correction pipeline is a placeholder"
+                                "smart final-fix eligible; old caret replacement unavailable after movement"
                             );
                         }
                     }
@@ -548,7 +592,14 @@ impl InputProcessor {
             }
         }
         for request in ready_requests {
-            self.dispatch_trigger(request);
+            self.dispatch_trigger(
+                request,
+                InputStamp {
+                    position: last_key_generation
+                        .unwrap_or_else(input_listener::current_position_generation),
+                    sequence: capture_sequence,
+                },
+            );
         }
         if let Some(signal) = self
             .session_manager
@@ -567,6 +618,10 @@ impl InputProcessor {
     fn process_shortcut(&mut self, id: usize) {
         match GlobalShortcutListener::action_for_id(id) {
             Some(ShortcutAction::Correct) => {
+                let stamp = Self::input_stamp();
+                if stamp.sequence != self.processed_input_sequence {
+                    return;
+                }
                 if let SecurityDecision::Allowed { target } =
                     SecurityGate::check(TriggerKind::ManualShortcut, &self.config, &self.database)
                 {
@@ -600,13 +655,14 @@ impl InputProcessor {
                                     return;
                                 }
                                 if let Some(request) = triggers::manual(
+                                    session.id(),
                                     session.informative_context(),
                                     &executable,
                                     session.versions(),
                                     &selected,
-                                    self.config.shortcuts.correct_arbitrary_selection,
+                                    &self.config,
                                 ) {
-                                    self.dispatch_trigger(request);
+                                    self.dispatch_trigger(request, stamp);
                                 }
                             }
                         }
@@ -645,6 +701,7 @@ impl InputProcessor {
             if !session.position_uncertain() {
                 let editable_snapshot = session.editable_context();
                 if let Some(request) = triggers::automatic(
+                    session.id(),
                     &before,
                     &editable_snapshot,
                     &inserted,
@@ -663,7 +720,10 @@ impl InputProcessor {
     }
 
     /// Recheck the focused target and trigger permission before routing.
-    fn dispatch_trigger(&mut self, mut request: CorrectionRequest) {
+    fn dispatch_trigger(&mut self, mut request: CorrectionRequest, stamp: InputStamp) {
+        if !self.config.correction.enabled || stamp != Self::input_stamp() {
+            return;
+        }
         if let SecurityDecision::Allowed { target } =
             SecurityGate::check(request.trigger, &self.config, &self.database)
         {
@@ -702,7 +762,36 @@ impl InputProcessor {
                 request.uncertain_language_policy = selection.policy;
                 request.mixed_language_policy = self.config.correction.mixed_language_policy;
                 request.confidence_behavior = self.config.confidence_behavior();
-                CorrectionEngineRouter::submit(request);
+                let dictionary = match self
+                    .database
+                    .custom_dictionary()
+                    .entries_for_app(&target.process_name)
+                {
+                    Ok(entries) => entries,
+                    Err(error) => {
+                        tracing::warn!(%error, "correction skipped: dictionary unavailable");
+                        return;
+                    }
+                };
+                if stamp != Self::input_stamp() {
+                    return;
+                }
+                if let Some(session) = self.session_manager.active() {
+                    if request.session_id != session.id() || request.versions != session.versions()
+                    {
+                        return;
+                    }
+                    let manual = request.trigger == TriggerKind::ManualShortcut;
+                    tracing::debug!(session_id = request.session_id, ?request.versions,
+                        ?request.engine, ?request.mode, trigger = request.trigger.as_str(),
+                        "correction queued");
+                    self.pipeline
+                        .submit(request, session, target, stamp, &self.config, dictionary);
+                    if manual {
+                        self.pipeline.wait_manual();
+                        self.finish_correction();
+                    }
+                }
             }
         }
     }

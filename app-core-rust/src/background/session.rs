@@ -1,6 +1,9 @@
 //! In-memory text sessions. No session state is written to the database.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
 use super::{
     target::{FocusedTarget, SessionKey},
@@ -41,6 +44,7 @@ pub(crate) struct CorrectionUndo {
 }
 
 pub(crate) struct Session {
+    id: u64,
     // Informative text is known session text before the executable segment.
     // It is never an editable replacement target.
     informative_context: String,
@@ -126,6 +130,7 @@ impl Session {
         let mut executable = TypedSession::new();
         executable.focus(Some((window, key)));
         Self {
+            id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             informative_context: String::new(),
             detected_language: None,
             executable,
@@ -139,6 +144,10 @@ impl Session {
 
     pub(crate) fn informative_context(&self) -> &str {
         &self.informative_context
+    }
+
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     /// Returns the language cached for this focused session, never persisted to disk.
@@ -421,10 +430,6 @@ impl Session {
     }
 
     /// Called only after a trigger or final-fix completed with no changes.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "called by the upcoming correction router")
-    )]
     pub(crate) fn complete_without_changes(&mut self, limits: &ContextConfig) {
         if !self.position_uncertain() {
             self.commit_executable(limits);
@@ -461,10 +466,6 @@ impl Session {
         self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "called by the upcoming correction router")
-    )]
     pub(crate) fn queue_correction(&mut self, original: String, replacement: String) -> bool {
         if original.is_empty()
             || !self.executable_context().ends_with(&original)
@@ -486,10 +487,6 @@ impl Session {
         true
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "called after target replacement succeeds")
-    )]
     pub(crate) fn apply_next_correction(&mut self, limits: &ContextConfig) -> bool {
         let Some(correction) = self.pending_corrections.pop_front() else {
             return false;
@@ -537,13 +534,6 @@ impl Session {
 
     /// Record a selected-text replacement after the target confirms it.
     /// Only the text up to the selection end enters informative context.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "called after the replacement engine is implemented"
-        )
-    )]
     pub(crate) fn complete_selected_correction(
         &mut self,
         original: &str,

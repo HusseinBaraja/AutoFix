@@ -36,8 +36,9 @@ can instead skip correction or use normal correction. For mixed text,
 language; it can disable correction or correct per token with the API engine.
 Structured tokens, names, explicit protected terms, and words in other scripts
 remain protected. The local rule engine supports English only; API engines can
-receive other language tags. The router still only logs requests,
-so these policies do not yet change target application text.
+receive other language tags. The async pipeline invokes the selected engine with
+these policies. Native replacement remains unavailable, so changed results do
+not yet edit target application text.
 In grammar mode it applies only enabled categories. Conservative local rules
 cover capitalization, sentence-ending punctuation on manual correction, extra
 punctuation, repeated words, subject-verb agreement, a/an articles, a few
@@ -60,8 +61,8 @@ unlisted changes, invalid offsets, and changed protected terms. API typo edits
 must match the local engine's known spelling replacements.
 `ApiCorrectionEngine::notice_for` marks manual failures for a small
 notice and automatic failures for silent handling. The local ML engine remains
-a placeholder. The background router and replacement path are still
-placeholders, so this engine is not yet invoked by live typing.
+a placeholder. Live triggers invoke these engines on the correction worker.
+The native replacement path remains a placeholder.
 Engine selection is explicit per request; neither local nor API routing depends
 on task difficulty, and both correction modes are accepted by every engine.
 
@@ -77,8 +78,9 @@ when building the runtime policy, but never enables silent apply. Outputs includ
 an explicit `behavior`: only `silent` authorizes replacement; `suggestion`
 requires user acceptance. Suppressed outputs preserve the original executable
 text and discard edit details. Local results prioritize silent edits over
-suggested edits when both occur in one request. The background router snapshots
-the saved confidence policy, but target replacement remains a placeholder.
+suggested edits when both occur in one request. The pipeline snapshots confidence
+policy and rejects suggestions, suppressed edits, and low-confidence results at
+completion. Target replacement remains a placeholder.
 
 The keyboard session tracker is implemented. It keeps up to 4,096 characters
 typed during the current engine run in memory and exposes only the known text
@@ -118,8 +120,11 @@ App rules and the hard security gate are checked before routing. A matching app
 rule permits typed-input tracking only when it allows a word-count or character
 trigger. Manual-shortcut permission alone does not enable continuous capture.
 Manual-only rules can still use the opt-in arbitrary-selection shortcut path.
-The correction router still only logs request metadata; it does not yet apply
-corrections to target text or call the completion path. If the provider cannot
+The correction pipeline invokes the selected engine and validates completions.
+Successful unchanged results commit the original executable segment into
+informative context. Changed and selected-text results require confirmation from
+the replacement owner before session completion or undo recording; the native
+placeholder currently refuses confirmation. If the provider cannot
 read before the caret, informative context is empty and typing continues.
 Protected fields and
 unavailable targets are never read. Paste and
@@ -149,13 +154,35 @@ context, and starts a fresh executable segment at the new caret. The old typed
 suffix is discarded because it has not been verified at the new position.
 Longer forward movement and
 unmatched positions re-anchor at the new caret. A longer forward move requests
-the final-fix security gate for the old executable text. The correction pipeline
-is still a placeholder, so no final fix is applied to target text yet. Pending
+the final-fix security gate for the old executable text. Final fix remains
+unavailable because the old caret cannot be safely targeted after movement. Pending
 corrections are invalidated on movement. Runtime ticks delete sessions when
 their owning process exits. All session state disappears on engine exit or
-termination and is never written to disk. The correction router and replacement
-engine are still placeholders; lifecycle methods model their outcomes in
-memory and do not change target application text.
+termination and is never written to disk. The replacement engine remains a
+placeholder; session completion methods do not themselves change target text.
+
+The correction pipeline uses one worker, one replaceable queued request, and one
+completion slot. Automatic triggers never wait for correction. Manual shortcuts
+can wait up to 20 ms on the input processor, then continue asynchronously. Hooks
+and the Windows message loop remain independent. Pending hook input is drained
+before a manual snapshot. Every request includes a unique memory-only session ID,
+context/executable/caret-anchor versions, trigger, engine kind, and correction mode.
+Grammar, language, confidence, dictionary, and API settings are snapshotted for
+engine execution. Following selected text stays informative.
+
+V1 conservatively cancels on any new hook input. Results are discarded if the
+editable snapshot or any version changes, the session changes or disappears,
+focus/caret generation changes, executable context commits, configuration reloads,
+or another request supersedes the work. Cancellation prevents queued work from
+starting and suppresses late publication; a running synchronous API transport can
+finish within its configured timeout. Completion rechecks the live security gate
+and focused target, then input generations again after those checks. Results are
+consumed once. Only completed silent corrections above low confidence reach the
+replacement boundary. Failures and suppressed edits do not commit executable
+context. Tests cover delayed engines, stale and reordered results, queued input,
+secure targets, failed replacement, selection boundaries, and commit/undo after
+confirmed replacement. Native mutation, clipboard recovery, and real target undo
+still require the replacement feature.
 
 Feature code should be organized by product behavior, not technical layer. Keep modules small, private by default, and colocate tests with the behavior they verify.
 
