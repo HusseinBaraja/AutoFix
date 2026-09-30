@@ -147,29 +147,7 @@ impl CorrectionEngine for ApiCorrectionEngine {
         };
         let outcome = correct_api(config, input, started);
         match outcome {
-            Ok(corrected) => {
-                let elapsed = elapsed_ms(started);
-                if corrected == input.executable_context {
-                    CorrectionOutput::unchanged(
-                        corrected,
-                        ConfidenceTier::High,
-                        NoChangeReason::NoCorrectionNeeded,
-                        elapsed,
-                    )
-                } else {
-                    // Unknown-language edits are high confidence only after
-                    // validating every edit against the local high-confidence list.
-                    let confidence = if input.language_info.is_uncertain()
-                        && input.uncertain_language_policy
-                            == UncertainLanguagePolicy::HighConfidenceTyposOnly
-                    {
-                        ConfidenceTier::High
-                    } else {
-                        ConfidenceTier::Medium
-                    };
-                    CorrectionOutput::changed(corrected, confidence, None, elapsed)
-                }
-            }
+            Ok(corrected) => completed_output(input, corrected, elapsed_ms(started)),
             Err(ApiError::Timeout) if config.fallback_to_local => {
                 let mut output = super::local_rule::correct(input);
                 output.engine_latency_ms = elapsed_ms(started);
@@ -190,6 +168,31 @@ impl CorrectionEngine for ApiCorrectionEngine {
             ),
         }
     }
+}
+
+/// Apply confidence policy only after the API's edits have passed validation.
+fn completed_output(input: &CorrectionInput, corrected: String, elapsed: u64) -> CorrectionOutput {
+    if corrected == input.executable_context {
+        return CorrectionOutput::unchanged(
+            corrected,
+            ConfidenceTier::High,
+            NoChangeReason::NoCorrectionNeeded,
+            elapsed,
+        );
+    }
+    // Unknown-language edits are high confidence only after validating every
+    // edit against the local high-confidence list in parse_response.
+    let confidence = if input.language_info.is_uncertain()
+        && input.uncertain_language_policy == UncertainLanguagePolicy::HighConfidenceTyposOnly
+    {
+        ConfidenceTier::High
+    } else {
+        ConfidenceTier::Medium
+    };
+    super::confidence::enforce(
+        input,
+        CorrectionOutput::changed(corrected, confidence, None, elapsed),
+    )
 }
 
 #[derive(Debug)]
@@ -495,6 +498,7 @@ mod tests {
             custom_dictionary: vec!["AutoFix".into()],
             protected_terms: vec!["AutoFix".into()],
             trigger_type,
+            suggestion_ui_available: true,
             confidence_behavior: ConfidenceBehaviorSettings {
                 high: ConfidenceBehavior::Silent,
                 medium: ConfidenceBehavior::Suggestion,
@@ -547,6 +551,58 @@ mod tests {
             "edits": edits,
         }).to_string()}}]})
         .to_string()
+    }
+
+    #[test]
+    fn validated_api_results_use_the_shared_confidence_policy() {
+        let body = response(
+            "the AutoFix",
+            json!([{"start_char":0,"end_char":3,"replacement_text":"the","category":"typo"}]),
+        );
+        for trigger in [
+            TriggerType::ManualShortcut,
+            TriggerType::WordCount,
+            TriggerType::Character,
+            TriggerType::FinalFixBeforeReanchor,
+        ] {
+            for available in [false, true] {
+                let mut request = input(trigger);
+                request.suggestion_ui_available = available;
+                let output =
+                    completed_output(&request, parse_response(&body, &request).unwrap(), 12);
+                let suggested = trigger == TriggerType::ManualShortcut && available;
+                assert_eq!(output.changes_needed, suggested);
+                assert_eq!(
+                    output.behavior,
+                    if suggested {
+                        ConfidenceBehavior::Suggestion
+                    } else {
+                        ConfidenceBehavior::DoNothing
+                    }
+                );
+                assert_eq!(
+                    output.corrected_executable_text,
+                    if suggested {
+                        "the AutoFix"
+                    } else {
+                        "teh AutoFix"
+                    }
+                );
+                assert_eq!(output.engine_latency_ms, 12);
+                request.confidence_behavior.medium = ConfidenceBehavior::Silent;
+                let output =
+                    completed_output(&request, parse_response(&body, &request).unwrap(), 12);
+                assert_eq!(output.corrected_executable_text, "the AutoFix");
+                assert_eq!(output.behavior, ConfidenceBehavior::Silent);
+                request.language_info.detected_languages.clear();
+                request.confidence_behavior.high = ConfidenceBehavior::DoNothing;
+                let output =
+                    completed_output(&request, parse_response(&body, &request).unwrap(), 12);
+                assert_eq!(output.confidence, ConfidenceTier::High);
+                assert!(!output.changes_needed);
+                assert_eq!(output.corrected_executable_text, request.executable_context);
+            }
+        }
     }
 
     #[test]
@@ -792,7 +848,32 @@ mod tests {
             .unwrap();
         assert_eq!(output.corrected_executable_text, "the AutoFix");
         assert_eq!(output.status, EngineStatus::Completed);
+        assert_eq!(output.behavior, ConfidenceBehavior::Suggestion);
         server.join().unwrap();
         crate::secrets::delete_secret(&profile).unwrap();
+    }
+
+    #[test]
+    fn local_fallback_obeys_medium_confidence_policy() {
+        let config = ApiEngineConfig {
+            provider_preset: format!("missing-confidence-test-{}", std::process::id()),
+            base_url: Some("http://127.0.0.1:1/v1".into()),
+            fallback_to_local: true,
+            ..ApiEngineConfig::default()
+        };
+        let engine = ApiCorrectionEngine::new(EngineKind::CustomApi, config);
+        for trigger in [TriggerType::ManualShortcut, TriggerType::Character] {
+            let mut request = input(trigger);
+            request.executable_context = "alot AutoFix".into();
+            request.suggestion_ui_available = false;
+            let output = engine.correct(&request);
+            assert!(!output.changes_needed);
+            assert_eq!(output.corrected_executable_text, request.executable_context);
+            assert_eq!(output.behavior, ConfidenceBehavior::DoNothing);
+            request.confidence_behavior.medium = ConfidenceBehavior::Silent;
+            let output = engine.correct(&request);
+            assert_eq!(output.corrected_executable_text, "a lot AutoFix");
+            assert_eq!(output.behavior, ConfidenceBehavior::Silent);
+        }
     }
 }

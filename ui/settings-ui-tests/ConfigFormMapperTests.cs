@@ -7,6 +7,22 @@ namespace AutoFix.SettingsUi.Tests;
 public sealed class ConfigFormMapperTests
 {
     [TestMethod]
+    public void ConfidenceChoicesMapAndInvalidLowBehaviorIsRejected()
+    {
+        var sections = SettingsSkeleton.CreateSections();
+        Card(sections, "correction.high_confidence_behavior").SelectedValue = "do_nothing";
+        Card(sections, "correction.medium_confidence_behavior").SelectedValue = "silent";
+        var config = ConfigFormMapper.BuildConfig(sections);
+        Assert.AreEqual("do_nothing", config.Correction.HighConfidenceBehavior);
+        Assert.AreEqual("silent", config.Correction.MediumConfidenceBehavior);
+        Assert.AreEqual("do_nothing", config.Correction.LowConfidenceBehavior);
+
+        Card(sections, "correction.low_confidence_behavior").SelectedValue = "silent";
+        var error = Assert.ThrowsException<InvalidDataException>(() => ConfigFormMapper.BuildConfig(sections));
+        Assert.AreEqual("correction.low_confidence_behavior: must be do_nothing", error.Message);
+    }
+
+    [TestMethod]
     public void BuildConfigMapsEditedCards()
     {
         var sections = SettingsSkeleton.CreateSections();

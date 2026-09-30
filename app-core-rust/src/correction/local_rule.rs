@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use super::confidence::behavior_for;
+
 use super::{
     ConfidenceBehavior, ConfidenceTier, CorrectionChange, CorrectionChangeKind, CorrectionInput,
     CorrectionMode, CorrectionOutput, GrammarCategory, NoChangeReason, UncertainLanguagePolicy,
@@ -151,6 +153,16 @@ pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
         );
     }
 
+    // A single result has one disposition. Apply eligible silent edits first
+    // rather than combining a suggestion with edits authorized for replacement.
+    if selected
+        .iter()
+        .any(|candidate| behavior_for(input, candidate.confidence) == ConfidenceBehavior::Silent)
+    {
+        selected.retain(|candidate| {
+            behavior_for(input, candidate.confidence) == ConfidenceBehavior::Silent
+        });
+    }
     selected.sort_by_key(|candidate| candidate.start_byte);
     let confidence = selected
         .iter()
@@ -178,7 +190,10 @@ pub(super) fn correct(input: &CorrectionInput) -> CorrectionOutput {
         );
     }
 
-    CorrectionOutput::changed(corrected, confidence, Some(changes), elapsed_ms(started))
+    super::confidence::enforce(
+        input,
+        CorrectionOutput::changed(corrected, confidence, Some(changes), elapsed_ms(started)),
+    )
 }
 
 /// Converts elapsed time to a saturating millisecond count.
@@ -206,15 +221,6 @@ pub(super) fn is_english_tag(language: &str) -> bool {
         || language
             .get(..3)
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("en-"))
-}
-
-/// Selects the configured action for a candidate's confidence tier.
-fn behavior_for(input: &CorrectionInput, tier: ConfidenceTier) -> ConfidenceBehavior {
-    match tier {
-        ConfidenceTier::High => input.confidence_behavior.high,
-        ConfidenceTier::Medium => input.confidence_behavior.medium,
-        ConfidenceTier::Low => input.confidence_behavior.low,
-    }
 }
 
 /// Ranks confidence from low to high for conservative result reporting.
@@ -955,9 +961,10 @@ mod tests {
             custom_dictionary: Vec::new(),
             protected_terms: Vec::new(),
             trigger_type: TriggerType::ManualShortcut,
+            suggestion_ui_available: true,
             confidence_behavior: ConfidenceBehaviorSettings {
                 high: ConfidenceBehavior::Silent,
-                medium: ConfidenceBehavior::Suggestion,
+                medium: ConfidenceBehavior::Silent,
                 low: ConfidenceBehavior::DoNothing,
             },
         }
@@ -1119,6 +1126,78 @@ mod tests {
             output.no_change_reason,
             Some(NoChangeReason::ConfidenceBelowConfiguredBehavior)
         );
+    }
+
+    #[test]
+    fn default_policy_applies_high_and_leaves_medium_text_untouched() {
+        for trigger in [
+            TriggerType::ManualShortcut,
+            TriggerType::WordCount,
+            TriggerType::Character,
+            TriggerType::FinalFixBeforeReanchor,
+        ] {
+            let mut request = input("teh alot", CorrectionMode::TyposOnly);
+            request.trigger_type = trigger;
+            request.confidence_behavior = ConfidenceBehaviorSettings::default();
+            request.suggestion_ui_available = false;
+            let output = correct(&request);
+            assert_eq!(output.corrected_executable_text, "the alot");
+            assert_eq!(output.behavior, ConfidenceBehavior::Silent);
+            assert_eq!(output.confidence, ConfidenceTier::High);
+            assert_eq!(output.changes.unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn medium_results_require_manual_suggestion_ui_or_explicit_silent_apply() {
+        for trigger in [
+            TriggerType::ManualShortcut,
+            TriggerType::WordCount,
+            TriggerType::Character,
+            TriggerType::FinalFixBeforeReanchor,
+        ] {
+            for available in [false, true] {
+                let mut request = input("alot", CorrectionMode::TyposOnly);
+                request.trigger_type = trigger;
+                request.confidence_behavior = ConfidenceBehaviorSettings::default();
+                request.suggestion_ui_available = available;
+                let output = correct(&request);
+                let suggested = trigger == TriggerType::ManualShortcut && available;
+                assert_eq!(output.changes_needed, suggested);
+                assert_eq!(
+                    output.corrected_executable_text,
+                    if suggested { "a lot" } else { "alot" }
+                );
+                assert_eq!(
+                    output.behavior,
+                    if suggested {
+                        ConfidenceBehavior::Suggestion
+                    } else {
+                        ConfidenceBehavior::DoNothing
+                    }
+                );
+                request.confidence_behavior.medium = ConfidenceBehavior::Silent;
+                let output = correct(&request);
+                assert_eq!(output.corrected_executable_text, "a lot");
+                assert_eq!(output.behavior, ConfidenceBehavior::Silent);
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_dispositions_never_silently_apply_suggested_candidates() {
+        let mut request = input("teh alot", CorrectionMode::TyposOnly);
+        request.confidence_behavior = ConfidenceBehaviorSettings::default();
+        let output = correct(&request);
+        assert_eq!(output.corrected_executable_text, "the alot");
+        assert_eq!(output.behavior, ConfidenceBehavior::Silent);
+        request.confidence_behavior.high = ConfidenceBehavior::Suggestion;
+        request.confidence_behavior.medium = ConfidenceBehavior::Silent;
+        let output = correct(&request);
+        assert_eq!(output.corrected_executable_text, "teh a lot");
+        assert_eq!(output.behavior, ConfidenceBehavior::Silent);
+        request.confidence_behavior.high = ConfidenceBehavior::DoNothing;
+        assert_eq!(correct(&request).corrected_executable_text, "teh a lot");
     }
 
     #[test]

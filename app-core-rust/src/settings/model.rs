@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::correction::{
-    ConfidenceBehavior, CorrectionMode, GrammarCategory, MixedLanguagePolicy,
-    UncertainLanguagePolicy,
+    ConfidenceBehavior, ConfidenceBehaviorSettings, CorrectionMode, GrammarCategory,
+    MixedLanguagePolicy, UncertainLanguagePolicy,
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -17,6 +17,24 @@ pub(crate) struct AppConfig {
     pub(crate) api: ApiConfig,
     pub(crate) feedback: FeedbackConfig,
     pub(crate) logging: LoggingConfig,
+}
+
+impl AppConfig {
+    /// Snapshot confidence settings, honoring the user's suggestion preference.
+    pub(crate) fn confidence_behavior(&self) -> ConfidenceBehaviorSettings {
+        let medium = self.correction.medium_confidence_behavior;
+        ConfidenceBehaviorSettings {
+            high: self.correction.high_confidence_behavior,
+            medium: if medium == ConfidenceBehavior::Suggestion
+                && !self.feedback.show_medium_confidence_suggestions
+            {
+                ConfidenceBehavior::DoNothing
+            } else {
+                medium
+            },
+            low: ConfidenceBehavior::DoNothing,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

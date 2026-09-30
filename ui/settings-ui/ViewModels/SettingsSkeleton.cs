@@ -38,7 +38,7 @@ public static class SettingsSkeleton
     public static ObservableCollection<OptionItem> ConfidenceBehaviors() =>
     [
         new("Do nothing", "do_nothing"),
-        new("Suggest", "suggestion"),
+        new("Suggest when available", "suggestion"),
         new("Apply silently", "silent"),
     ];
 
@@ -89,9 +89,18 @@ public static class SettingsSkeleton
             Dropdown("Unknown language", "How to handle text whose language is unclear.", "correction.uncertain_language_policy", config.Correction.UncertainLanguagePolicy, UncertainLanguagePolicies()),
             Dropdown("Mixed-language text", "Disable correction, use the dominant language, or correct each token with the API engine.", "correction.mixed_language_policy", config.Correction.MixedLanguagePolicy, MixedLanguagePolicies()),
             ..GrammarCategorySettings(config),
-            Dropdown("High confidence behavior", "Behavior when correction confidence is high.", "correction.high_confidence_behavior", config.Correction.HighConfidenceBehavior, ConfidenceBehaviors()),
-            Dropdown("Medium confidence behavior", "Behavior when correction confidence is medium.", "correction.medium_confidence_behavior", config.Correction.MediumConfidenceBehavior, ConfidenceBehaviors()),
-            Dropdown("Low confidence behavior", "Recommended: do nothing for safety.", "correction.low_confidence_behavior", config.Correction.LowConfidenceBehavior, ConfidenceBehaviors()),
+            Dropdown("High confidence behavior", "Default: apply silently for manual and automatic triggers.", "correction.high_confidence_behavior", config.Correction.HighConfidenceBehavior, ConfidenceBehaviors()),
+            Dropdown("Medium confidence behavior", "Default: suggest on manual correction when suggestion UI is available; otherwise do nothing. Automatic triggers do nothing unless Apply silently is selected. Suggestion UI is not available in v1.", "correction.medium_confidence_behavior", config.Correction.MediumConfidenceBehavior, ConfidenceBehaviors()),
+            new SettingCardViewModel
+            {
+                Title = "Low confidence behavior",
+                Description = "Always do nothing. Low-confidence corrections are disabled.",
+                Kind = "Dropdown",
+                Path = "correction.low_confidence_behavior",
+                SelectedValue = "do_nothing",
+                Options = [new("Do nothing", "do_nothing")],
+                IsAvailable = false,
+            },
         ]),
         Section("Engines", "Local and API correction providers",
         [
@@ -119,7 +128,7 @@ public static class SettingsSkeleton
             Toggle("Tray state enabled", "Show correction state through tray status.", "feedback.tray_state_enabled", config.Feedback.TrayStateEnabled),
             Toggle("Applied notification", "Notify after a correction is applied.", "feedback.show_correction_applied_notification", config.Feedback.ShowCorrectionAppliedNotification),
             Toggle("Show skipped reason", "Explain why a correction did not run.", "feedback.show_skipped_reason", config.Feedback.ShowSkippedReason),
-            Toggle("Show medium-confidence suggestions", "Surface suggestions instead of applying automatically.", "feedback.show_medium_confidence_suggestions", config.Feedback.ShowMediumConfidenceSuggestions),
+            Toggle("Show medium-confidence suggestions", "Allow manual suggestions when suggestion UI is available. This never enables silent apply. Suggestion UI is not available in v1.", "feedback.show_medium_confidence_suggestions", config.Feedback.ShowMediumConfidenceSuggestions),
             Toggle("Show blocked-app notice", "Notify when current app is blocked.", "feedback.show_blocked_app_notice", config.Feedback.ShowBlockedAppNotice),
             Toggle("Show timeout notice", "Notify when correction times out.", "feedback.show_timeout_notice", config.Feedback.ShowTimeoutNotice),
         ]),

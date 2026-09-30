@@ -59,6 +59,7 @@ impl CorrectionEngineRouter {
             uncertain_language = request.language_info.is_uncertain(),
             ?request.uncertain_language_policy,
             ?request.mixed_language_policy,
+            ?request.confidence_behavior,
             ?request.versions,
             "correction request accepted by placeholder router"
         );

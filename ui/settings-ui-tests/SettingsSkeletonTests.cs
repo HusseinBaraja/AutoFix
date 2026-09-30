@@ -9,6 +9,24 @@ namespace AutoFix.SettingsUi.Tests;
 public sealed class SettingsSkeletonTests
 {
     [TestMethod]
+    public void ConfidenceControlsExposeDefaultsAndFixLowToDoNothing()
+    {
+        var cards = SettingsSkeleton.CreateSections()
+            .Single(section => section.Name == "Correction").Settings;
+        var high = cards.Single(card => card.Path == "correction.high_confidence_behavior");
+        var medium = cards.Single(card => card.Path == "correction.medium_confidence_behavior");
+        var low = cards.Single(card => card.Path == "correction.low_confidence_behavior");
+
+        Assert.AreEqual("silent", high.SelectedValue);
+        Assert.AreEqual("suggestion", medium.SelectedValue);
+        Assert.IsTrue(high.IsAvailable && medium.IsAvailable);
+        CollectionAssert.AreEquivalent(new[] { "silent", "suggestion", "do_nothing" }, medium.Options.Select(option => option.Value).ToArray());
+        Assert.AreEqual("do_nothing", low.SelectedValue);
+        Assert.IsFalse(low.IsAvailable);
+        CollectionAssert.AreEqual(new[] { "do_nothing" }, low.Options.Select(option => option.Value).ToArray());
+    }
+
+    [TestMethod]
     public void CreateSectionsIncludesExpectedSettingsAreas()
     {
         var sections = SettingsSkeleton.CreateSections();

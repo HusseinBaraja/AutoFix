@@ -6,6 +6,26 @@ namespace AutoFix.SettingsUi.Tests;
 public sealed class ConfigStorageTests
 {
     [TestMethod]
+    public void ConfidenceSettingsRoundTripAndRejectUnsafeLowBehavior()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var config = AppConfig.Default();
+        config.Correction.HighConfidenceBehavior = "do_nothing";
+        config.Correction.MediumConfidenceBehavior = "silent";
+        fixture.Storage.Save(config);
+        var loaded = fixture.Storage.Load(fixture.Path);
+        Assert.AreEqual("do_nothing", loaded.Correction.HighConfidenceBehavior);
+        Assert.AreEqual("silent", loaded.Correction.MediumConfidenceBehavior);
+        Assert.AreEqual("do_nothing", loaded.Correction.LowConfidenceBehavior);
+        foreach (var behavior in new[] { "silent", "suggestion" })
+        {
+            File.WriteAllText(fixture.Path, File.ReadAllText(fixture.Path).Replace("low_confidence_behavior = \"do_nothing\"", $"low_confidence_behavior = \"{behavior}\""));
+            Assert.ThrowsException<InvalidDataException>(() => fixture.Storage.Load(fixture.Path));
+            fixture.Storage.Save(config);
+        }
+    }
+
+    [TestMethod]
     public void ApiDefaultsKeepFallbackOffAndRequireSecureCustomEndpoint()
     {
         var config = AppConfig.Default();

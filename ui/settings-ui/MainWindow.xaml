@@ -183,6 +183,7 @@
                                                           DisplayMemberPath="Label"
                                                           SelectedValuePath="Value"
                                                           SelectedValue="{Binding SelectedValue}"
+                                                          IsEnabled="{Binding IsAvailable}"
                                                           Visibility="{Binding IsDropdown, Converter={StaticResource BoolToVisibility}}" />
                                                 <Border Style="{StaticResource InputShell}"
                                                         Width="320"

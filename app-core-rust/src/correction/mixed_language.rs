@@ -115,6 +115,7 @@ mod tests {
             custom_dictionary: Vec::new(),
             protected_terms: Vec::new(),
             trigger_type: TriggerType::ManualShortcut,
+            suggestion_ui_available: false,
             confidence_behavior: ConfidenceBehaviorSettings {
                 high: ConfidenceBehavior::Silent,
                 medium: ConfidenceBehavior::Suggestion,

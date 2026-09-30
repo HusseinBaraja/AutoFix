@@ -4,6 +4,7 @@
 //! `CorrectionInput::executable_context`.
 
 mod api;
+mod confidence;
 mod contract;
 mod engines;
 pub(crate) mod language;

@@ -19,3 +19,10 @@ per-app entries (`process.exe=language-tag`), a policy for unknown text, and a
 separate mixed-language policy. Mixed text defaults to dominant-language-only,
 high-confidence typo edits. Correction can be disabled on mixed text; per-token
 correction requires the API engine.
+
+Confidence controls expose high and medium behavior (`silent`, `suggestion`,
+or `do_nothing`). High defaults to silent apply. Medium defaults to manual
+suggestions when suggestion UI is available; automatic triggers do nothing
+unless silent apply is selected. V1 has no suggestion UI, so medium suggestions
+currently do nothing. Low confidence is fixed to do nothing in a disabled
+control, and importing other low-confidence behaviors is rejected.

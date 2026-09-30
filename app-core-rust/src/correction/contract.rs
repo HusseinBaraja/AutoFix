@@ -26,9 +26,10 @@ pub enum GrammarCategory {
     Homophones,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfidenceBehavior {
+    #[default]
     DoNothing,
     Suggestion,
     Silent,
@@ -39,6 +40,16 @@ pub struct ConfidenceBehaviorSettings {
     pub high: ConfidenceBehavior,
     pub medium: ConfidenceBehavior,
     pub low: ConfidenceBehavior,
+}
+
+impl Default for ConfidenceBehaviorSettings {
+    fn default() -> Self {
+        Self {
+            high: ConfidenceBehavior::Silent,
+            medium: ConfidenceBehavior::Suggestion,
+            low: ConfidenceBehavior::DoNothing,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -135,6 +146,10 @@ pub struct CorrectionInput {
     pub protected_terms: Vec<String>,
     pub trigger_type: TriggerType,
     pub confidence_behavior: ConfidenceBehaviorSettings,
+    /// True only when the caller can display a suggestion for this request.
+    /// V1 has no suggestion UI, so omitted capabilities fail closed.
+    #[serde(default)]
+    pub suggestion_ui_available: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -236,6 +251,10 @@ pub struct CorrectionOutput {
     pub corrected_executable_text: String,
     pub changes_needed: bool,
     pub confidence: ConfidenceTier,
+    /// Only `Silent` authorizes automatic replacement. `Suggestion` requires
+    /// explicit user acceptance; `DoNothing` never authorizes replacement.
+    #[serde(default)]
+    pub behavior: ConfidenceBehavior,
     /// `None` means the engine cannot provide structured change details.
     pub changes: Option<Vec<CorrectionChange>>,
     /// Present whenever `changes_needed` is false.
@@ -245,7 +264,8 @@ pub struct CorrectionOutput {
 }
 
 impl CorrectionOutput {
-    /// Records a completed correction and optional structured edits.
+    /// Records a completed candidate and optional structured edits. Engines
+    /// must attach the confidence disposition before returning it to callers.
     pub fn changed(
         corrected_executable_text: String,
         confidence: ConfidenceTier,
@@ -256,6 +276,7 @@ impl CorrectionOutput {
             corrected_executable_text,
             changes_needed: true,
             confidence,
+            behavior: ConfidenceBehavior::DoNothing,
             changes,
             no_change_reason: None,
             engine_latency_ms,
@@ -274,6 +295,7 @@ impl CorrectionOutput {
             corrected_executable_text: executable_text,
             changes_needed: false,
             confidence,
+            behavior: ConfidenceBehavior::DoNothing,
             changes: Some(Vec::new()),
             no_change_reason: Some(reason),
             engine_latency_ms,
@@ -287,6 +309,7 @@ impl CorrectionOutput {
             corrected_executable_text: executable_text,
             changes_needed: false,
             confidence: ConfidenceTier::Low,
+            behavior: ConfidenceBehavior::DoNothing,
             changes: None,
             no_change_reason: Some(NoChangeReason::TimedOut),
             engine_latency_ms,
@@ -300,6 +323,7 @@ impl CorrectionOutput {
             corrected_executable_text: executable_text,
             changes_needed: false,
             confidence: ConfidenceTier::Low,
+            behavior: ConfidenceBehavior::DoNothing,
             changes: None,
             no_change_reason: Some(NoChangeReason::EngineError),
             engine_latency_ms,

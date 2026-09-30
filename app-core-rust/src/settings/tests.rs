@@ -62,6 +62,34 @@ fn default_config_has_requested_values() {
 }
 
 #[test]
+fn confidence_preferences_round_trip_and_feedback_only_disables_suggestions() {
+    let mut config = AppConfig::default();
+    let defaults = crate::correction::ConfidenceBehaviorSettings::default();
+    assert_eq!(config.confidence_behavior(), defaults);
+    config.feedback.show_medium_confidence_suggestions = false;
+    assert_eq!(
+        config.confidence_behavior().medium,
+        ConfidenceBehavior::DoNothing
+    );
+    config.correction.high_confidence_behavior = ConfidenceBehavior::DoNothing;
+    config.correction.medium_confidence_behavior = ConfidenceBehavior::Silent;
+    let encoded = config_to_toml(&config).unwrap();
+    let loaded = super::toml_io::parse_config(&encoded).unwrap();
+    assert_eq!(
+        loaded.correction.high_confidence_behavior,
+        ConfidenceBehavior::DoNothing
+    );
+    assert_eq!(
+        loaded.confidence_behavior().medium,
+        ConfidenceBehavior::Silent
+    );
+    assert_eq!(
+        loaded.confidence_behavior().low,
+        ConfidenceBehavior::DoNothing
+    );
+}
+
+#[test]
 fn generated_toml_has_comments_and_no_api_key_field() {
     let output = config_to_toml(&AppConfig::default()).unwrap();
 

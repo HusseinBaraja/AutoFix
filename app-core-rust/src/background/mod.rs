@@ -700,6 +700,7 @@ impl InputProcessor {
                 request.language_info = selection.info;
                 request.uncertain_language_policy = selection.policy;
                 request.mixed_language_policy = self.config.correction.mixed_language_policy;
+                request.confidence_behavior = self.config.confidence_behavior();
                 CorrectionEngineRouter::submit(request);
             }
         }

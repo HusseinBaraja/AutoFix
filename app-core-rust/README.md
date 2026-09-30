@@ -65,6 +65,21 @@ placeholders, so this engine is not yet invoked by live typing.
 Engine selection is explicit per request; neither local nor API routing depends
 on task difficulty, and both correction modes are accepted by every engine.
 
+Confidence decisions are shared by the local and API engines. High confidence
+defaults to silent apply. Medium confidence defaults to a suggestion only for a
+manual shortcut with an available suggestion UI; word-count, character, and
+final-fix triggers do nothing. Setting `correction.medium_confidence_behavior`
+to `silent` enables medium corrections for every trigger. Low confidence is
+always blocked, including requests that bypass config validation.
+`CorrectionInput.suggestion_ui_available` defaults to false; v1 has no suggestion
+UI. `feedback.show_medium_confidence_suggestions` can suppress manual suggestions
+when building the runtime policy, but never enables silent apply. Outputs include
+an explicit `behavior`: only `silent` authorizes replacement; `suggestion`
+requires user acceptance. Suppressed outputs preserve the original executable
+text and discard edit details. Local results prioritize silent edits over
+suggested edits when both occur in one request. The background router snapshots
+the saved confidence policy, but target replacement remains a placeholder.
+
 The keyboard session tracker is implemented. It keeps up to 4,096 characters
 typed during the current engine run in memory and exposes only the known text
 before the caret as executable context. Backspace, Delete, and plain Left/Right
