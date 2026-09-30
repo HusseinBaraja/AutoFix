@@ -101,6 +101,7 @@ impl TypedSession {
         self.typed[..self.caret].iter().collect()
     }
 
+    /// Clear tracked executable text and reset its caret without reading target content.
     pub(crate) fn clear_executable(&mut self) {
         self.typed.clear();
         self.caret = 0;

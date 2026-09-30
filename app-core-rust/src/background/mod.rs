@@ -410,6 +410,7 @@ impl InputWorker {
 }
 
 impl InputProcessor {
+    /// Snapshot hook position and input generations without reading target text.
     fn input_stamp() -> InputStamp {
         InputStamp {
             position: input_listener::current_position_generation(),
@@ -417,6 +418,7 @@ impl InputProcessor {
         }
     }
 
+    /// Defer completion until hook input is drained, then validate the live target and caret.
     fn finish_correction(&mut self) {
         // Frozen ranges may survive processed typing, but never guess what keys
         // still queued in the hooks did to the target.
@@ -644,6 +646,7 @@ impl InputProcessor {
         tracing::debug!(typed_chars, "typed session updated");
     }
 
+    /// Route configured shortcuts through security and snapshot validation.
     fn process_shortcut(&mut self, id: usize) {
         match GlobalShortcutListener::action_for_id(id) {
             Some(ShortcutAction::Correct) => {

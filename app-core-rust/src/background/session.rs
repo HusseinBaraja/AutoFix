@@ -149,10 +149,12 @@ impl Session {
         }
     }
 
+    /// Expose read-only context separately from editable typed text.
     pub(crate) fn informative_context(&self) -> &str {
         &self.informative_context
     }
 
+    /// Return the run-local session identity used to reject recreated sessions.
     pub(crate) fn id(&self) -> u64 {
         self.id
     }
@@ -203,6 +205,7 @@ impl Session {
         })
     }
 
+    /// Restore frozen text and invalidate correction ownership before resolving a new caret.
     fn mark_movement(&mut self, tracked_arrows_only: bool) {
         self.restore_pending();
         let old_executable: String = self
@@ -220,6 +223,7 @@ impl Session {
         self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
     }
 
+    /// Track session input while invalidating ranges whose caret or typed-text proof is lost.
     fn input(&mut self, input: TypedInput, limits: &ContextConfig) {
         if matches!(
             &input,
@@ -465,6 +469,7 @@ impl Session {
         }
     }
 
+    /// Invalidate the active typed range after focus or position becomes unreliable.
     fn deactivate(&mut self, reason: MovementSignal) {
         self.restore_pending();
         self.executable.focus(None);
@@ -497,6 +502,7 @@ impl Session {
         self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
     }
 
+    /// Queue a replacement only for an exact, stable typed suffix.
     pub(crate) fn queue_correction(&mut self, original: String, replacement: String) -> bool {
         if original.is_empty()
             || !self.executable_context().ends_with(&original)
@@ -518,6 +524,8 @@ impl Session {
         true
     }
 
+    /// Commit a queued replacement into read-only context and record its undo span.
+    /// The caller must confirm native replacement before invoking this session-only update.
     pub(crate) fn apply_next_correction(&mut self, limits: &ContextConfig) -> bool {
         let Some(correction) = self.pending_corrections.pop_front() else {
             return false;
@@ -567,6 +575,7 @@ impl Session {
         not(test),
         expect(dead_code, reason = "called after target undo succeeds")
     )]
+    /// Restore a recorded original in session context while preserving newer typed text.
     pub(crate) fn undo_last_correction(&mut self, limits: &ContextConfig) -> bool {
         let Some(last) = self.correction_undo_history.last().cloned() else {
             return false;
@@ -642,6 +651,7 @@ impl SessionManager {
         true
     }
 
+    /// Invalidate the active typed range after focus or position becomes unreliable.
     pub(crate) fn deactivate(&mut self, reason: MovementSignal) {
         if let Some(identity) = self.active.take() {
             if let Some(mut session) = self.sessions.remove(&identity) {
@@ -650,6 +660,7 @@ impl SessionManager {
         }
     }
 
+    /// Track session input while invalidating ranges whose caret or typed-text proof is lost.
     pub(crate) fn input(&mut self, input: TypedInput) -> bool {
         if let Some(identity) = self.active.as_ref() {
             if let Some(session) = self.sessions.get_mut(identity) {
@@ -680,6 +691,7 @@ impl SessionManager {
             })
     }
 
+    /// Replace read-only context and invalidate correction anchors tied to its old position.
     pub(crate) fn set_informative_context(&mut self, context: String) {
         let limits = self.limits.clone();
         if let Some(session) = self.active_mut() {
@@ -687,6 +699,7 @@ impl SessionManager {
         }
     }
 
+    /// Install a guarded initial capture while preserving frozen typed-range anchors.
     pub(crate) fn set_captured_informative_context(&mut self, context: String) {
         let limits = self.limits.clone();
         if self

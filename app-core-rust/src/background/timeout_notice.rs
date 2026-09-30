@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static VISIBLE: AtomicBool = AtomicBool::new(false);
 
+/// Provide platform timeout feedback without taking focus; unsupported platforms stay silent.
 pub(super) fn show() {
     if VISIBLE.swap(true, Ordering::AcqRel) {
         return;
@@ -36,6 +37,7 @@ mod native {
     const SS_CENTER: u32 = 0x1;
     const SS_CENTERIMAGE: u32 = 0x200;
 
+    /// Provide platform timeout feedback without taking focus; unsupported platforms stay silent.
     pub(super) fn show() {
         let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
         let text: Vec<u16> = "AutoFix: API correction timed out.\0"
@@ -102,6 +104,7 @@ mod tests {
         WS_DISABLED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     };
 
+    /// The native notice preserves foreground focus, coalesces duplicates, and dismisses itself.
     #[test]
     #[ignore = "requires an interactive Windows desktop; briefly displays the timeout notice"]
     fn native_timeout_notice_preserves_focus_and_dismisses_itself() {
@@ -138,5 +141,6 @@ mod tests {
 
 #[cfg(not(windows))]
 mod native {
+    /// Provide platform timeout feedback without taking focus; unsupported platforms stay silent.
     pub(super) fn show() {}
 }

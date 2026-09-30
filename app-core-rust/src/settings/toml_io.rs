@@ -81,6 +81,7 @@ pub(crate) fn save_config(path: impl AsRef<Path>, config: &AppConfig) -> Result<
     })
 }
 
+/// Describe configuration boundaries and queue defaults without serializing credentials.
 fn generated_comments() -> &'static str {
     r#"# AutoFix user configuration.
 # Store API keys in Windows Credential Manager, not in this TOML file.

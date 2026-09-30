@@ -273,6 +273,7 @@ fn bounded_request(
     outcome
 }
 
+/// Resolve provider credentials and execute at most one retry inside the shared deadline.
 fn correct_api_inner(
     config: &ApiEngineConfig,
     input: &CorrectionInput,
