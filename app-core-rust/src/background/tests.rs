@@ -87,7 +87,7 @@ fn delayed_key_from_previous_focus_cannot_enter_session() {
     assert!(processor.session_manager.active().is_none());
 }
 
-/// A later punctuation request keeps its full editable snapshot for validation.
+/// A punctuation trigger freezes the context even when more keys share its batch.
 #[test]
 fn later_character_trigger_keeps_full_editable_snapshot() {
     let config = AppConfig::default();
@@ -120,14 +120,97 @@ fn later_character_trigger_keeps_full_editable_snapshot() {
     processor.track_input(super::typing::TypedInput::Text(".".into()), &mut pending);
 
     assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].request.executable_context, " Next.");
+    assert_eq!(pending[0].request.executable_context, "First. Next.");
     assert_eq!(pending[0].editable_snapshot, "First. Next.");
     assert!(pending[0].matches_session(processor.session_manager.active().unwrap()));
 
     processor
         .session_manager
         .input(super::typing::TypedInput::Text(" More".into()));
-    assert!(!pending[0].matches_session(processor.session_manager.active().unwrap()));
+    assert!(pending[0].matches_session(processor.session_manager.active().unwrap()));
+    assert_eq!(
+        processor
+            .session_manager
+            .active()
+            .unwrap()
+            .editable_context(),
+        " More"
+    );
+}
+
+#[test]
+fn automatic_triggers_in_one_batch_obey_capacity_and_overflow_policy() {
+    for policy in [
+        crate::settings::PendingQueueFullBehavior::SkipNew,
+        crate::settings::PendingQueueFullBehavior::CancelOldest,
+        crate::settings::PendingQueueFullBehavior::MergeNewest,
+    ] {
+        let mut config = AppConfig::default();
+        config.context.pending_queue_full_behavior = policy;
+        let mut processor = super::InputProcessor {
+            pipeline: super::CorrectionPipeline::new().unwrap(),
+            processed_input_sequence: super::input_listener::current_input_sequence(),
+            session_manager: super::SessionManager::new(config.context.clone()),
+            config,
+            database: crate::storage::Database::open_memory().unwrap(),
+        };
+        let target = super::target::FocusedTarget {
+            process_id: 1,
+            process_name: "notepad.exe".into(),
+            window_handle: 1,
+            window_title: "Notes".into(),
+            focused_element_id: None,
+            is_elevated: false,
+            is_password_or_protected: false,
+            is_hidden_or_unavailable: false,
+            field_safety_known: true,
+            is_secure_desktop: false,
+            is_lock_screen: false,
+            is_credential_dialog: false,
+        };
+        processor.session_manager.focus(&target);
+        let mut pending = Vec::new();
+        processor.track_input(
+            super::typing::TypedInput::Text("first.".into()),
+            &mut pending,
+        );
+        processor.track_input(
+            super::typing::TypedInput::Text(" next.".into()),
+            &mut pending,
+        );
+        let session = processor.session_manager.active().unwrap();
+        let valid: Vec<_> = pending
+            .iter()
+            .filter(|request| request.matches_session(session))
+            .collect();
+        match policy {
+            crate::settings::PendingQueueFullBehavior::SkipNew => {
+                assert_eq!(valid.len(), 1);
+                assert_eq!(valid[0].request.executable_context, "first.");
+                assert_eq!(session.editable_context(), " next.");
+            }
+            crate::settings::PendingQueueFullBehavior::CancelOldest => {
+                assert_eq!(valid.len(), 1);
+                assert_eq!(valid[0].request.executable_context, " next.");
+                assert_eq!(valid[0].request.informative_context, "first.");
+                assert_eq!(session.editable_context(), "");
+            }
+            crate::settings::PendingQueueFullBehavior::MergeNewest => {
+                assert!(valid.is_empty());
+                assert_eq!(session.editable_context(), "first. next.");
+                processor.track_input(
+                    super::typing::TypedInput::Text(" last.".into()),
+                    &mut pending,
+                );
+                let session = processor.session_manager.active().unwrap();
+                assert!(pending.last().unwrap().matches_session(session));
+                assert_eq!(
+                    pending.last().unwrap().request.executable_context,
+                    "first. next. last."
+                );
+            }
+        }
+    }
 }
 
 #[test]

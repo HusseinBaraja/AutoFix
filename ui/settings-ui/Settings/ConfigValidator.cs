@@ -29,6 +29,12 @@ public static class ConfigValidator
         RequirePositive("context.informative_context_max_chars", config.Context.InformativeContextMaxChars);
         RequirePositive("context.informative_context_min_words", config.Context.InformativeContextMinWords);
         RequirePositive("context.executable_context_max_words", config.Context.ExecutableContextMaxWords);
+        if (config.Context.PendingQueueSize is < 1 or > 16)
+        {
+            throw Invalid("context.pending_queue_size", "must be between 1 and 16");
+        }
+        RequireChoice("context.pending_queue_full_behavior", config.Context.PendingQueueFullBehavior,
+            new HashSet<string> { "skip_new", "cancel_oldest", "merge_newest" });
         ValidateCorrection(config);
         ValidateApi(config);
         ValidateLogging(config);

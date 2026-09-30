@@ -37,6 +37,12 @@ impl Error for ConfigValidationError {}
 
 impl ValidateConfig for AppConfig {
     fn validate(&self) -> Result<(), ConfigValidationError> {
+        if !(1..=16).contains(&self.context.pending_queue_size) {
+            return Err(ConfigValidationError::new(
+                "context.pending_queue_size",
+                "must be between 1 and 16",
+            ));
+        }
         validate_shortcut("shortcuts.correct", &self.shortcuts.correct)?;
         validate_shortcut("shortcuts.undo", &self.shortcuts.undo)?;
         validate_shortcuts_do_not_conflict(self)?;

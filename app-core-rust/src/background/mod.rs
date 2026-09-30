@@ -113,9 +113,13 @@ struct PendingTrigger {
 }
 
 impl PendingTrigger {
-    /// Reject a request if later input changed its original editable scope.
+    /// Frozen ranges survive later typing; unsegmented requests require an exact snapshot.
     fn matches_session(&self, session: &session::Session) -> bool {
-        self.editable_snapshot == session.editable_context()
+        self.request.session_id == session.id()
+            && self.request.pending_segment_id.map_or_else(
+                || self.editable_snapshot == session.editable_context(),
+                |id| session.pending_matches(id, &self.request.executable_context),
+            )
     }
 }
 
@@ -323,6 +327,9 @@ impl InputWorker {
                         InputWork::Tick => processor.session_manager.prune_exited(),
                         InputWork::Config(config) => {
                             processor.pipeline.cancel();
+                            if let Some(session) = processor.session_manager.active_mut() {
+                                session.restore_pending();
+                            }
                             processor
                                 .session_manager
                                 .update_limits(config.context.clone());
@@ -410,6 +417,11 @@ impl InputProcessor {
     }
 
     fn finish_correction(&mut self) {
+        // Frozen ranges may survive processed typing, but never guess what keys
+        // still queued in the hooks did to the target.
+        if Self::input_stamp().sequence != self.processed_input_sequence {
+            return;
+        }
         let config = &self.config;
         let database = &self.database;
         self.pipeline.finish(
@@ -429,6 +441,7 @@ impl InputProcessor {
         let mut pending_requests = Vec::new();
         let mut gate_result: Option<(isize, bool)> = None;
         let mut needs_capture = false;
+        let mut captured_prefix = None;
         let mut last_key_generation = None;
         let mut last_key_sequence = None;
         for event in events {
@@ -568,7 +581,12 @@ impl InputProcessor {
                         &executable,
                         &self.config.context,
                     );
-                    self.session_manager.set_informative_context(context);
+                    self.session_manager
+                        .set_captured_informative_context(context);
+                    captured_prefix = self
+                        .session_manager
+                        .active()
+                        .map(|session| session.informative_context().to_owned());
                 }
             }
         }
@@ -584,7 +602,11 @@ impl InputProcessor {
                 for mut pending in pending_requests {
                     if pending.matches_session(session) {
                         let request = &mut pending.request;
-                        request.informative_context = session.informative_context().to_owned();
+                        if request.pending_segment_id.is_none() {
+                            request.informative_context = session.informative_context().to_owned();
+                        } else if let Some(prefix) = &captured_prefix {
+                            request.informative_context.insert_str(0, prefix);
+                        }
                         request.versions = session.versions();
                         ready_requests.push(pending.request);
                     }
@@ -631,6 +653,10 @@ impl InputProcessor {
                         self.session_manager.focus(&target);
                     }
                     if self.session_manager.active_matches(&target) {
+                        self.pipeline.cancel();
+                        if let Some(session) = self.session_manager.active_mut() {
+                            session.restore_pending();
+                        }
                         if let Some(session) = self.session_manager.active() {
                             let executable = session.editable_context();
                             let sequence = input_listener::current_input_sequence();
@@ -696,23 +722,33 @@ impl InputProcessor {
         };
         let needs_capture = self.session_manager.input(input);
         if let (Some(before), Some(inserted), Some(session)) =
-            (before, inserted, self.session_manager.active())
+            (before, inserted, self.session_manager.active_mut())
         {
             if !session.position_uncertain() {
                 let editable_snapshot = session.editable_context();
-                if let Some(request) = triggers::automatic(
+                if let Some(mut request) = triggers::automatic(
                     session.id(),
                     &before,
                     &editable_snapshot,
                     &inserted,
-                    session.informative_context(),
+                    &session.correction_informative_context(),
                     session.versions(),
                     &self.config,
                 ) {
-                    pending.push(PendingTrigger {
-                        editable_snapshot,
-                        request,
-                    });
+                    // Freeze the entire current context, including earlier
+                    // skipped boundaries. New keys belong to a fresh context.
+                    request.executable_context = editable_snapshot.clone();
+                    let (segment, cancelled) = session.freeze_pending(&self.config.context);
+                    if let Some(id) = cancelled {
+                        self.pipeline.cancel_segment(id);
+                    }
+                    if let Some(id) = segment {
+                        request.pending_segment_id = Some(id);
+                        pending.push(PendingTrigger {
+                            editable_snapshot,
+                            request,
+                        });
+                    }
                 }
             }
         }
@@ -720,9 +756,21 @@ impl InputProcessor {
     }
 
     /// Recheck the focused target and trigger permission before routing.
-    fn dispatch_trigger(&mut self, mut request: CorrectionRequest, stamp: InputStamp) {
+    fn dispatch_trigger(&mut self, request: CorrectionRequest, stamp: InputStamp) {
+        let frozen = request.pending_segment_id.is_some();
+        if !self.try_dispatch_trigger(request, stamp) && frozen {
+            // A failed live gate must not strand a reserved slot.
+            self.pipeline.cancel();
+            if let Some(session) = self.session_manager.active_mut() {
+                session.restore_pending();
+            }
+        }
+    }
+
+    fn try_dispatch_trigger(&mut self, mut request: CorrectionRequest, stamp: InputStamp) -> bool {
+        self.pipeline.invalidate(&self.session_manager, stamp);
         if !self.config.correction.enabled || stamp != Self::input_stamp() {
-            return;
+            return false;
         }
         if let SecurityDecision::Allowed { target } =
             SecurityGate::check(request.trigger, &self.config, &self.database)
@@ -770,16 +818,20 @@ impl InputProcessor {
                     Ok(entries) => entries,
                     Err(error) => {
                         tracing::warn!(%error, "correction skipped: dictionary unavailable");
-                        return;
+                        return false;
                     }
                 };
                 if stamp != Self::input_stamp() {
-                    return;
+                    return false;
                 }
                 if let Some(session) = self.session_manager.active() {
-                    if request.session_id != session.id() || request.versions != session.versions()
+                    if request.session_id != session.id()
+                        || request.pending_segment_id.map_or_else(
+                            || request.versions != session.versions(),
+                            |id| !session.pending_matches(id, &request.executable_context),
+                        )
                     {
-                        return;
+                        return false;
                     }
                     let manual = request.trigger == TriggerKind::ManualShortcut;
                     tracing::debug!(session_id = request.session_id, ?request.versions,
@@ -791,9 +843,11 @@ impl InputProcessor {
                         self.pipeline.wait_manual();
                         self.finish_correction();
                     }
+                    return true;
                 }
             }
         }
+        false
     }
 
     fn security_allows(&self, trigger: TriggerKind, database: &Database) -> bool {

@@ -78,6 +78,8 @@ fn generated_comments() -> &'static str {
 # Store API keys in Windows Credential Manager, not in this TOML file.
 # Shortcut format uses key names joined by '+', for example Ctrl+Alt+Space.
 # Correction streaming stays disabled because corrections need bounded latency.
+# Pending queue size counts running and waiting corrections per session (1 to 16).
+# Full queue: skip_new, cancel_oldest, or merge_newest and wait for the next trigger.
 
 "#
 }

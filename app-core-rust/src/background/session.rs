@@ -11,6 +11,9 @@ use super::{
 };
 use crate::settings::ContextConfig;
 
+mod pending;
+use pending::FrozenSegment;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct SessionIdentity {
     // Keep the owner even for focused-element and window keys. IDs and HWNDs
@@ -55,6 +58,8 @@ pub(crate) struct Session {
     versions: ContextVersions,
     pending_movement: Option<PendingMovement>,
     correction_floor: usize,
+    frozen_segments: VecDeque<FrozenSegment>,
+    next_segment_id: u64,
 }
 
 struct PendingMovement {
@@ -139,6 +144,8 @@ impl Session {
             versions: ContextVersions::default(),
             pending_movement: None,
             correction_floor: 0,
+            frozen_segments: VecDeque::new(),
+            next_segment_id: 1,
         }
     }
 
@@ -197,6 +204,7 @@ impl Session {
     }
 
     fn mark_movement(&mut self, tracked_arrows_only: bool) {
+        self.restore_pending();
         let old_executable: String = self
             .executable_context()
             .chars()
@@ -253,6 +261,7 @@ impl Session {
             && self.correction_floor > 0
             && self.executable_context().chars().count() <= self.correction_floor
         {
+            self.frozen_segments.clear();
             self.executable.invalidate(MovementSignal::UnknownPosition);
             self.correction_floor = 0;
             self.informative_context.clear();
@@ -266,13 +275,32 @@ impl Session {
         }
         let is_text_edit = matches!(&input, TypedInput::Text(value) if !value.is_empty())
             || matches!(&input, TypedInput::Backspace | TypedInput::Delete);
+        let previous = self.executable_context();
+        let appended = match &input {
+            TypedInput::Text(text) => Some(format!("{previous}{text}")),
+            _ => None,
+        };
         self.executable.input(input);
+        // The typed buffer is bounded. Losing its oldest characters loses the
+        // proof for every frozen range, even if a repeated prefix looks equal.
+        if appended.is_some_and(|expected| expected != self.executable_context()) {
+            self.restore_pending();
+            self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
+        }
+        if self
+            .frozen_segments
+            .front()
+            .is_some_and(|segment| !self.pending_matches(segment.id(), segment.original()))
+        {
+            self.restore_pending();
+            self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
+        }
         if is_text_edit {
             self.versions.context = self.versions.context.wrapping_add(1);
             self.versions.executable = self.versions.executable.wrapping_add(1);
             self.pending_corrections.clear();
         }
-        if self.executable_context().split_whitespace().count()
+        if self.editable_context().split_whitespace().count()
             > usize::from(limits.executable_context_max_words)
         {
             self.commit_executable(limits);
@@ -408,6 +436,7 @@ impl Session {
 
     /// Move only known text before the caret into read-only context.
     fn commit_executable(&mut self, limits: &ContextConfig) {
+        self.restore_pending();
         let observed: String = self
             .executable_context()
             .chars()
@@ -437,6 +466,7 @@ impl Session {
     }
 
     fn deactivate(&mut self, reason: MovementSignal) {
+        self.restore_pending();
         self.executable.focus(None);
         self.executable.invalidate(reason);
         self.pending_movement = None;
@@ -458,6 +488,7 @@ impl Session {
     /// Reanchor the read-only prefix at the current caret. Executable typing
     /// already observed in this input batch remains a separate segment.
     fn set_informative_context(&mut self, context: String, limits: &ContextConfig) {
+        self.restore_pending();
         self.informative_context = context;
         self.shrink_informative(limits);
         self.pending_corrections.clear();
@@ -545,6 +576,7 @@ impl Session {
         if original.is_empty() || versions != self.versions {
             return false;
         }
+        self.restore_pending();
         self.informative_context.clear();
         self.informative_context.push_str(preceding);
         self.informative_context.push_str(replacement);
@@ -588,7 +620,7 @@ impl Session {
         expect(dead_code, reason = "called after target undo succeeds")
     )]
     pub(crate) fn undo_last_correction(&mut self, limits: &ContextConfig) -> bool {
-        let Some(last) = self.correction_undo_history.last() else {
+        let Some(last) = self.correction_undo_history.last().cloned() else {
             return false;
         };
         if last.caret_anchor != self.versions.caret_anchor {
@@ -599,6 +631,7 @@ impl Session {
         if self.informative_context.get(start..end) != Some(last.replacement.as_str()) {
             return false;
         }
+        self.restore_pending();
         self.informative_context
             .replace_range(start..end, &last.original);
         self.correction_undo_history.pop();
@@ -672,8 +705,8 @@ impl SessionManager {
     pub(crate) fn input(&mut self, input: TypedInput) -> bool {
         if let Some(identity) = self.active.as_ref() {
             if let Some(session) = self.sessions.get_mut(identity) {
-                let backspace_into_informative = matches!(input, TypedInput::Backspace)
-                    && session.executable_context().is_empty();
+                let backspace_into_informative =
+                    matches!(input, TypedInput::Backspace) && session.editable_context().is_empty();
                 session.input(input, &self.limits);
                 return backspace_into_informative;
             }
@@ -703,6 +736,20 @@ impl SessionManager {
         let limits = self.limits.clone();
         if let Some(session) = self.active_mut() {
             session.set_informative_context(context, &limits);
+        }
+    }
+
+    pub(crate) fn set_captured_informative_context(&mut self, context: String) {
+        let limits = self.limits.clone();
+        if self
+            .active()
+            .is_some_and(|session| !session.frozen_segments.is_empty())
+        {
+            self.active_mut()
+                .unwrap()
+                .set_captured_informative_context(context, &limits);
+        } else {
+            self.set_informative_context(context);
         }
     }
 

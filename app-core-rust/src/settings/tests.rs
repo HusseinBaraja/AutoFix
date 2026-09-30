@@ -25,6 +25,11 @@ fn default_config_has_requested_values() {
     assert_eq!(config.context.initial_context_boundary_chars, vec!["."]);
     assert_eq!(config.context.forward_movement_word_limit, 5);
     assert_eq!(config.context.informative_context_min_words, 25);
+    assert_eq!(config.context.pending_queue_size, 1);
+    assert_eq!(
+        config.context.pending_queue_full_behavior,
+        super::PendingQueueFullBehavior::SkipNew
+    );
     assert!(!config.onboarding.completed);
     assert!(config.correction.enabled);
     assert_eq!(config.correction.mode, CorrectionMode::TyposOnly);
@@ -60,6 +65,41 @@ fn default_config_has_requested_values() {
     assert!(!config.logging.redacted_debug_mode_enabled);
     assert!(!config.logging.full_text_debug_mode_enabled);
     assert_eq!(config.logging.log_retention_days, None);
+}
+
+#[test]
+fn pending_queue_settings_round_trip_and_legacy_configs_get_safe_defaults() {
+    for behavior in [
+        super::PendingQueueFullBehavior::SkipNew,
+        super::PendingQueueFullBehavior::CancelOldest,
+        super::PendingQueueFullBehavior::MergeNewest,
+    ] {
+        let mut config = AppConfig::default();
+        config.context.pending_queue_size = 4;
+        config.context.pending_queue_full_behavior = behavior;
+        let toml = config_to_toml(&config).unwrap();
+        let restored = super::toml_io::parse_config(&toml).unwrap();
+        assert_eq!(restored.context, config.context);
+        let legacy = toml
+            .lines()
+            .filter(|line| !line.starts_with("pending_queue_"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let restored = super::toml_io::parse_config(&legacy).unwrap();
+        assert_eq!(restored.context.pending_queue_size, 1);
+        assert_eq!(
+            restored.context.pending_queue_full_behavior,
+            super::PendingQueueFullBehavior::SkipNew
+        );
+    }
+    for size in [0, 17, u16::MAX] {
+        let mut config = AppConfig::default();
+        config.context.pending_queue_size = size;
+        assert_eq!(
+            config.validate().unwrap_err().field(),
+            "context.pending_queue_size"
+        );
+    }
 }
 
 /// Confidence preferences survive TOML while feedback can suppress, never silently apply, suggestions.

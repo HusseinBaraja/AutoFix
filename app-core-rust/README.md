@@ -108,7 +108,8 @@ The trigger manager now builds correction requests for the configured manual
 shortcut, completed word-count thresholds, and configured characters. Each
 request carries read-only informative context and known executable text before
 the caret, except for the explicit selected-text option below. Character triggers
-scope the request to the latest completed segment. The manual shortcut accepts
+freeze the entire current executable segment, including earlier skipped
+boundaries. The manual shortcut accepts
 a selected span when UI Automation proves it belongs to the typed segment.
 An outside or unreadable selection blocks
 the shortcut by default. The `shortcuts.correct_arbitrary_selection` setting is
@@ -139,7 +140,8 @@ corrections, correction undo history, and context, executable, and caret-anchor
 versions. Captured field text may enter informative context; executable context
 contains only text typed during the current engine run.
 On a successful correction, corrected text becomes read-only informative
-context and executable context clears. A trigger or final fix with no changes
+context. Automatic correction retires only its frozen segment and preserves newer
+executable text. A manual trigger or final fix with no changes
 does the same with the original text. Exceeding the configured executable word
 limit also commits the current segment. New typing starts a fresh executable
 segment. Undo restores the corrected span in informative context to its
@@ -161,8 +163,21 @@ their owning process exits. All session state disappears on engine exit or
 termination and is never written to disk. The replacement engine remains a
 placeholder; session completion methods do not themselves change target text.
 
-The correction pipeline uses one worker, one replaceable queued request, and one
-completion slot. Automatic triggers never wait for correction. Manual shortcuts
+The correction pipeline uses one worker, a FIFO of requests, and one completion
+slot with backpressure so results cannot overwrite each other. Each session has
+one active executable context and a bounded pending correction queue.
+`context.pending_queue_size` defaults to 1 and accepts 1 through 16; the limit
+includes running work. Automatic triggers freeze the current executable context
+before processing subsequent typing, including keys in the same input batch.
+New typing starts a fresh executable context while correction runs asynchronously.
+`context.pending_queue_full_behavior` defaults to `skip_new`, which skips the
+new automatic trigger and retains current typing. `cancel_oldest` cancels the
+oldest pending request, retires its original text into informative context, and
+admits the new segment. `merge_newest` cancels the newest pending request, merges
+its typed text back into the active executable context, and waits for the next
+trigger. Manual correction cancels pending work and restores its original text
+to the active context before taking its selection or caret snapshot.
+Automatic triggers never wait for correction. Manual shortcuts
 can wait up to 20 ms on the input processor, then continue asynchronously. Hooks
 and the Windows message loop remain independent. Pending hook input is drained
 before a manual snapshot. Every request includes a unique memory-only session ID,
@@ -170,16 +185,25 @@ context/executable/caret-anchor versions, trigger, engine kind, and correction m
 Grammar, language, confidence, dictionary, and API settings are snapshotted for
 engine execution. Following selected text stays informative.
 
-V1 conservatively cancels on any new hook input. Results are discarded if the
-editable snapshot or any version changes, the session changes or disappears,
-focus/caret generation changes, executable context commits, configuration reloads,
-or another request supersedes the work. Cancellation prevents queued work from
+Frozen results survive processed typing and backspace confined to the new active
+context. The tracker retains the original typed ranges and supplies the replacement
+owner with the known following text up to the current caret, which must be verified
+and preserved when replacing an earlier segment. Manual snapshots still require
+exact versions, editable text, and input sequence. Frozen results are discarded if
+their range is no longer known, the session changes or disappears, focus/caret
+generation changes, movement occurs, backspace crosses a frozen boundary, the
+typed buffer evicts its anchor, executable context commits, or configuration reloads.
+Cancellation prevents queued work from
 starting and suppresses late publication; a running synchronous API transport can
 finish within its configured timeout. Completion rechecks the live security gate
-and focused target, then input generations again after those checks. Results are
+and focused target, then input generations again after those checks. Completions
+wait for hook input to be processed and retire frozen ranges in document order.
+Failed, suppressed, or refused frozen results release their slot and retire the
+original text without applying engine output. Results are
 consumed once. Only completed silent corrections above low confidence reach the
-replacement boundary. Failures and suppressed edits do not commit executable
-context. Tests cover delayed engines, stale and reordered results, queued input,
+replacement boundary. Failed and suppressed manual edits do not commit executable
+context. Tests cover delayed engines, frozen queues and overflow policies,
+manual override, stale and reordered results, queued input,
 secure targets, failed replacement, selection boundaries, and commit/undo after
 confirmed replacement. Native mutation, clipboard recovery, and real target undo
 still require the replacement feature.

@@ -5,6 +5,27 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class ConfigStorageTests
 {
+    [TestMethod]
+    public void PendingQueueSettingsPersistAndLegacyFilesDefaultToOneAndSkip()
+    {
+        using var fixture = TempConfigFixture.Create();
+        foreach (var policy in new[] { "skip_new", "cancel_oldest", "merge_newest" })
+        {
+            var config = AppConfig.Default();
+            config.Context.PendingQueueSize = 4;
+            config.Context.PendingQueueFullBehavior = policy;
+            fixture.Storage.Save(config);
+            var loaded = fixture.Storage.Load(fixture.Path);
+            Assert.AreEqual(4, loaded.Context.PendingQueueSize);
+            Assert.AreEqual(policy, loaded.Context.PendingQueueFullBehavior);
+        }
+        var legacy = File.ReadAllLines(fixture.Path).Where(line => !line.StartsWith("pending_queue_"));
+        File.WriteAllLines(fixture.Path, legacy);
+        var defaults = fixture.Storage.Load(fixture.Path);
+        Assert.AreEqual(1, defaults.Context.PendingQueueSize);
+        Assert.AreEqual("skip_new", defaults.Context.PendingQueueFullBehavior);
+    }
+
     /// <summary>Saved confidence choices round-trip and imported unsafe low-tier behavior fails validation.</summary>
     [TestMethod]
     public void ConfidenceSettingsRoundTripAndRejectUnsafeLowBehavior()

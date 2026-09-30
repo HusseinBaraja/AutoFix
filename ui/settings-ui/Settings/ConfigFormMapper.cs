@@ -69,6 +69,8 @@ public static class ConfigFormMapper
         config.Context.InformativeContextMaxChars = Int(values, "context.informative_context_max_chars");
         config.Context.InformativeContextMinWords = Int(values, "context.informative_context_min_words");
         config.Context.ExecutableContextMaxWords = Int(values, "context.executable_context_max_words");
+        config.Context.PendingQueueSize = Int(values, "context.pending_queue_size");
+        config.Context.PendingQueueFullBehavior = Dropdown(values, "context.pending_queue_full_behavior");
     }
 
     /// <summary>Maps correction cards to config and clears grammar permissions in typos-only mode.</summary>

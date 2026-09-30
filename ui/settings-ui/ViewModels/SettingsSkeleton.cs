@@ -131,6 +131,9 @@ public static class SettingsSkeleton
             Text("Informative context max chars", "Maximum read-only context characters.", "context.informative_context_max_chars", config.Context.InformativeContextMaxChars.ToString(CultureInfo.InvariantCulture)),
             Text("Informative context min words", "Recent words preserved during shrinking when they fit the character budget.", "context.informative_context_min_words", config.Context.InformativeContextMinWords.ToString(CultureInfo.InvariantCulture)),
             Text("Executable context max words", "Maximum editable words in correction scope.", "context.executable_context_max_words", config.Context.ExecutableContextMaxWords.ToString(CultureInfo.InvariantCulture)),
+            Text("Pending correction queue size", "Advanced: running and waiting corrections per session, from 1 to 16. Default: 1.", "context.pending_queue_size", config.Context.PendingQueueSize.ToString(CultureInfo.InvariantCulture)),
+            Dropdown("When the pending queue is full", "Skip the new trigger; cancel the oldest; or merge the newest pending segment with current typing and wait for the next trigger.", "context.pending_queue_full_behavior", config.Context.PendingQueueFullBehavior,
+                [new("Skip new correction", "skip_new"), new("Cancel oldest correction", "cancel_oldest"), new("Merge newest and wait", "merge_newest")]),
         ]),
         Section("Feedback", "Tray notices and correction feedback",
         [

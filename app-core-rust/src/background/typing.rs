@@ -106,6 +106,17 @@ impl TypedSession {
         self.caret = 0;
     }
 
+    /// Retire a verified prefix without touching newer typing or text after the caret.
+    pub(crate) fn retire_prefix(&mut self, original: &str) -> bool {
+        let prefix: Vec<char> = original.chars().collect();
+        if prefix.len() > self.caret || !self.typed.starts_with(&prefix) {
+            return false;
+        }
+        self.typed.drain(..prefix.len());
+        self.caret -= prefix.len();
+        true
+    }
+
     pub(crate) fn set_caret(&mut self, caret: usize) -> bool {
         if caret > self.typed.len() {
             return false;

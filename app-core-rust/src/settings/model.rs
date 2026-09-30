@@ -103,6 +103,10 @@ impl Default for TriggersConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ContextConfig {
+    #[serde(default = "default_pending_queue_size")]
+    pub(crate) pending_queue_size: u16,
+    #[serde(default)]
+    pub(crate) pending_queue_full_behavior: PendingQueueFullBehavior,
     pub(crate) initial_context_words: u16,
     pub(crate) initial_context_boundary_chars: Vec<String>,
     pub(crate) forward_movement_word_limit: u16,
@@ -114,6 +118,8 @@ pub(crate) struct ContextConfig {
 impl Default for ContextConfig {
     fn default() -> Self {
         Self {
+            pending_queue_size: 1,
+            pending_queue_full_behavior: PendingQueueFullBehavior::SkipNew,
             initial_context_words: 25,
             initial_context_boundary_chars: vec![".".to_owned()],
             forward_movement_word_limit: 5,
@@ -122,6 +128,19 @@ impl Default for ContextConfig {
             executable_context_max_words: 80,
         }
     }
+}
+
+fn default_pending_queue_size() -> u16 {
+    1
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PendingQueueFullBehavior {
+    #[default]
+    SkipNew,
+    CancelOldest,
+    MergeNewest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

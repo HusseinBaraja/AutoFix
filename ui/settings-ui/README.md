@@ -26,3 +26,9 @@ suggestions when suggestion UI is available; automatic triggers do nothing
 unless silent apply is selected. V1 has no suggestion UI, so medium suggestions
 currently do nothing. Low confidence is fixed to do nothing in a disabled
 control, and importing other low-confidence behaviors is rejected.
+
+Context settings expose the pending correction queue. Capacity defaults to one
+and accepts 1 through 16 running or waiting corrections per session. The full
+queue choice defaults to skipping the new automatic trigger; alternatives cancel
+the oldest correction or merge the newest pending segment with current typing
+and wait for the next trigger. These values round-trip through TOML and IPC.

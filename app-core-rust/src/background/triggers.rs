@@ -9,6 +9,10 @@ use crate::settings::AppConfig;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CorrectionRequest {
+    pub(super) pending_segment_id: Option<u64>,
+    /// Known typed text between a frozen range and the current caret. A native
+    /// replacement owner must verify and preserve this text when targeting it.
+    pub(super) replacement_following_text: String,
     pub(super) session_id: u64,
     pub(super) engine: EngineKind,
     pub(super) mode: CorrectionMode,
@@ -163,6 +167,8 @@ fn request(
     config: &AppConfig,
 ) -> Option<CorrectionRequest> {
     (!executable.trim().is_empty()).then(|| CorrectionRequest {
+        pending_segment_id: None,
+        replacement_following_text: String::new(),
         session_id,
         engine: match config.correction.engine {
             crate::settings::CorrectionEngine::Local => EngineKind::LocalRule,

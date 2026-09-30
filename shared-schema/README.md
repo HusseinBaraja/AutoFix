@@ -25,10 +25,22 @@ both the Rust engine and settings UI, including complete extension and private-u
 subtags. Registry membership is not checked. `language-tag-cases.json` is the shared
 validation corpus; both test suites cover it through the config storage paths.
 
+Pending correction settings live in the existing `[context]` TOML section:
+`pending_queue_size` defaults to 1 and accepts 1 through 16, counting running and
+waiting requests per session. `pending_queue_full_behavior` accepts `skip_new`
+(default), `cancel_oldest`, and `merge_newest`. Merge cancels the newest pending
+request, restores its typed text into the active context alongside new typing,
+and waits for the next automatic trigger. Older settings files default to one
+pending correction and skipping new triggers. Queue contents remain memory-only.
+
 The live replacement consumer is still a placeholder. Before enabling it, the
 mutation owner must enforce `silent` or explicit acceptance of a suggestion and
 recheck process, focused target, security gate, caret, and context/executable
-versions immediately before replacement. Informative context stays read-only;
+versions immediately before manual replacement. Frozen automatic replacements
+validate their session, segment identity, original typed range, caret anchor,
+and known following text instead of requiring unchanged active context versions.
+They wait for queued hook input and recheck generations after live security calls.
+Informative context stays read-only;
 replacement stays within the verified executable span and never alters text
 after the caret. Preserve the clipboard and record app-level undo only after
 successful replacement.

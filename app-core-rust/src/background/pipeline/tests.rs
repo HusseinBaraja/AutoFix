@@ -64,6 +64,283 @@ fn submit(pipeline: &mut CorrectionPipeline, manager: &SessionManager, config: &
     );
 }
 
+fn submit_frozen(
+    pipeline: &mut CorrectionPipeline,
+    manager: &mut SessionManager,
+    config: &AppConfig,
+) -> u64 {
+    let mut request = request(manager, config);
+    request.trigger = TriggerKind::WordCount;
+    request.informative_context = manager.active().unwrap().correction_informative_context();
+    let (segment, cancelled) = manager
+        .active_mut()
+        .unwrap()
+        .freeze_pending(&config.context);
+    if let Some(id) = cancelled {
+        pipeline.cancel_segment(id);
+    }
+    let id = segment.unwrap();
+    request.pending_segment_id = Some(id);
+    pipeline.submit(
+        request,
+        manager.active().unwrap(),
+        target(),
+        STAMP,
+        config,
+        Vec::new(),
+    );
+    id
+}
+
+#[test]
+fn delayed_frozen_corrections_keep_all_results_and_preserve_newer_typing() {
+    let mut config = AppConfig::default();
+    config.context.pending_queue_size = 2;
+    let mut manager = manager(&config, "teh");
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let mut pipeline = CorrectionPipeline::start(move |job| {
+        started_tx.send(job.id).unwrap();
+        release_rx.recv().unwrap();
+        CorrectionEngines::default().correct_with(job.request.engine, &job.input)
+    })
+    .unwrap();
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    manager.input(TypedInput::Text(" teh".into()));
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    manager.input(TypedInput::Text(" 尾".into()));
+    let stamp = InputStamp {
+        sequence: STAMP.sequence + 5,
+        ..STAMP
+    };
+    pipeline.invalidate(&manager, stamp);
+    assert_eq!(pipeline.active.len(), 2);
+    release_tx.send(()).unwrap();
+    wait_completion(&pipeline);
+    let expected_tail = " teh 尾";
+    assert!(pipeline.finish(
+        &mut manager,
+        &config.context,
+        || stamp,
+        |_| Some(target()),
+        |_, request, _| {
+            assert_eq!(request.replacement_following_text, expected_tail);
+            true
+        }
+    ));
+    started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    release_tx.send(()).unwrap();
+    wait_completion(&pipeline);
+    assert!(pipeline.finish(
+        &mut manager,
+        &config.context,
+        || stamp,
+        |_| Some(target()),
+        |_, request, _| {
+            assert_eq!(request.executable_context, " teh");
+            assert_eq!(request.replacement_following_text, " 尾");
+            true
+        }
+    ));
+    assert_eq!(manager.active().unwrap().informative_context(), "the the");
+    assert_eq!(manager.active().unwrap().editable_context(), " 尾");
+    assert!(pipeline.active.is_empty());
+}
+
+#[test]
+fn cancel_oldest_suppresses_late_transport_and_runs_new_segment() {
+    let mut config = AppConfig::default();
+    config.context.pending_queue_full_behavior =
+        crate::settings::PendingQueueFullBehavior::CancelOldest;
+    let mut manager = manager(&config, "teh");
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let mut pipeline = CorrectionPipeline::start(move |job| {
+        started_tx.send(job.id).unwrap();
+        release_rx.recv().unwrap();
+        CorrectionEngines::default().correct_with(job.request.engine, &job.input)
+    })
+    .unwrap();
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    let first = started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let cancelled = pipeline.active.front().unwrap().cancelled.clone();
+    manager.input(TypedInput::Text(" teh".into()));
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    assert!(cancelled.load(Ordering::Acquire));
+    assert_eq!(pipeline.active.len(), 1);
+    assert_eq!(manager.active().unwrap().informative_context(), "teh");
+    release_tx.send(()).unwrap();
+    let newest = started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_ne!(first, newest);
+    assert!(pipeline.mailbox.0.lock().unwrap().completion.is_none());
+    release_tx.send(()).unwrap();
+    wait_completion(&pipeline);
+    assert!(finish(
+        &mut pipeline,
+        &mut manager,
+        &config,
+        STAMP,
+        &Cell::new(0),
+        true
+    ));
+    assert_eq!(manager.active().unwrap().informative_context(), "teh the");
+}
+
+#[test]
+fn frozen_failures_release_capacity_without_committing_engine_output() {
+    let config = AppConfig::default();
+    for failure in 0..5 {
+        let mut manager = manager(&config, "teh");
+        let mut pipeline = CorrectionPipeline::new().unwrap();
+        submit_frozen(&mut pipeline, &mut manager, &config);
+        manager.input(TypedInput::Text(" next".into()));
+        wait_completion(&pipeline);
+        {
+            let mut state = pipeline.mailbox.0.lock().unwrap();
+            let output = &mut state.completion.as_mut().unwrap().output;
+            match failure {
+                0 => output.status = EngineStatus::TimedOut,
+                1 => output.behavior = ConfidenceBehavior::Suggestion,
+                2 => output.confidence = ConfidenceTier::Low,
+                3 | 4 => {}
+                _ => unreachable!(),
+            }
+        }
+        let calls = Cell::new(0);
+        assert!(!pipeline.finish(
+            &mut manager,
+            &config.context,
+            || STAMP,
+            |_| if failure == 4 { None } else { Some(target()) },
+            |_, _, _| {
+                calls.set(calls.get() + 1);
+                false
+            }
+        ));
+        assert_eq!(calls.get(), usize::from(failure == 3));
+        assert_eq!(manager.active().unwrap().informative_context(), "teh");
+        assert_eq!(manager.active().unwrap().editable_context(), " next");
+        assert!(manager
+            .active_mut()
+            .unwrap()
+            .freeze_pending(&config.context)
+            .0
+            .is_some());
+    }
+}
+
+#[test]
+fn frozen_result_revalidates_queued_position_and_input_during_security_check() {
+    let config = AppConfig::default();
+    for movement in [false, true] {
+        let mut manager = manager(&config, "teh");
+        let mut pipeline = CorrectionPipeline::new().unwrap();
+        submit_frozen(&mut pipeline, &mut manager, &config);
+        wait_completion(&pipeline);
+        let stamp = Cell::new(STAMP);
+        assert!(!pipeline.finish(
+            &mut manager,
+            &config.context,
+            || stamp.get(),
+            |_| {
+                stamp.set(InputStamp {
+                    sequence: STAMP.sequence + 1,
+                    position: STAMP.position + u64::from(movement),
+                });
+                Some(target())
+            },
+            |_, _, _| panic!("raced input reached replacement")
+        ));
+    }
+}
+
+#[test]
+fn manual_override_cancels_frozen_completion_and_restores_full_scope() {
+    let config = AppConfig::default();
+    let mut manager = manager(&config, "teh");
+    let mut pipeline = CorrectionPipeline::new().unwrap();
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    wait_completion(&pipeline);
+    let cancelled = pipeline.active.front().unwrap().cancelled.clone();
+    manager.input(TypedInput::Text(" next".into()));
+    pipeline.cancel();
+    manager.active_mut().unwrap().restore_pending();
+    submit(&mut pipeline, &manager, &config);
+    assert!(cancelled.load(Ordering::Acquire));
+    assert_eq!(
+        pipeline.active.front().unwrap().request.executable_context,
+        "teh next"
+    );
+    wait_completion(&pipeline);
+    assert!(finish(
+        &mut pipeline,
+        &mut manager,
+        &config,
+        STAMP,
+        &Cell::new(0),
+        true
+    ));
+    assert_eq!(manager.active().unwrap().informative_context(), "the next");
+}
+
+#[test]
+fn unchanged_frozen_result_retires_only_its_segment_without_native_mutation() {
+    let config = AppConfig::default();
+    let mut manager = manager(&config, "hello");
+    let mut pipeline = CorrectionPipeline::new().unwrap();
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    manager.input(TypedInput::Text(" next".into()));
+    wait_completion(&pipeline);
+    let calls = Cell::new(0);
+    assert!(finish(
+        &mut pipeline,
+        &mut manager,
+        &config,
+        STAMP,
+        &calls,
+        false
+    ));
+    assert_eq!(calls.get(), 0);
+    assert_eq!(manager.active().unwrap().informative_context(), "hello");
+    assert_eq!(manager.active().unwrap().editable_context(), " next");
+}
+
+#[test]
+fn input_processor_defers_frozen_completion_until_hook_input_is_drained() {
+    let config = AppConfig::default();
+    let mut manager = manager(&config, "hello");
+    let mut pipeline = CorrectionPipeline::new().unwrap();
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    wait_completion(&pipeline);
+    let mut processor = crate::background::InputProcessor {
+        pipeline,
+        processed_input_sequence: crate::background::input_listener::current_input_sequence()
+            .wrapping_sub(1),
+        config,
+        session_manager: manager,
+        database: crate::storage::Database::open_memory().unwrap(),
+    };
+    processor.finish_correction();
+    assert!(processor
+        .pipeline
+        .mailbox
+        .0
+        .lock()
+        .unwrap()
+        .completion
+        .is_some());
+    assert_eq!(processor.pipeline.active.len(), 1);
+    assert_eq!(
+        processor
+            .session_manager
+            .active()
+            .unwrap()
+            .informative_context(),
+        ""
+    );
+}
+
 fn wait_completion(pipeline: &CorrectionPipeline) {
     let (lock, ready) = &*pipeline.mailbox;
     let (state, _) = ready
@@ -297,7 +574,7 @@ fn superseded_reordered_and_duplicate_results_cannot_replace() {
         .completion
         .take()
         .unwrap();
-    let cancelled = Arc::clone(&pipeline.active.as_ref().unwrap().cancelled);
+    let cancelled = Arc::clone(&pipeline.active.front().unwrap().cancelled);
     submit(&mut pipeline, &manager, &config);
     assert!(cancelled.load(Ordering::Acquire));
     wait_completion(&pipeline);
@@ -367,7 +644,7 @@ fn slow_engine_never_blocks_automatic_input_and_keeps_only_latest_queued_work() 
         Vec::new(),
     );
     let first = started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    let cancelled = Arc::clone(&pipeline.active.as_ref().unwrap().cancelled);
+    let cancelled = Arc::clone(&pipeline.active.front().unwrap().cancelled);
     let start = Instant::now();
     manager.input(TypedInput::Text("!".into()));
     pipeline.invalidate(&manager, STAMP);
@@ -377,7 +654,7 @@ fn slow_engine_never_blocks_automatic_input_and_keeps_only_latest_queued_work() 
         submit(&mut pipeline, &manager, &config);
     }
     assert!(start.elapsed() < Duration::from_secs(1));
-    let latest = pipeline.active.as_ref().unwrap().id;
+    let latest = pipeline.active.front().unwrap().id;
     assert_ne!(first, latest);
     // A manual wait is bounded even while the transport cannot be interrupted.
     let start = Instant::now();

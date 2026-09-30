@@ -1,7 +1,8 @@
 //! Async correction ownership and the single validation gate before completion.
-//! One running job and one replaceable queued job bound work during fast typing.
+//! FIFO work and completions are bounded by each session's frozen queue.
 
 use std::{
+    collections::VecDeque,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Condvar, Mutex,
@@ -47,7 +48,7 @@ struct Completion {
 
 #[derive(Default)]
 struct Mailbox {
-    job: Option<Job>,
+    jobs: VecDeque<Job>,
     completion: Option<Completion>,
     stopped: bool,
 }
@@ -63,6 +64,12 @@ struct ActiveRequest {
 
 impl ActiveRequest {
     fn valid(&self, session: &Session, stamp: InputStamp) -> bool {
+        if let Some(id) = self.request.pending_segment_id {
+            return !self.cancelled.load(Ordering::Acquire)
+                && self.request.session_id == session.id()
+                && self.stamp.position == stamp.position
+                && session.pending_matches(id, &self.request.executable_context);
+        }
         !self.cancelled.load(Ordering::Acquire)
             && self.request.session_id == session.id()
             && self.request.versions == session.versions()
@@ -80,7 +87,7 @@ impl ActiveRequest {
 pub(super) struct CorrectionPipeline {
     mailbox: Arc<(Mutex<Mailbox>, Condvar)>,
     worker: Option<JoinHandle<()>>,
-    active: Option<ActiveRequest>,
+    active: VecDeque<ActiveRequest>,
     next_id: u64,
 }
 
@@ -102,13 +109,15 @@ impl CorrectionPipeline {
                     let job = {
                         let (lock, ready) = &*worker_mailbox;
                         let mut state = lock.lock().unwrap();
-                        while state.job.is_none() && !state.stopped {
+                        while (state.jobs.is_empty() || state.completion.is_some())
+                            && !state.stopped
+                        {
                             state = ready.wait(state).unwrap();
                         }
                         if state.stopped {
                             break;
                         }
-                        state.job.take().unwrap()
+                        state.jobs.pop_front().unwrap()
                     };
                     if job.cancelled.load(Ordering::Acquire) {
                         continue;
@@ -126,7 +135,7 @@ impl CorrectionPipeline {
         Ok(Self {
             mailbox,
             worker: Some(worker),
-            active: None,
+            active: VecDeque::new(),
             next_id: 1,
         })
     }
@@ -140,7 +149,9 @@ impl CorrectionPipeline {
         config: &AppConfig,
         dictionary: Vec<String>,
     ) {
-        self.cancel();
+        if request.pending_segment_id.is_none() {
+            self.cancel();
+        }
         let id = self.next_id;
         self.next_id = self.next_id.checked_add(1).expect("request ID exhausted");
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -180,7 +191,7 @@ impl CorrectionPipeline {
             confidence_behavior: request.confidence_behavior.clone(),
             suggestion_ui_available: false,
         };
-        self.active = Some(ActiveRequest {
+        self.active.push_back(ActiveRequest {
             id,
             request: request.clone(),
             target,
@@ -190,8 +201,7 @@ impl CorrectionPipeline {
         });
         let (lock, ready) = &*self.mailbox;
         let mut state = lock.lock().unwrap();
-        state.completion = None;
-        state.job = Some(Job {
+        state.jobs.push_back(Job {
             id,
             request,
             input,
@@ -202,24 +212,58 @@ impl CorrectionPipeline {
     }
 
     pub(super) fn cancel(&mut self) {
-        if let Some(active) = self.active.take() {
+        for active in self.active.drain(..) {
             active.cancelled.store(true, Ordering::Release);
         }
-        let (lock, _) = &*self.mailbox;
+        let (lock, ready) = &*self.mailbox;
         let mut state = lock.lock().unwrap();
-        state.job = None;
+        state.jobs.clear();
         state.completion = None;
+        ready.notify_all();
     }
 
-    /// V1 cancels on every input change; retaining work needs a verified range strategy.
+    pub(super) fn cancel_segment(&mut self, segment_id: u64) {
+        self.active.retain(|active| {
+            if active.request.pending_segment_id == Some(segment_id) {
+                active.cancelled.store(true, Ordering::Release);
+                false
+            } else {
+                true
+            }
+        });
+        self.purge_cancelled();
+    }
+
+    fn purge_cancelled(&self) {
+        let (lock, ready) = &*self.mailbox;
+        let mut state = lock.lock().unwrap();
+        state
+            .jobs
+            .retain(|job| !job.cancelled.load(Ordering::Acquire));
+        if state
+            .completion
+            .as_ref()
+            .is_some_and(|completion| !self.active.iter().any(|active| active.id == completion.id))
+        {
+            state.completion = None;
+        }
+        ready.notify_all();
+    }
+
+    /// Frozen work survives newer typing; manual snapshots remain strict.
     pub(super) fn invalidate(&mut self, manager: &SessionManager, stamp: InputStamp) {
-        if self.active.as_ref().is_some_and(|active| {
-            manager
+        self.active.retain(|active| {
+            if manager
                 .active()
                 .is_none_or(|session| !active.valid(session, stamp))
-        }) {
-            self.cancel();
-        }
+            {
+                active.cancelled.store(true, Ordering::Release);
+                false
+            } else {
+                true
+            }
+        });
+        self.purge_cancelled();
     }
 
     pub(super) fn wait_manual(&self) {
@@ -242,75 +286,105 @@ impl CorrectionPipeline {
         replace: impl FnOnce(&FocusedTarget, &CorrectionRequest, &CorrectionOutput) -> bool,
     ) -> bool {
         self.invalidate(manager, current_stamp());
-        let completion = self.mailbox.0.lock().unwrap().completion.take();
+        let completion = {
+            let (lock, ready) = &*self.mailbox;
+            let result = lock.lock().unwrap().completion.take();
+            ready.notify_all();
+            result
+        };
         let Some(completion) = completion else {
             return false;
         };
-        let Some(active) = self.active.as_ref() else {
+        let Some(active) = self.active.front() else {
             return false;
         };
         if completion.id != active.id {
             return false;
         }
-        let active = self.active.take().unwrap();
-        let output = completion.output;
-        if output.status != EngineStatus::Completed {
-            return false;
-        }
-        let Some(target) = check_target(active.request.trigger) else {
-            return false;
-        };
-        // Security/UIA calls can race with queued typing or focus changes.
-        if target.correction_eligibility() != CorrectionEligibility::Allowed
-            || target.process_id != active.target.process_id
-            || target.window_handle != active.target.window_handle
-            || target.session_key() != active.target.session_key()
-            || !manager.active_matches(&target)
-            || manager
-                .active()
-                .is_none_or(|session| !active.valid(session, current_stamp()))
-        {
-            return false;
-        }
-        let original = &active.request.executable_context;
-        if output.changes_needed {
-            if output.behavior != ConfidenceBehavior::Silent
-                || output.confidence == ConfidenceTier::Low
-                || output.corrected_executable_text == *original
+        let mut active = self.active.pop_front().unwrap();
+        let validation_stamp = current_stamp();
+        let segment_id = active.request.pending_segment_id;
+        // Every completion releases its slot, including errors, suppressed
+        // outputs and refused mutation. Frozen original text retires unchanged.
+        let applied = (|| {
+            let output = completion.output;
+            if output.status != EngineStatus::Completed {
+                return false;
+            }
+            let Some(target) = check_target(active.request.trigger) else {
+                return false;
+            };
+            // Security/UIA calls can race with queued typing or focus changes.
+            if target.correction_eligibility() != CorrectionEligibility::Allowed
+                || target.process_id != active.target.process_id
+                || target.window_handle != active.target.window_handle
+                || target.session_key() != active.target.session_key()
+                || !manager.active_matches(&target)
+                || current_stamp() != validation_stamp
+                || manager
+                    .active()
+                    .is_none_or(|session| !active.valid(session, current_stamp()))
             {
                 return false;
             }
-        } else if output.corrected_executable_text != *original
-            || !matches!(
-                output.no_change_reason,
-                Some(NoChangeReason::NoCorrectionNeeded | NoChangeReason::AllCandidatesProtected)
-            )
-        {
-            return false;
+            let original = &active.request.executable_context;
+            if output.changes_needed {
+                if output.behavior != ConfidenceBehavior::Silent
+                    || output.confidence == ConfidenceTier::Low
+                    || output.corrected_executable_text == *original
+                {
+                    return false;
+                }
+            } else if output.corrected_executable_text != *original
+                || !matches!(
+                    output.no_change_reason,
+                    Some(
+                        NoChangeReason::NoCorrectionNeeded | NoChangeReason::AllCandidatesProtected
+                    )
+                )
+            {
+                return false;
+            }
+            if let Some(id) = segment_id {
+                let Some(following) = manager.active().unwrap().pending_following_text(id) else {
+                    return false;
+                };
+                active.request.replacement_following_text = following;
+            }
+            // Even unchanged selections need target confirmation of the selection-end
+            // caret before session completion. Do not infer it from engine success.
+            if (output.changes_needed || active.request.selected_text)
+                && !replace(&target, &active.request, &output)
+            {
+                return false;
+            }
+            let session = manager.active_mut().unwrap();
+            if let Some(id) = segment_id {
+                session.complete_pending(id, Some(&output.corrected_executable_text), limits)
+            } else if active.request.selected_text {
+                session.complete_selected_correction(
+                    original,
+                    &output.corrected_executable_text,
+                    &active.request.informative_context,
+                    active.request.versions,
+                    limits,
+                )
+            } else if output.changes_needed {
+                session.queue_correction(original.clone(), output.corrected_executable_text)
+                    && session.apply_next_correction(limits)
+            } else {
+                session.complete_without_changes(limits);
+                true
+            }
+        })();
+        if !applied {
+            if let (Some(id), Some(session)) = (segment_id, manager.active_mut()) {
+                if session.id() == active.request.session_id {
+                    session.complete_pending(id, None, limits);
+                }
+            }
         }
-        // Even unchanged selections need target confirmation of the selection-end
-        // caret before session completion. Do not infer it from engine success.
-        if (output.changes_needed || active.request.selected_text)
-            && !replace(&target, &active.request, &output)
-        {
-            return false;
-        }
-        let session = manager.active_mut().unwrap();
-        if active.request.selected_text {
-            session.complete_selected_correction(
-                original,
-                &output.corrected_executable_text,
-                &active.request.informative_context,
-                active.request.versions,
-                limits,
-            )
-        } else if output.changes_needed {
-            session.queue_correction(original.clone(), output.corrected_executable_text)
-                && session.apply_next_correction(limits)
-        } else {
-            session.complete_without_changes(limits);
-            true
-        }
+        applied
     }
 }
 
