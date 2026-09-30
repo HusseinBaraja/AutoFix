@@ -41,6 +41,7 @@ public sealed class ConfigStorage
         return Load(ConfigPath);
     }
 
+    /// <summary>Loads TOML, normalizes legacy grammar categories, and rejects invalid settings.</summary>
     public AppConfig Load(string path)
     {
         var text = File.ReadAllText(path);

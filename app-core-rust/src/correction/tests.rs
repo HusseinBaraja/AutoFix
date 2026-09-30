@@ -1,5 +1,6 @@
 use super::*;
 
+/// Builds a contract fixture with read-only context, protected terms, and no suggestion UI.
 fn input(mode: CorrectionMode) -> CorrectionInput {
     CorrectionInput {
         informative_context: "Read only context. ".to_owned(),
@@ -29,6 +30,7 @@ fn input(mode: CorrectionMode) -> CorrectionInput {
     }
 }
 
+/// The default tier policy holds for all triggers with and without a suggestion UI.
 #[test]
 fn default_confidence_policy_covers_every_trigger_and_ui_capability() {
     let settings = ConfidenceBehaviorSettings::default();
@@ -59,6 +61,7 @@ fn default_confidence_policy_covers_every_trigger_and_ui_capability() {
     }
 }
 
+/// Explicit preferences remain subject to UI availability and the unconditional low-tier block.
 #[test]
 fn explicit_confidence_choices_are_honored_but_low_is_always_blocked() {
     for configured in [
@@ -102,6 +105,7 @@ fn explicit_confidence_choices_are_honored_but_low_is_always_blocked() {
     }
 }
 
+/// Suppression restores original text and clears edits while retaining measured latency.
 #[test]
 fn suppressed_outputs_discard_edit_text_and_details_and_preserve_latency() {
     let mut request = input(CorrectionMode::TyposOnly);
@@ -135,6 +139,7 @@ fn suppressed_outputs_discard_edit_text_and_details_and_preserve_latency() {
     }
 }
 
+/// Failures, timeouts, and unchanged results never grant replacement permission.
 #[test]
 fn failures_and_no_change_results_never_authorize_replacement() {
     let request = input(CorrectionMode::TyposOnly);
@@ -161,6 +166,7 @@ fn failures_and_no_change_results_never_authorize_replacement() {
     }
 }
 
+/// Older serialized requests and results default missing capability and disposition to no action.
 #[test]
 fn omitted_suggestion_capability_and_output_behavior_fail_closed() {
     let mut json = serde_json::to_value(input(CorrectionMode::TyposOnly)).unwrap();
@@ -230,6 +236,7 @@ fn engine_kinds_have_explicit_local_or_api_identity() {
     assert_eq!(EngineKind::CustomApi.backend(), EngineBackend::Api);
 }
 
+/// Local rules advertise English, API engines accept language tags, and local ML advertises none.
 #[test]
 fn engines_advertise_language_capabilities() {
     let engines = CorrectionEngines::default();

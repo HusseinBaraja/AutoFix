@@ -71,6 +71,7 @@ public static class ConfigFormMapper
         config.Context.ExecutableContextMaxWords = Int(values, "context.executable_context_max_words");
     }
 
+    /// <summary>Maps correction cards to config and clears grammar permissions in typos-only mode.</summary>
     private static void ApplyCorrection(AppConfig config, IReadOnlyDictionary<string, SettingCardViewModel> values)
     {
         config.Correction.Enabled = Toggle(values, "correction.enabled");

@@ -29,6 +29,7 @@ public sealed class MainWindowViewModelTests
         Assert.AreEqual("Settings saved automatically.", viewModel.StatusTitle);
     }
 
+    /// <summary>Changing correction mode updates category availability and persists only permitted grammar choices.</summary>
     [TestMethod]
     public async Task ModeChangeControlsGrammarAndPersistsEnabledCategories()
     {

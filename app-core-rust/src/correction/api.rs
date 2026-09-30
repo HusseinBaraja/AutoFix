@@ -111,6 +111,7 @@ impl CorrectionEngine for ApiCorrectionEngine {
         self.kind
     }
 
+    /// Accepts structurally valid language tags for provider-side correction.
     fn supports_language(&self, language_tag: &str) -> bool {
         super::language::valid_language_tag(language_tag)
     }
@@ -483,6 +484,7 @@ mod tests {
         net::TcpListener,
     };
 
+    /// Builds a typo-only API request with default confidence and language protections.
     fn input(trigger_type: TriggerType) -> CorrectionInput {
         CorrectionInput {
             informative_context: "Read only context".into(),
@@ -507,6 +509,7 @@ mod tests {
         }
     }
 
+    /// The provider payload keeps read-only context separate and disables streaming.
     #[test]
     fn request_separates_context_and_disables_streaming() {
         let payload = payload(
@@ -524,6 +527,7 @@ mod tests {
         assert_eq!(user["protected_terms"][0], "AutoFix");
     }
 
+    /// Provider edits cannot alter explicit protected terms or custom dictionary entries.
     #[test]
     fn response_rejects_missing_or_changed_protected_terms() {
         let input = input(TriggerType::ManualShortcut);
@@ -545,6 +549,7 @@ mod tests {
         ));
     }
 
+    /// Wraps categorized edit fixtures in the provider chat-completion response envelope.
     fn response(corrected: &str, edits: Value) -> String {
         json!({"choices":[{"message":{"content":json!({
             "corrected_executable_text": corrected,
@@ -553,6 +558,7 @@ mod tests {
         .to_string()
     }
 
+    /// Validated API edits obey trigger, confidence, and suggestion-UI permissions.
     #[test]
     fn validated_api_results_use_the_shared_confidence_policy() {
         let body = response(
@@ -605,6 +611,7 @@ mod tests {
         }
     }
 
+    /// Disabled grammar categories and differences absent from the edit list fail closed.
     #[test]
     fn response_rejects_disabled_grammar_and_unlisted_edits() {
         let mut request = input(TriggerType::ManualShortcut);
@@ -630,6 +637,7 @@ mod tests {
         assert!(parse_response(&disguised, &request).is_err());
     }
 
+    /// Uncertain text permits only known high-confidence typos under the default policy.
     #[test]
     fn uncertain_language_rejects_grammar_and_medium_typos() {
         let mut request = input(TriggerType::ManualShortcut);
@@ -653,6 +661,7 @@ mod tests {
         assert!(parse_response(&grammar, &request).is_err());
     }
 
+    /// Enabled grammar edits reconstruct correctly using Unicode scalar offsets.
     #[test]
     fn response_accepts_enabled_grammar_and_unicode_offsets() {
         let mut request = input(TriggerType::ManualShortcut);
@@ -666,6 +675,7 @@ mod tests {
         assert!(parse_response(&allowed, &request).is_err());
     }
 
+    /// Dominant-language correction preserves foreign words and structured tokens.
     #[test]
     fn mixed_response_rejects_foreign_and_structured_edits() {
         let mut request = input(TriggerType::ManualShortcut);
@@ -695,6 +705,7 @@ mod tests {
         assert!(parse_response(&possible_name, &request).is_err());
     }
 
+    /// Opted-in per-token correction accepts a same-script single-word replacement.
     #[test]
     fn per_token_api_can_edit_foreign_word_without_translation_when_opted_in() {
         let mut request = input(TriggerType::ManualShortcut);
@@ -715,6 +726,7 @@ mod tests {
         assert!(parse_response(&translation, &request).is_err());
     }
 
+    /// Disabling mixed-text correction returns unchanged before accessing the provider.
     #[test]
     fn disabled_mixed_text_skips_api_request() {
         let mut request = input(TriggerType::ManualShortcut);
@@ -785,6 +797,7 @@ mod tests {
         assert_eq!(output.status, EngineStatus::Completed);
     }
 
+    /// A loopback provider uses the stored credential and returns only executable-span edits.
     #[test]
     fn configured_engine_loads_credential_and_corrects_only_executable_text() {
         let profile = format!(
@@ -853,6 +866,7 @@ mod tests {
         crate::secrets::delete_secret(&profile).unwrap();
     }
 
+    /// Opted-in local fallback retains the same medium-confidence policy as normal routing.
     #[test]
     fn local_fallback_obeys_medium_confidence_policy() {
         let config = ApiEngineConfig {

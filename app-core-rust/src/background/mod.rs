@@ -381,6 +381,7 @@ impl InputWorker {
 }
 
 impl InputProcessor {
+    /// Processes a guarded input batch, captures context, and snapshots correction policies.
     fn process_input(&mut self, events: Vec<InputEvent>) {
         let mut pending_requests = Vec::new();
         let mut gate_result: Option<(isize, bool)> = None;

@@ -19,3 +19,24 @@ manual corrections. The Rust correction contract adds an optional
 `behavior` disposition (default `do_nothing` for older serialized outputs).
 Consumers must replace text only for `silent` results; `suggestion` requires
 explicit user acceptance. These engine contracts are separate from IPC.
+
+Language preferences and per-app overrides validate RFC 5646 tag structure in
+both the Rust engine and settings UI, including complete extension and private-use
+subtags. Registry membership is not checked. `language-tag-cases.json` is the shared
+validation corpus; both test suites cover it through the config storage paths.
+
+The live replacement consumer is still a placeholder. Before enabling it, the
+mutation owner must enforce `silent` or explicit acceptance of a suggestion and
+recheck process, focused target, security gate, caret, and context/executable
+versions immediately before replacement. Informative context stays read-only;
+replacement stays within the verified executable span and never alters text
+after the caret. Preserve the clipboard and record app-level undo only after
+successful replacement.
+
+Cancelled, duplicate, stale, or reordered completions must be discarded before
+mutation. Integration verification must cover typing or moving focus while an
+API request is pending, cancellation followed by a late response, duplicate and
+out-of-order results, a target becoming secure, and interrupted replacement with
+rollback and clipboard/undo recovery. Current engine and session tests verify
+individual safeguards; they cannot establish these end-to-end guarantees until
+the live consumer exists.

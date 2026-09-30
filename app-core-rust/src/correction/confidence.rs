@@ -30,6 +30,7 @@ impl ConfidenceBehaviorSettings {
     }
 }
 
+/// Resolves an edit tier using the request's trigger and available suggestion UI.
 pub(super) fn behavior_for(input: &CorrectionInput, tier: ConfidenceTier) -> ConfidenceBehavior {
     input
         .confidence_behavior

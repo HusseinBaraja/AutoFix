@@ -313,6 +313,7 @@ pub(super) fn is_known_typo_change(original: &str, replacement: &str) -> bool {
         .is_some_and(|expected| expected == replacement)
 }
 
+/// Accepts only known high-confidence spellings, preserving the source casing.
 pub(super) fn is_high_confidence_typo_change(original: &str, replacement: &str) -> bool {
     typo_replacement(&original.to_ascii_lowercase())
         .filter(|(_, confidence)| *confidence == ConfidenceTier::High)
@@ -946,6 +947,7 @@ mod tests {
         ConfidenceBehaviorSettings, LanguageInfo, MixedLanguagePolicy, TriggerType,
     };
 
+    /// Builds an English request with silent medium edits to exercise local rule candidates.
     fn input(text: &str, mode: CorrectionMode) -> CorrectionInput {
         CorrectionInput {
             informative_context: String::new(),
@@ -970,6 +972,7 @@ mod tests {
         }
     }
 
+    /// Typo mode corrects known misspellings while leaving ambiguous names untouched.
     #[test]
     fn typos_only_changes_clear_misspellings_and_preserves_ambiguous_names() {
         let output = correct(&input("Teh  wierd, teh!", CorrectionMode::TyposOnly));
@@ -1011,6 +1014,7 @@ mod tests {
         );
     }
 
+    /// Grammar candidates require explicit category permission and report their edit kind.
     #[test]
     fn grammar_mode_applies_only_enabled_categories() {
         let mut request = input("i have went home .", CorrectionMode::TyposPlusGrammar);
@@ -1046,6 +1050,7 @@ mod tests {
         );
     }
 
+    /// Each conservative grammar rule is enabled only by its corresponding category.
     #[test]
     fn suggested_grammar_rules_require_their_categories() {
         let cases = [
@@ -1084,6 +1089,7 @@ mod tests {
         }
     }
 
+    /// Article and sentence-case edits combine only when both categories are enabled.
     #[test]
     fn article_and_capitalization_combine_only_when_both_enabled() {
         let mut request = input("a apple", CorrectionMode::TyposPlusGrammar);
@@ -1096,6 +1102,7 @@ mod tests {
         assert_eq!(correct(&request).corrected_executable_text, "a university");
     }
 
+    /// Typo-only requests cannot enable grammar by carrying an inconsistent category list.
     #[test]
     fn typos_only_ignores_grammar_categories_even_if_input_is_inconsistent() {
         let mut request = input("i is ready .", CorrectionMode::TyposOnly);
@@ -1128,6 +1135,7 @@ mod tests {
         );
     }
 
+    /// Default confidence allows high-tier typos but leaves medium-tier candidates unchanged.
     #[test]
     fn default_policy_applies_high_and_leaves_medium_text_untouched() {
         for trigger in [
@@ -1148,6 +1156,7 @@ mod tests {
         }
     }
 
+    /// Medium edits need a manual suggestion UI or an explicit silent-apply preference.
     #[test]
     fn medium_results_require_manual_suggestion_ui_or_explicit_silent_apply() {
         for trigger in [
@@ -1184,6 +1193,7 @@ mod tests {
         }
     }
 
+    /// Suggested candidates cannot be bundled with edits authorized for silent replacement.
     #[test]
     fn mixed_dispositions_never_silently_apply_suggested_candidates() {
         let mut request = input("teh alot", CorrectionMode::TyposOnly);
@@ -1214,6 +1224,7 @@ mod tests {
         );
     }
 
+    /// Unknown text gates grammar and medium typos until normal correction is explicitly selected.
     #[test]
     fn unknown_language_defaults_to_high_confidence_typos_only() {
         let mut request = input("teh alot i", CorrectionMode::TyposPlusGrammar);
@@ -1229,6 +1240,35 @@ mod tests {
         assert_eq!(correct(&request).corrected_executable_text, "the a lot I");
     }
 
+    /// Sparse English clues cannot enable grammar in otherwise ambiguous Latin text.
+    #[test]
+    fn sparse_english_detection_keeps_grammar_disabled() {
+        let mut request = input("for you teh alot i", CorrectionMode::TyposPlusGrammar);
+        request.informative_context =
+            "école élève été forêt où êtes île hôtel âge cœur façade Noël dîner".into();
+        request.enabled_grammar_categories = vec![GrammarCategory::Capitalization];
+        request.language_info = super::super::language::resolve(
+            &request.informative_context,
+            &request.executable_context,
+            Some("en"),
+            None,
+            None,
+            UncertainLanguagePolicy::default(),
+        )
+        .info;
+        assert!(request.language_info.is_uncertain());
+        assert_eq!(
+            correct(&request).corrected_executable_text,
+            "for you the alot i"
+        );
+        request.uncertain_language_policy = UncertainLanguagePolicy::CorrectNormally;
+        assert_eq!(
+            correct(&request).corrected_executable_text,
+            "for you the a lot I"
+        );
+    }
+
+    /// Mixed text defaults to high-confidence dominant-language typos and honors disable policy.
     #[test]
     fn mixed_text_defaults_to_high_confidence_dominant_language_typos() {
         let mut request = input("the and teh alot مرحبا", CorrectionMode::TyposPlusGrammar);

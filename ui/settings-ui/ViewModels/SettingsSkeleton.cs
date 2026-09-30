@@ -8,24 +8,28 @@ namespace AutoFix.SettingsUi.ViewModels;
 public static class SettingsSkeleton
 {
     private static readonly ShortcutsConfig DefaultShortcuts = new();
+    /// <summary>Offers app blocking or allowlisting as the runtime scope.</summary>
     public static ObservableCollection<OptionItem> RunModes() =>
     [
         new("Blocklist", "blocklist"),
         new("Allowlist", "allowlist"),
     ];
 
+    /// <summary>Offers typo correction with optional grammar edits.</summary>
     public static ObservableCollection<OptionItem> Modes() =>
     [
         new("Typos only", "typos_only"),
         new("Typos + grammar", "typos_plus_grammar"),
     ];
 
+    /// <summary>Offers explicit local or API engine selection.</summary>
     public static ObservableCollection<OptionItem> Engines() =>
     [
         new("Local", "local"),
         new("API", "api"),
     ];
 
+    /// <summary>Lists provider profiles whose keys live in Windows Credential Manager.</summary>
     public static ObservableCollection<OptionItem> ApiProviders() =>
     [
         new("OpenAI compatible", "openai_compatible"),
@@ -35,6 +39,7 @@ public static class SettingsSkeleton
         new("Custom endpoint", "custom"),
     ];
 
+    /// <summary>Lists no-action, suggestion, and silent-apply confidence dispositions.</summary>
     public static ObservableCollection<OptionItem> ConfidenceBehaviors() =>
     [
         new("Do nothing", "do_nothing"),
@@ -42,6 +47,7 @@ public static class SettingsSkeleton
         new("Apply silently", "silent"),
     ];
 
+    /// <summary>Offers conservative typo-only, blocked, or normal handling of unknown text.</summary>
     public static ObservableCollection<OptionItem> UncertainLanguagePolicies() =>
     [
         new("High-confidence typos only", "high_confidence_typos_only"),
@@ -49,6 +55,7 @@ public static class SettingsSkeleton
         new("Correct normally", "correct_normally"),
     ];
 
+    /// <summary>Offers blocked, dominant-language, or API per-token handling of mixed text.</summary>
     public static ObservableCollection<OptionItem> MixedLanguagePolicies() =>
     [
         new("Disable correction", "disable_correction"),
@@ -56,9 +63,11 @@ public static class SettingsSkeleton
         new("Correct per token (API)", "per_token"),
     ];
 
+    /// <summary>Builds settings sections from the product defaults.</summary>
     public static ObservableCollection<SettingsSectionViewModel> CreateSections() =>
         CreateSections(AppConfig.Default());
 
+    /// <summary>Builds editable cards from saved settings and fixes low confidence to no action.</summary>
     public static ObservableCollection<SettingsSectionViewModel> CreateSections(AppConfig config) =>
     [
         Section("General", "Startup and app run scope",
@@ -161,9 +170,11 @@ public static class SettingsSkeleton
         return section;
     }
 
+    /// <summary>Creates a boolean card bound to its config field.</summary>
     private static SettingCardViewModel Toggle(string title, string description, string path, bool value) =>
         new() { Title = title, Description = description, Kind = "Toggle", Path = path, IsEnabled = value };
 
+    /// <summary>Builds category switches available only when grammar mode is enabled.</summary>
     private static IEnumerable<SettingCardViewModel> GrammarCategorySettings(AppConfig config)
     {
         foreach (var category in GrammarCategories.All)

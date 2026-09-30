@@ -416,6 +416,7 @@ public sealed partial class MainWindowViewModel
         }
     }
 
+    /// <summary>Updates grammar availability on mode changes and autosaves edited setting values.</summary>
     private void SettingChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (sender is SettingCardViewModel { Path: "correction.mode" } mode

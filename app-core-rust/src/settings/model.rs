@@ -149,6 +149,7 @@ fn default_true() -> bool {
 }
 
 impl Default for CorrectionConfig {
+    /// Starts with local typos, conservative language policies, and low confidence blocked.
     fn default() -> Self {
         Self {
             enabled: true,

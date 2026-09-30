@@ -2,11 +2,13 @@
 
 use super::{CorrectionInput, MixedLanguagePolicy};
 
+/// Blocks the request when mixed text uses the disable-correction policy.
 pub(super) fn disabled(input: &CorrectionInput) -> bool {
     input.language_info.is_mixed()
         && input.mixed_language_policy == MixedLanguagePolicy::DisableCorrection
 }
 
+/// Checks a validated UTF-8 byte range against the dominant or per-token policy.
 pub(super) fn edit_allowed(input: &CorrectionInput, start: usize, end: usize) -> bool {
     if !input.language_info.is_mixed() {
         return true;
@@ -52,6 +54,7 @@ pub(super) fn edit_allowed(input: &CorrectionInput, start: usize, end: usize) ->
     })
 }
 
+/// Requires mixed-text replacements to remain a single word in the source script.
 pub(super) fn replacement_allowed(
     input: &CorrectionInput,
     start: usize,
@@ -85,6 +88,7 @@ pub(super) fn replacement_allowed(
             .all(|character| Some(script(character)) == original_script)
 }
 
+/// Recognizes ASCII and accented Latin letters used by the supported language guard.
 fn is_latin(character: char) -> bool {
     character.is_ascii_alphabetic()
         || (0x00c0..=0x024f).contains(&(character as u32))
@@ -99,6 +103,7 @@ mod tests {
         UncertainLanguagePolicy,
     };
 
+    /// The dominant-language policy permits the English typo and protects the Arabic span.
     #[test]
     fn dominant_policy_keeps_foreign_spans_untouched() {
         let input = CorrectionInput {

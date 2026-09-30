@@ -5,6 +5,7 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class ConfigStorageTests
 {
+    /// <summary>Saved confidence choices round-trip and imported unsafe low-tier behavior fails validation.</summary>
     [TestMethod]
     public void ConfidenceSettingsRoundTripAndRejectUnsafeLowBehavior()
     {
@@ -66,6 +67,7 @@ public sealed class ConfigStorageTests
         Assert.IsTrue(fixture.Storage.Load(fixture.Path).Shortcuts.CorrectArbitrarySelection);
     }
 
+    /// <summary>Language policies survive storage while duplicate process overrides are rejected.</summary>
     [TestMethod]
     public void LanguageSettingsRoundTripAndRejectDuplicateApp()
     {
@@ -85,6 +87,7 @@ public sealed class ConfigStorageTests
         Assert.ThrowsException<InvalidDataException>(() => ConfigValidator.Validate(loaded));
     }
 
+    /// <summary>Per-token policy is rejected for local correction and accepted for the API engine.</summary>
     [TestMethod]
     public void PerTokenPolicyRequiresApiEngine()
     {
@@ -95,6 +98,61 @@ public sealed class ConfigStorageTests
         ConfigValidator.Validate(config);
     }
 
+    /// <summary>Both language settings accept complete tags and reject malformed tags before saving.</summary>
+    [TestMethod]
+    public void LanguageTagsMatchSharedCasesAndInvalidSavesPreserveFile()
+    {
+        using var fixture = TempConfigFixture.Create();
+        fixture.Storage.Save(AppConfig.Default());
+        var original = File.ReadAllText(fixture.Path);
+        var cases = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(
+            File.ReadAllText(System.IO.Path.Combine(AppContext.BaseDirectory, "language-tag-cases.json")))!;
+        foreach (var item in cases)
+        {
+            var tag = item[0].GetString()!;
+            var valid = item[1].GetBoolean();
+            foreach (var appOverride in new[] { false, true })
+            {
+                var config = AppConfig.Default();
+                var field = appOverride ? "correction.app_language_overrides" : "correction.preferred_language";
+                if (appOverride)
+                {
+                    config.Correction.AppLanguageOverrides = [$"notepad.exe={tag}"];
+                }
+                else
+                {
+                    config.Correction.PreferredLanguage = tag;
+                }
+                if (valid)
+                {
+                    fixture.Storage.Save(config);
+                    var loaded = fixture.Storage.Load(fixture.Path);
+                    if (appOverride)
+                    {
+                        CollectionAssert.AreEqual(config.Correction.AppLanguageOverrides, loaded.Correction.AppLanguageOverrides);
+                    }
+                    else
+                    {
+                        Assert.AreEqual(tag, loaded.Correction.PreferredLanguage);
+                    }
+                    fixture.Storage.Save(AppConfig.Default());
+                }
+                else
+                {
+                    // App overrides intentionally trim the tag around '='.
+                    if (appOverride && tag.Trim() != tag)
+                    {
+                        continue;
+                    }
+                    var error = Assert.ThrowsException<InvalidDataException>(() => fixture.Storage.Save(config), tag);
+                    StringAssert.Contains(error.Message, field);
+                    Assert.AreEqual(original, File.ReadAllText(fixture.Path), tag);
+                }
+            }
+        }
+    }
+
+    /// <summary>Legacy punctuation config normalizes to the supported spacing category on load.</summary>
     [TestMethod]
     public void LegacyPunctuationCategoryLoadsAsSpacing()
     {

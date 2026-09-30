@@ -8,6 +8,7 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class SettingsSkeletonTests
 {
+    /// <summary>Confidence controls show product defaults and keep the low-tier control disabled.</summary>
     [TestMethod]
     public void ConfidenceControlsExposeDefaultsAndFixLowToDoNothing()
     {
@@ -121,6 +122,7 @@ public sealed class SettingsSkeletonTests
             correction.Options.Select(option => option.Value).ToArray());
     }
 
+    /// <summary>The correction section exposes every category with availability tied to grammar mode.</summary>
     [TestMethod]
     public void CorrectionSectionOffersEveryGrammarCategory()
     {

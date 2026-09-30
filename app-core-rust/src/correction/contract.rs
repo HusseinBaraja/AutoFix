@@ -43,6 +43,7 @@ pub struct ConfidenceBehaviorSettings {
 }
 
 impl Default for ConfidenceBehaviorSettings {
+    /// Silently applies high confidence, suggests medium, and always blocks low.
     fn default() -> Self {
         Self {
             high: ConfidenceBehavior::Silent,
@@ -61,6 +62,7 @@ pub struct LanguageInfo {
 }
 
 impl LanguageInfo {
+    /// Reports multiple detections or a script incompatible with the primary language.
     pub fn is_mixed(&self) -> bool {
         self.detected_languages.len() > 1
             || (self.detected_languages.len() == 1
@@ -79,6 +81,7 @@ impl LanguageInfo {
                 }))
     }
 
+    /// Keeps missing, script-only, and preference-conflicting detections conservative.
     pub fn is_uncertain(&self) -> bool {
         if self.detected_languages.len() != 1 || self.detected_languages[0].starts_with("und-") {
             return true;

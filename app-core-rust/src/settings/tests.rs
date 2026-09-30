@@ -10,6 +10,7 @@ use super::{
     AppConfig, ValidateConfig,
 };
 
+/// Product defaults preserve conservative context, language, grammar, and confidence settings.
 #[test]
 fn default_config_has_requested_values() {
     let config = AppConfig::default();
@@ -61,6 +62,7 @@ fn default_config_has_requested_values() {
     assert_eq!(config.logging.log_retention_days, None);
 }
 
+/// Confidence preferences survive TOML while feedback can suppress, never silently apply, suggestions.
 #[test]
 fn confidence_preferences_round_trip_and_feedback_only_disables_suggestions() {
     let mut config = AppConfig::default();
@@ -120,6 +122,7 @@ fn arbitrary_selection_setting_round_trips_and_legacy_config_stays_strict() {
     );
 }
 
+/// A full TOML config loads typed correction categories and the remaining user settings.
 #[test]
 fn parses_full_user_config() {
     let config = super::toml_io::parse_config(
@@ -205,6 +208,7 @@ fn rejects_invalid_confidence_behavior() {
     assert_eq!(error.field(), "correction.low_confidence_behavior");
 }
 
+/// Language settings round-trip and reject malformed tags and duplicate app overrides.
 #[test]
 fn language_settings_round_trip_and_validate() {
     let mut config = AppConfig::default();
@@ -235,6 +239,7 @@ fn language_settings_round_trip_and_validate() {
     );
 }
 
+/// Per-token mixed-language correction requires explicit API engine selection.
 #[test]
 fn per_token_policy_requires_api_engine() {
     let mut config = AppConfig::default();
@@ -245,6 +250,41 @@ fn per_token_policy_requires_api_engine() {
     );
     config.correction.engine = CorrectionEngine::Api;
     assert!(config.validate().is_ok());
+}
+
+/// Persisted settings reject malformed tags in both preferences and app overrides.
+#[test]
+fn language_tag_settings_match_shared_cases() {
+    let cases: Vec<(String, bool)> = serde_json::from_str(include_str!(
+        "../../../shared-schema/language-tag-cases.json"
+    ))
+    .unwrap();
+    for (tag, valid) in cases {
+        for app_override in [false, true] {
+            let mut config = AppConfig::default();
+            let field = if app_override {
+                config.correction.app_language_overrides = vec![format!("notepad.exe={tag}")];
+                "correction.app_language_overrides"
+            } else {
+                config.correction.preferred_language = Some(tag.clone());
+                "correction.preferred_language"
+            };
+            if valid {
+                let encoded = config_to_toml(&config).unwrap();
+                assert_eq!(
+                    super::toml_io::parse_config(&encoded).unwrap().correction,
+                    config.correction
+                );
+            } else {
+                // App overrides intentionally trim the tag around '='.
+                if app_override && tag.trim() != tag {
+                    continue;
+                }
+                assert_eq!(config.validate().unwrap_err().field(), field, "{tag}");
+                assert!(config_to_toml(&config).is_err(), "{tag}");
+            }
+        }
+    }
 }
 
 #[test]

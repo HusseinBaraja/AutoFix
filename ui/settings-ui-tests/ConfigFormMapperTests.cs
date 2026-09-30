@@ -6,6 +6,7 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class ConfigFormMapperTests
 {
+    /// <summary>Form confidence choices persist while unsafe low-confidence behavior is rejected.</summary>
     [TestMethod]
     public void ConfidenceChoicesMapAndInvalidLowBehaviorIsRejected()
     {
@@ -22,6 +23,7 @@ public sealed class ConfigFormMapperTests
         Assert.AreEqual("correction.low_confidence_behavior: must be do_nothing", error.Message);
     }
 
+    /// <summary>Edited settings cards map to the corresponding typed config values.</summary>
     [TestMethod]
     public void BuildConfigMapsEditedCards()
     {
@@ -51,6 +53,7 @@ public sealed class ConfigFormMapperTests
         Assert.IsFalse(config.Feedback.ShowTimeoutNotice);
     }
 
+    /// <summary>Grammar switches round-trip and typo-only mode clears all grammar permissions.</summary>
     [TestMethod]
     public void GrammarCategoriesRoundTripAndTyposModeDisablesThem()
     {

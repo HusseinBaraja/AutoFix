@@ -121,6 +121,7 @@ fn forward_skipped_start(before_typing: &str, informative: &str, old: &str) -> O
 }
 
 impl Session {
+    /// Creates a memory-only session with no captured context or cached language.
     fn new(window: isize, key: SessionKey) -> Self {
         let mut executable = TypedSession::new();
         executable.focus(Some((window, key)));
@@ -140,10 +141,12 @@ impl Session {
         &self.informative_context
     }
 
+    /// Returns the language cached for this focused session, never persisted to disk.
     pub(crate) fn detected_language(&self) -> Option<&str> {
         self.detected_language.as_deref()
     }
 
+    /// Updates the session detection without changing the editable text or caret.
     pub(crate) fn set_detected_language(&mut self, language: Option<String>) {
         self.detected_language = language;
     }

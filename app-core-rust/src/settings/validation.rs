@@ -131,6 +131,7 @@ fn validate_non_empty_list(
     Ok(())
 }
 
+/// Rejects malformed language settings and incompatible grammar, engine, or confidence choices.
 fn validate_correction(config: &AppConfig) -> Result<(), ConfigValidationError> {
     if config
         .correction
