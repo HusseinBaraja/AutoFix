@@ -29,6 +29,12 @@ public static class ConfigValidator
         RequirePositive("context.informative_context_max_chars", config.Context.InformativeContextMaxChars);
         RequirePositive("context.informative_context_min_words", config.Context.InformativeContextMinWords);
         RequirePositive("context.executable_context_max_words", config.Context.ExecutableContextMaxWords);
+        if (config.Context.PendingQueueSize is < 1 or > 16)
+        {
+            throw Invalid("context.pending_queue_size", "must be between 1 and 16");
+        }
+        RequireChoice("context.pending_queue_full_behavior", config.Context.PendingQueueFullBehavior,
+            new HashSet<string> { "skip_new", "cancel_oldest", "merge_newest" });
         ValidateCorrection(config);
         ValidateApi(config);
         ValidateLogging(config);
@@ -186,9 +192,9 @@ public static class ConfigValidator
         RequireText("api.model", config.Api.Model);
         RequirePositive("api.timeout_manual_ms", config.Api.TimeoutManualMs);
         RequirePositive("api.timeout_auto_ms", config.Api.TimeoutAutoMs);
-        if (config.Api.RetryCount is < 0 or > 255)
+        if (config.Api.RetryCount is < 0 or > 1)
         {
-            throw Invalid("api.retry_count", "must be between 0 and 255");
+            throw Invalid("api.retry_count", "must be 0 or 1");
         }
         if (config.Api.Temperature is < 0 or > 2)
         {

@@ -41,7 +41,7 @@ public sealed class ConfigStorage
         return Load(ConfigPath);
     }
 
-    /// <summary>Loads TOML, normalizes legacy grammar categories, and rejects invalid settings.</summary>
+    /// <summary>Loads TOML, normalizes legacy grammar categories and retry counts, and rejects invalid settings.</summary>
     public AppConfig Load(string path)
     {
         var text = File.ReadAllText(path);
@@ -51,6 +51,10 @@ public sealed class ConfigStorage
             .Select(category => category == "punctuation" ? "spacing" : category)
             .Distinct()
             .ToList();
+        if (config.Api.RetryCount > 1)
+        {
+            config.Api.RetryCount = 1;
+        }
         ConfigValidator.Validate(config);
         return config;
     }
@@ -107,6 +111,8 @@ public sealed class ConfigStorage
         # Store API keys in Windows Credential Manager, not in this TOML file.
         # Shortcut format uses key names joined by '+', for example Ctrl+Alt+Space.
         # Correction streaming stays disabled because corrections need bounded latency.
+        # Pending queue size counts running and waiting corrections per session (1 to 16).
+        # Full queue: skip_new, cancel_oldest, or merge_newest and wait for the next trigger.
 
         """;
 }

@@ -226,6 +226,20 @@ fn dictionary_matches_global_or_app_specific_entries() {
         .custom_dictionary()
         .contains("fr", Some("code.exe"), "AutoFix")
         .unwrap());
+    assert_eq!(
+        database
+            .custom_dictionary()
+            .entries_for_app("word.exe")
+            .unwrap(),
+        vec!["AutoFix"]
+    );
+    assert_eq!(
+        database
+            .custom_dictionary()
+            .entries_for_app("code.exe")
+            .unwrap(),
+        vec!["AutoFix", "crate feature"]
+    );
 }
 
 #[test]

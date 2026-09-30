@@ -6,6 +6,30 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class ConfigFormMapperTests
 {
+    [TestMethod]
+    public void PendingQueueChoicesMapAndRejectInvalidCapacityOrPolicy()
+    {
+        var sections = SettingsSkeleton.CreateSections();
+        Assert.AreEqual("1", Card(sections, "context.pending_queue_size").TextValue);
+        Assert.AreEqual("skip_new", Card(sections, "context.pending_queue_full_behavior").SelectedValue);
+        foreach (var policy in new[] { "skip_new", "cancel_oldest", "merge_newest" })
+        {
+            Card(sections, "context.pending_queue_size").TextValue = "4";
+            Card(sections, "context.pending_queue_full_behavior").SelectedValue = policy;
+            var config = ConfigFormMapper.BuildConfig(sections);
+            Assert.AreEqual(4, config.Context.PendingQueueSize);
+            Assert.AreEqual(policy, config.Context.PendingQueueFullBehavior);
+        }
+        foreach (var size in new[] { "0", "17" })
+        {
+            Card(sections, "context.pending_queue_size").TextValue = size;
+            Assert.ThrowsException<InvalidDataException>(() => ConfigFormMapper.BuildConfig(sections));
+        }
+        Card(sections, "context.pending_queue_size").TextValue = "1";
+        Card(sections, "context.pending_queue_full_behavior").SelectedValue = "unknown";
+        Assert.ThrowsException<InvalidDataException>(() => ConfigFormMapper.BuildConfig(sections));
+    }
+
     /// <summary>Form confidence choices persist while unsafe low-confidence behavior is rejected.</summary>
     [TestMethod]
     public void ConfidenceChoicesMapAndInvalidLowBehaviorIsRejected()

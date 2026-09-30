@@ -1,12 +1,18 @@
 //! In-memory text sessions. No session state is written to the database.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
 use super::{
     target::{FocusedTarget, SessionKey},
     typing::{MovementSignal, TypedInput, TypedSession},
 };
 use crate::settings::ContextConfig;
+
+mod pending;
+use pending::FrozenSegment;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct SessionIdentity {
@@ -41,6 +47,7 @@ pub(crate) struct CorrectionUndo {
 }
 
 pub(crate) struct Session {
+    id: u64,
     // Informative text is known session text before the executable segment.
     // It is never an editable replacement target.
     informative_context: String,
@@ -51,6 +58,8 @@ pub(crate) struct Session {
     versions: ContextVersions,
     pending_movement: Option<PendingMovement>,
     correction_floor: usize,
+    frozen_segments: VecDeque<FrozenSegment>,
+    next_segment_id: u64,
 }
 
 struct PendingMovement {
@@ -126,6 +135,7 @@ impl Session {
         let mut executable = TypedSession::new();
         executable.focus(Some((window, key)));
         Self {
+            id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             informative_context: String::new(),
             detected_language: None,
             executable,
@@ -134,11 +144,19 @@ impl Session {
             versions: ContextVersions::default(),
             pending_movement: None,
             correction_floor: 0,
+            frozen_segments: VecDeque::new(),
+            next_segment_id: 1,
         }
     }
 
+    /// Expose read-only context separately from editable typed text.
     pub(crate) fn informative_context(&self) -> &str {
         &self.informative_context
+    }
+
+    /// Return the run-local session identity used to reject recreated sessions.
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     /// Returns the language cached for this focused session, never persisted to disk.
@@ -187,7 +205,9 @@ impl Session {
         })
     }
 
+    /// Restore frozen text and invalidate correction ownership before resolving a new caret.
     fn mark_movement(&mut self, tracked_arrows_only: bool) {
+        self.restore_pending();
         let old_executable: String = self
             .executable_context()
             .chars()
@@ -203,6 +223,7 @@ impl Session {
         self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
     }
 
+    /// Track session input while invalidating ranges whose caret or typed-text proof is lost.
     fn input(&mut self, input: TypedInput, limits: &ContextConfig) {
         if matches!(
             &input,
@@ -244,6 +265,7 @@ impl Session {
             && self.correction_floor > 0
             && self.executable_context().chars().count() <= self.correction_floor
         {
+            self.frozen_segments.clear();
             self.executable.invalidate(MovementSignal::UnknownPosition);
             self.correction_floor = 0;
             self.informative_context.clear();
@@ -257,13 +279,32 @@ impl Session {
         }
         let is_text_edit = matches!(&input, TypedInput::Text(value) if !value.is_empty())
             || matches!(&input, TypedInput::Backspace | TypedInput::Delete);
+        let previous = self.executable_context();
+        let appended = match &input {
+            TypedInput::Text(text) => Some(format!("{previous}{text}")),
+            _ => None,
+        };
         self.executable.input(input);
+        // The typed buffer is bounded. Losing its oldest characters loses the
+        // proof for every frozen range, even if a repeated prefix looks equal.
+        if appended.is_some_and(|expected| expected != self.executable_context()) {
+            self.restore_pending();
+            self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
+        }
+        if self
+            .frozen_segments
+            .front()
+            .is_some_and(|segment| !self.pending_matches(segment.id(), segment.original()))
+        {
+            self.restore_pending();
+            self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
+        }
         if is_text_edit {
             self.versions.context = self.versions.context.wrapping_add(1);
             self.versions.executable = self.versions.executable.wrapping_add(1);
             self.pending_corrections.clear();
         }
-        if self.executable_context().split_whitespace().count()
+        if self.editable_context().split_whitespace().count()
             > usize::from(limits.executable_context_max_words)
         {
             self.commit_executable(limits);
@@ -399,6 +440,7 @@ impl Session {
 
     /// Move only known text before the caret into read-only context.
     fn commit_executable(&mut self, limits: &ContextConfig) {
+        self.restore_pending();
         let observed: String = self
             .executable_context()
             .chars()
@@ -421,17 +463,15 @@ impl Session {
     }
 
     /// Called only after a trigger or final-fix completed with no changes.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "called by the upcoming correction router")
-    )]
     pub(crate) fn complete_without_changes(&mut self, limits: &ContextConfig) {
         if !self.position_uncertain() {
             self.commit_executable(limits);
         }
     }
 
+    /// Invalidate the active typed range after focus or position becomes unreliable.
     fn deactivate(&mut self, reason: MovementSignal) {
+        self.restore_pending();
         self.executable.focus(None);
         self.executable.invalidate(reason);
         self.pending_movement = None;
@@ -453,6 +493,7 @@ impl Session {
     /// Reanchor the read-only prefix at the current caret. Executable typing
     /// already observed in this input batch remains a separate segment.
     fn set_informative_context(&mut self, context: String, limits: &ContextConfig) {
+        self.restore_pending();
         self.informative_context = context;
         self.shrink_informative(limits);
         self.pending_corrections.clear();
@@ -461,10 +502,7 @@ impl Session {
         self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "called by the upcoming correction router")
-    )]
+    /// Queue a replacement only for an exact, stable typed suffix.
     pub(crate) fn queue_correction(&mut self, original: String, replacement: String) -> bool {
         if original.is_empty()
             || !self.executable_context().ends_with(&original)
@@ -486,10 +524,8 @@ impl Session {
         true
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "called after target replacement succeeds")
-    )]
+    /// Commit a queued replacement into read-only context and record its undo span.
+    /// The caller must confirm native replacement before invoking this session-only update.
     pub(crate) fn apply_next_correction(&mut self, limits: &ContextConfig) -> bool {
         let Some(correction) = self.pending_corrections.pop_front() else {
             return false;
@@ -535,70 +571,13 @@ impl Session {
         true
     }
 
-    /// Record a selected-text replacement after the target confirms it.
-    /// Only the text up to the selection end enters informative context.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "called after the replacement engine is implemented"
-        )
-    )]
-    pub(crate) fn complete_selected_correction(
-        &mut self,
-        original: &str,
-        replacement: &str,
-        preceding: &str,
-        versions: ContextVersions,
-        limits: &ContextConfig,
-    ) -> bool {
-        if original.is_empty() || versions != self.versions {
-            return false;
-        }
-        self.informative_context.clear();
-        self.informative_context.push_str(preceding);
-        self.informative_context.push_str(replacement);
-        self.executable.clear_executable();
-        self.pending_movement = None;
-        self.correction_floor = 0;
-        self.pending_corrections.clear();
-        self.correction_undo_history.clear();
-        self.versions.context = self.versions.context.wrapping_add(1);
-        self.versions.executable = self.versions.executable.wrapping_add(1);
-        self.shrink_informative(limits);
-        if original != replacement {
-            let retained_chars = replacement
-                .chars()
-                .count()
-                .min(self.informative_context.chars().count());
-            let replacement_start = replacement
-                .char_indices()
-                .nth(replacement.chars().count() - retained_chars)
-                .map_or(replacement.len(), |(index, _)| index);
-            let retained = &replacement[replacement_start..];
-            if let Some(informative_start) = self
-                .informative_context
-                .len()
-                .checked_sub(retained.len())
-                .filter(|start| self.informative_context.get(*start..) == Some(retained))
-            {
-                self.correction_undo_history.push(CorrectionUndo {
-                    original: original.to_owned(),
-                    replacement: retained.to_owned(),
-                    informative_start,
-                    caret_anchor: self.versions.caret_anchor,
-                });
-            }
-        }
-        true
-    }
-
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "called after target undo succeeds")
     )]
+    /// Restore a recorded original in session context while preserving newer typed text.
     pub(crate) fn undo_last_correction(&mut self, limits: &ContextConfig) -> bool {
-        let Some(last) = self.correction_undo_history.last() else {
+        let Some(last) = self.correction_undo_history.last().cloned() else {
             return false;
         };
         if last.caret_anchor != self.versions.caret_anchor {
@@ -609,6 +588,7 @@ impl Session {
         if self.informative_context.get(start..end) != Some(last.replacement.as_str()) {
             return false;
         }
+        self.restore_pending();
         self.informative_context
             .replace_range(start..end, &last.original);
         self.correction_undo_history.pop();
@@ -671,6 +651,7 @@ impl SessionManager {
         true
     }
 
+    /// Invalidate the active typed range after focus or position becomes unreliable.
     pub(crate) fn deactivate(&mut self, reason: MovementSignal) {
         if let Some(identity) = self.active.take() {
             if let Some(mut session) = self.sessions.remove(&identity) {
@@ -679,11 +660,12 @@ impl SessionManager {
         }
     }
 
+    /// Track session input while invalidating ranges whose caret or typed-text proof is lost.
     pub(crate) fn input(&mut self, input: TypedInput) -> bool {
         if let Some(identity) = self.active.as_ref() {
             if let Some(session) = self.sessions.get_mut(identity) {
-                let backspace_into_informative = matches!(input, TypedInput::Backspace)
-                    && session.executable_context().is_empty();
+                let backspace_into_informative =
+                    matches!(input, TypedInput::Backspace) && session.editable_context().is_empty();
                 session.input(input, &self.limits);
                 return backspace_into_informative;
             }
@@ -709,10 +691,26 @@ impl SessionManager {
             })
     }
 
+    /// Replace read-only context and invalidate correction anchors tied to its old position.
     pub(crate) fn set_informative_context(&mut self, context: String) {
         let limits = self.limits.clone();
         if let Some(session) = self.active_mut() {
             session.set_informative_context(context, &limits);
+        }
+    }
+
+    /// Install a guarded initial capture while preserving frozen typed-range anchors.
+    pub(crate) fn set_captured_informative_context(&mut self, context: String) {
+        let limits = self.limits.clone();
+        if self
+            .active()
+            .is_some_and(|session| !session.frozen_segments.is_empty())
+        {
+            self.active_mut()
+                .unwrap()
+                .set_captured_informative_context(context, &limits);
+        } else {
+            self.set_informative_context(context);
         }
     }
 
@@ -1316,35 +1314,6 @@ mod tests {
         session.input(TypedInput::Text(" next".into()), &limits);
         assert!(session.undo_last_correction(&limits));
         assert_eq!(session.informative_context(), "old teh");
-        assert_eq!(session.executable_context(), " next");
-    }
-
-    /// A selected edit enters history only after successful replacement.
-    #[test]
-    fn selected_correction_commits_only_after_success_and_records_undo() {
-        let limits = ContextConfig::default();
-        let mut manager = SessionManager::new(limits.clone());
-        manager.focus(&target(1, 10, None));
-        manager.input(TypedInput::Text("stale typing".into()));
-        let session = manager.active_mut().unwrap();
-        let versions = session.versions();
-        assert!(!session.complete_selected_correction(
-            "teh",
-            "the",
-            "earlier ",
-            ContextVersions {
-                context: versions.context + 1,
-                ..versions
-            },
-            &limits,
-        ));
-        assert_eq!(session.executable_context(), "stale typing");
-        assert!(session.complete_selected_correction("teh", "the", "earlier ", versions, &limits));
-        assert_eq!(session.executable_context(), "");
-        assert_eq!(session.informative_context(), "earlier the");
-        session.input(TypedInput::Text(" next".into()), &limits);
-        assert!(session.undo_last_correction(&limits));
-        assert_eq!(session.informative_context(), "earlier teh");
         assert_eq!(session.executable_context(), " next");
     }
 

@@ -101,9 +101,21 @@ impl TypedSession {
         self.typed[..self.caret].iter().collect()
     }
 
+    /// Clear tracked executable text and reset its caret without reading target content.
     pub(crate) fn clear_executable(&mut self) {
         self.typed.clear();
         self.caret = 0;
+    }
+
+    /// Retire a verified prefix without touching newer typing or text after the caret.
+    pub(crate) fn retire_prefix(&mut self, original: &str) -> bool {
+        let prefix: Vec<char> = original.chars().collect();
+        if prefix.len() > self.caret || !self.typed.starts_with(&prefix) {
+            return false;
+        }
+        self.typed.drain(..prefix.len());
+        self.caret -= prefix.len();
+        true
     }
 
     pub(crate) fn set_caret(&mut self, caret: usize) -> bool {

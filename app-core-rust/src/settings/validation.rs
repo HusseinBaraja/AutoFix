@@ -37,6 +37,12 @@ impl Error for ConfigValidationError {}
 
 impl ValidateConfig for AppConfig {
     fn validate(&self) -> Result<(), ConfigValidationError> {
+        if !(1..=16).contains(&self.context.pending_queue_size) {
+            return Err(ConfigValidationError::new(
+                "context.pending_queue_size",
+                "must be between 1 and 16",
+            ));
+        }
         validate_shortcut("shortcuts.correct", &self.shortcuts.correct)?;
         validate_shortcut("shortcuts.undo", &self.shortcuts.undo)?;
         validate_shortcuts_do_not_conflict(self)?;
@@ -254,6 +260,12 @@ fn validate_api(config: &AppConfig) -> Result<(), ConfigValidationError> {
         return Err(ConfigValidationError::new(
             "api.timeout_manual_ms",
             "must be greater than zero",
+        ));
+    }
+    if config.api.retry_count > 1 {
+        return Err(ConfigValidationError::new(
+            "api.retry_count",
+            "must be 0 or 1",
         ));
     }
     if !(0.0..=2.0).contains(&config.api.temperature) {

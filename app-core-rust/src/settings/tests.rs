@@ -25,6 +25,11 @@ fn default_config_has_requested_values() {
     assert_eq!(config.context.initial_context_boundary_chars, vec!["."]);
     assert_eq!(config.context.forward_movement_word_limit, 5);
     assert_eq!(config.context.informative_context_min_words, 25);
+    assert_eq!(config.context.pending_queue_size, 1);
+    assert_eq!(
+        config.context.pending_queue_full_behavior,
+        super::PendingQueueFullBehavior::SkipNew
+    );
     assert!(!config.onboarding.completed);
     assert!(config.correction.enabled);
     assert_eq!(config.correction.mode, CorrectionMode::TyposOnly);
@@ -53,6 +58,7 @@ fn default_config_has_requested_values() {
     );
     assert_eq!(config.api.timeout_manual_ms, 3_000);
     assert_eq!(config.api.timeout_auto_ms, 700);
+    assert_eq!(config.api.retry_count, 1);
     assert_eq!(config.api.temperature, 0.0);
     assert!(!config.api.streaming);
     assert!(!config.api.fallback_to_local);
@@ -60,6 +66,79 @@ fn default_config_has_requested_values() {
     assert!(!config.logging.redacted_debug_mode_enabled);
     assert!(!config.logging.full_text_debug_mode_enabled);
     assert_eq!(config.logging.log_retention_days, None);
+}
+
+/// Save validation remains strict after legacy retry counts are migrated on read.
+#[test]
+fn api_retry_count_accepts_only_zero_or_one() {
+    let mut config = AppConfig::default();
+    for retries in [0, 1] {
+        config.api.retry_count = retries;
+        let encoded = config_to_toml(&config).unwrap();
+        assert_eq!(
+            super::toml_io::parse_config(&encoded)
+                .unwrap()
+                .api
+                .retry_count,
+            retries
+        );
+    }
+    for retries in [2, 255] {
+        config.api.retry_count = retries;
+        assert_eq!(config.validate().unwrap_err().field(), "api.retry_count");
+        assert!(config_to_toml(&config).is_err());
+        let legacy = toml::to_string(&config).unwrap();
+        let loaded = super::toml_io::parse_config(&legacy).unwrap();
+        assert_eq!(loaded.api.retry_count, 1);
+        let saved = config_to_toml(&loaded).unwrap();
+        assert_eq!(super::toml_io::parse_config(&saved).unwrap(), loaded);
+    }
+    for manual in [false, true] {
+        let mut config = AppConfig::default();
+        let field = if manual {
+            config.api.timeout_manual_ms = 0;
+            "api.timeout_manual_ms"
+        } else {
+            config.api.timeout_auto_ms = 0;
+            "api.timeout_auto_ms"
+        };
+        assert_eq!(config.validate().unwrap_err().field(), field);
+    }
+}
+
+#[test]
+fn pending_queue_settings_round_trip_and_legacy_configs_get_safe_defaults() {
+    for behavior in [
+        super::PendingQueueFullBehavior::SkipNew,
+        super::PendingQueueFullBehavior::CancelOldest,
+        super::PendingQueueFullBehavior::MergeNewest,
+    ] {
+        let mut config = AppConfig::default();
+        config.context.pending_queue_size = 4;
+        config.context.pending_queue_full_behavior = behavior;
+        let toml = config_to_toml(&config).unwrap();
+        let restored = super::toml_io::parse_config(&toml).unwrap();
+        assert_eq!(restored.context, config.context);
+        let legacy = toml
+            .lines()
+            .filter(|line| !line.starts_with("pending_queue_"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let restored = super::toml_io::parse_config(&legacy).unwrap();
+        assert_eq!(restored.context.pending_queue_size, 1);
+        assert_eq!(
+            restored.context.pending_queue_full_behavior,
+            super::PendingQueueFullBehavior::SkipNew
+        );
+    }
+    for size in [0, 17, u16::MAX] {
+        let mut config = AppConfig::default();
+        config.context.pending_queue_size = size;
+        assert_eq!(
+            config.validate().unwrap_err().field(),
+            "context.pending_queue_size"
+        );
+    }
 }
 
 /// Confidence preferences survive TOML while feedback can suppress, never silently apply, suggestions.
@@ -164,7 +243,7 @@ base_url = "https://example.test/v1"
 model = "typo-model"
 timeout_manual_ms = 3000
 timeout_auto_ms = 700
-retry_count = 2
+retry_count = 1
 fallback_to_local = true
 temperature = 0.0
 streaming = false

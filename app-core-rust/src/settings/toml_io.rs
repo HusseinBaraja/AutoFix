@@ -42,8 +42,16 @@ impl Error for ConfigIoError {
     }
 }
 
+/// Normalize previously supported retry counts on read; writes remain strict.
 pub(crate) fn parse_config(input: &str) -> Result<AppConfig, ConfigIoError> {
-    let config = toml::from_str::<AppConfig>(input).map_err(ConfigIoError::Parse)?;
+    let mut config = toml::from_str::<AppConfig>(input).map_err(ConfigIoError::Parse)?;
+    if config.api.retry_count > 1 {
+        tracing::warn!(
+            retry_count = config.api.retry_count,
+            "legacy API retry count reduced to 1"
+        );
+        config.api.retry_count = 1;
+    }
     config.validate().map_err(ConfigIoError::Validation)?;
     Ok(config)
 }
@@ -73,11 +81,14 @@ pub(crate) fn save_config(path: impl AsRef<Path>, config: &AppConfig) -> Result<
     })
 }
 
+/// Describe configuration boundaries and queue defaults without serializing credentials.
 fn generated_comments() -> &'static str {
     r#"# AutoFix user configuration.
 # Store API keys in Windows Credential Manager, not in this TOML file.
 # Shortcut format uses key names joined by '+', for example Ctrl+Alt+Space.
 # Correction streaming stays disabled because corrections need bounded latency.
+# Pending queue size counts running and waiting corrections per session (1 to 16).
+# Full queue: skip_new, cancel_oldest, or merge_newest and wait for the next trigger.
 
 "#
 }

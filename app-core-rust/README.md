@@ -36,8 +36,9 @@ can instead skip correction or use normal correction. For mixed text,
 language; it can disable correction or correct per token with the API engine.
 Structured tokens, names, explicit protected terms, and words in other scripts
 remain protected. The local rule engine supports English only; API engines can
-receive other language tags. The router still only logs requests,
-so these policies do not yet change target application text.
+receive other language tags. The async pipeline invokes the selected engine with
+these policies. Native replacement remains unavailable, so changed results do
+not yet edit target application text.
 In grammar mode it applies only enabled categories. Conservative local rules
 cover capitalization, sentence-ending punctuation on manual correction, extra
 punctuation, repeated words, subject-verb agreement, a/an articles, a few
@@ -51,17 +52,31 @@ DeepSeek; `custom` requires a base URL. HTTPS is required except for loopback
 HTTP. The provider preset selects a generic Windows Credential Manager entry
 named `AutoFix/provider-profile/<preset>`; callers can store it with
 `secrets::set_secret`. API keys are never put in TOML or diagnostic logs.
-Manual and automatic requests default to 3000 ms and 700 ms respectively;
-retries share the request's time budget. `ApiCorrectionEngine::submit` runs the
+Manual and automatic requests default to 3000 ms and 700 ms respectively.
+`api.retry_count` accepts only 0 or 1 (default 1); retries share one total
+deadline, including credential access, transport, and response validation.
+Loading legacy settings reduces retry counts above 1 to 1 without rewriting
+the file. Saving still rejects unsupported retry counts.
+The caller stops waiting at that deadline and discards late transport results.
+WinHTTP operations also use the remaining budget, including each response read,
+so trickling responses cannot renew the timeout.
+`ApiCorrectionEngine::submit` runs the
 request on a worker thread so the caller can keep processing typing. Fallback
 to the local rule engine is off by default. API results must include categorized
 edits for the executable span. The engine rejects disabled grammar categories,
 unlisted changes, invalid offsets, and changed protected terms. API typo edits
 must match the local engine's known spelling replacements.
-`ApiCorrectionEngine::notice_for` marks manual failures for a small
-notice and automatic failures for silent handling. The local ML engine remains
-a placeholder. The background router and replacement path are still
-placeholders, so this engine is not yet invoked by live typing.
+Automatic timeouts silently skip correction and release frozen queue capacity.
+Valid manual API timeouts show a small, disabled, no-activate notice near the
+bottom-right work area for 2.5 seconds. `feedback.show_timeout_notice` defaults
+to true and can disable it. Repeated notices coalesce; cancelled, stale, and
+secure-target results cannot show a notice. Opt-in local fallback follows the
+same confidence and completion checks as normal local correction and suppresses
+the timeout notice when it completes.
+`ApiCorrectionEngine::notice_for` distinguishes manual timeout and failure
+feedback from silent automatic handling. The local ML engine remains
+a placeholder. Live triggers invoke these engines on the correction worker.
+The native replacement path remains a placeholder.
 Engine selection is explicit per request; neither local nor API routing depends
 on task difficulty, and both correction modes are accepted by every engine.
 
@@ -77,8 +92,9 @@ when building the runtime policy, but never enables silent apply. Outputs includ
 an explicit `behavior`: only `silent` authorizes replacement; `suggestion`
 requires user acceptance. Suppressed outputs preserve the original executable
 text and discard edit details. Local results prioritize silent edits over
-suggested edits when both occur in one request. The background router snapshots
-the saved confidence policy, but target replacement remains a placeholder.
+suggested edits when both occur in one request. The pipeline snapshots confidence
+policy and rejects suggestions, suppressed edits, and low-confidence results at
+completion. Target replacement remains a placeholder.
 
 The keyboard session tracker is implemented. It keeps up to 4,096 characters
 typed during the current engine run in memory and exposes only the known text
@@ -106,20 +122,26 @@ The trigger manager now builds correction requests for the configured manual
 shortcut, completed word-count thresholds, and configured characters. Each
 request carries read-only informative context and known executable text before
 the caret, except for the explicit selected-text option below. Character triggers
-scope the request to the latest completed segment. The manual shortcut accepts
+freeze the entire current executable segment, including earlier skipped
+boundaries. The manual shortcut accepts
 a selected span when UI Automation proves it belongs to the typed segment.
 An outside or unreadable selection blocks
 the shortcut by default. The `shortcuts.correct_arbitrary_selection` setting is
 off by default; when enabled, a selected span outside the typed segment becomes
 temporary executable context for that request, while text before and after it
-stays informative. The session has a completion path to commit corrected selected
-text into informative context and record undo after target replacement succeeds.
-App rules and the hard security gate are checked before routing. A matching app
+stays informative. V1 discards selected results because it cannot prove which
+selection end is the live caret.
+App rules and the hard security gate are checked before routing. Application
+policy must be readable: a failed app-rule read blocks capture and correction
+for every trigger and engine, even if dictionary reads still work. A matching app
 rule permits typed-input tracking only when it allows a word-count or character
 trigger. Manual-shortcut permission alone does not enable continuous capture.
 Manual-only rules can still use the opt-in arbitrary-selection shortcut path.
-The correction router still only logs request metadata; it does not yet apply
-corrections to target text or call the completion path. If the provider cannot
+The correction pipeline invokes the selected engine and validates completions.
+Successful unchanged caret-range results commit the original executable segment into
+informative context. Changed caret-range results require confirmation from
+the replacement owner before session completion or undo recording; the native
+placeholder currently refuses confirmation. If the provider cannot
 read before the caret, informative context is empty and typing continues.
 Protected fields and
 unavailable targets are never read. Paste and
@@ -134,7 +156,8 @@ corrections, correction undo history, and context, executable, and caret-anchor
 versions. Captured field text may enter informative context; executable context
 contains only text typed during the current engine run.
 On a successful correction, corrected text becomes read-only informative
-context and executable context clears. A trigger or final fix with no changes
+context. Automatic correction retires only its frozen segment and preserves newer
+executable text. A manual trigger or final fix with no changes
 does the same with the original text. Exceeding the configured executable word
 limit also commits the current segment. New typing starts a fresh executable
 segment. Undo restores the corrected span in informative context to its
@@ -149,13 +172,78 @@ context, and starts a fresh executable segment at the new caret. The old typed
 suffix is discarded because it has not been verified at the new position.
 Longer forward movement and
 unmatched positions re-anchor at the new caret. A longer forward move requests
-the final-fix security gate for the old executable text. The correction pipeline
-is still a placeholder, so no final fix is applied to target text yet. Pending
+the final-fix security gate for the old executable text. Final fix remains
+unavailable because the old caret cannot be safely targeted after movement. Pending
 corrections are invalidated on movement. Runtime ticks delete sessions when
 their owning process exits. All session state disappears on engine exit or
-termination and is never written to disk. The correction router and replacement
-engine are still placeholders; lifecycle methods model their outcomes in
-memory and do not change target application text.
+termination and is never written to disk. The replacement engine remains a
+placeholder; session completion methods do not themselves change target text.
+
+The correction pipeline uses one worker, a FIFO of requests, and one completion
+slot with backpressure so results cannot overwrite each other. Each session has
+one active executable context and a bounded pending correction queue.
+`context.pending_queue_size` defaults to 1 and accepts 1 through 16; the limit
+includes running work. Automatic triggers freeze the current executable context
+before processing subsequent typing, including keys in the same input batch.
+New typing starts a fresh executable context while correction runs asynchronously.
+`context.pending_queue_full_behavior` defaults to `skip_new`, which skips the
+new automatic trigger and retains current typing. `cancel_oldest` cancels the
+oldest pending request, retires its original text into informative context, and
+admits the new segment. `merge_newest` cancels the newest pending request, merges
+its typed text back into the active executable context, and waits for the next
+trigger. Manual correction cancels pending work and restores its original text
+to the active context before taking its selection or caret snapshot.
+Automatic triggers never wait for correction. Manual shortcuts
+retain strict input snapshots. Frozen dispatch checks the position generation
+before and after live policy and dictionary reads, so newer typing does not
+cancel earlier work. A refused dispatch restores that segment and newer
+reservations to the active context while preserving older admitted segments.
+Manual shortcuts
+can wait up to 20 ms on the input processor, then continue asynchronously. Hooks
+and the Windows message loop remain independent. Pending hook input is drained
+before a manual snapshot. Every request includes a unique memory-only session ID,
+context/executable/caret-anchor versions, trigger, engine kind, and correction mode.
+Grammar, language, confidence, dictionary, and API settings are snapshotted for
+engine execution. Following selected text stays informative.
+
+Frozen results survive processed typing and backspace confined to the new active
+context. The tracker retains the original typed ranges and supplies the replacement
+owner with the known following text up to the current caret, which must be verified
+and preserved when replacing an earlier segment. Manual snapshots still require
+exact versions, editable text, and input sequence. Frozen results are discarded if
+their range is no longer known, the session changes or disappears, focus/caret
+generation changes, movement occurs, backspace crosses a frozen boundary, the
+typed buffer evicts its anchor, executable context commits, or configuration reloads.
+Cancellation prevents queued work from
+starting and suppresses late publication; a running synchronous API transport can
+finish within its configured timeout. API jobs also recheck cancellation and the
+current app rules immediately before each outbound send, including retries.
+The transport acquires a SQLite writer reservation before reading policy and
+holds it until the send returns. This serializes authorization with app-rule
+writes from IPC and the settings UI, including when SQLite uses WAL mode.
+Revocation takes effect when the rule write commits: a send already holding the
+reservation may finish first, and transmitted data cannot be recalled. Missing,
+unreadable, or busy policy storage denies the send without waiting or retrying.
+Denied frozen jobs retire their original text and release queue capacity through
+normal failed completion. Completion rechecks the live security gate
+and focused target, then input generations again after those checks. Completions
+wait for hook input to be processed and retire frozen ranges in document order.
+Before a changed result reaches replacement, completion also requires a stable
+focused control identity and a fresh read-only TextPattern capture. The entire
+known session region must match exactly at the live caret, including text typed
+after a frozen segment. Missing captures or mismatches discard the result; no
+fuzzy search or replacement is attempted. Selected-text results are discarded
+because their replacement range cannot be proven before the caret. Native
+replacement remains unavailable.
+Failed, suppressed, or refused frozen results release their slot and retire the
+original text without applying engine output. Results are
+consumed once. Only completed silent corrections above low confidence reach the
+replacement boundary. Failed and suppressed manual edits do not commit executable
+context. Tests cover delayed engines, frozen queues and overflow policies,
+manual override, stale and reordered results, queued input,
+secure targets, failed replacement, selection boundaries, and commit/undo after
+confirmed replacement. Native mutation, clipboard recovery, and real target undo
+still require the replacement feature.
 
 Feature code should be organized by product behavior, not technical layer. Keep modules small, private by default, and colocate tests with the behavior they verify.
 

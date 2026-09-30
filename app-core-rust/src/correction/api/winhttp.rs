@@ -1,21 +1,24 @@
 use std::{
     ffi::c_void,
     ptr::{null, null_mut},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use windows_sys::Win32::{
     Foundation::GetLastError,
     Networking::WinHttp::{
-        WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryHeaders,
-        WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetOption,
-        WinHttpSetTimeouts, ERROR_WINHTTP_TIMEOUT, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-        WINHTTP_DISABLE_REDIRECTS, WINHTTP_FLAG_SECURE, WINHTTP_OPTION_DISABLE_FEATURE,
+        WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest,
+        WinHttpQueryDataAvailable, WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse,
+        WinHttpSendRequest, WinHttpSetOption, WinHttpSetTimeouts, ERROR_WINHTTP_TIMEOUT,
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_DISABLE_REDIRECTS, WINHTTP_FLAG_SECURE,
+        WINHTTP_OPTION_DISABLE_FEATURE, WINHTTP_OPTION_RECEIVE_RESPONSE_TIMEOUT,
         WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE,
     },
 };
 
-use super::{failure_error, invalid, ApiError, EngineFailureKind, MAX_RESPONSE_BYTES};
+use super::{
+    failure_error, invalid, ApiError, EngineFailureKind, SendAuthorization, MAX_RESPONSE_BYTES,
+};
 
 struct Endpoint<'a> {
     secure: bool,
@@ -116,7 +119,9 @@ pub(super) fn post(
     key: &str,
     body: &str,
     timeout: Duration,
+    authorization: Option<&SendAuthorization>,
 ) -> Result<String, ApiError> {
+    let started = Instant::now();
     let endpoint = parse(url)?;
     let timeout_ms = timeout.as_millis().clamp(1, i32::MAX as u128) as i32;
     let agent = wide("AutoFix/1.0");
@@ -177,6 +182,12 @@ pub(super) fn post(
         "Content-Type: application/json\r\nAuthorization: Bearer {key}\r\n"
     ));
     let body_len = u32::try_from(body.len()).map_err(|_| invalid("API request is too large"))?;
+    // Rule writes cannot commit between the fresh policy read and this send.
+    // Acquire inside the transport thread, never around the caller's bounded wait.
+    let send_guard = authorization
+        .map(|authorize| authorize().ok_or_else(|| invalid("API send authorization revoked")))
+        .transpose()?;
+    set_remaining_timeout(&request, started, timeout)?;
     if unsafe {
         WinHttpSendRequest(
             request.0,
@@ -191,6 +202,8 @@ pub(super) fn post(
     {
         return Err(last_error());
     }
+    drop(send_guard);
+    set_remaining_timeout(&request, started, timeout)?;
     if unsafe { WinHttpReceiveResponse(request.0, null_mut()) } == 0 {
         return Err(last_error());
     }
@@ -242,13 +255,22 @@ pub(super) fn post(
     }
     let mut bytes = Vec::new();
     loop {
+        set_remaining_timeout(&request, started, timeout)?;
+        let mut available = 0;
+        if unsafe { WinHttpQueryDataAvailable(request.0, &mut available) } == 0 {
+            return Err(last_error());
+        }
+        if available == 0 {
+            break;
+        }
+        set_remaining_timeout(&request, started, timeout)?;
         let mut chunk = [0u8; 8192];
         let mut read = 0;
         if unsafe {
             WinHttpReadData(
                 request.0,
                 chunk.as_mut_ptr().cast(),
-                chunk.len() as u32,
+                available.min(chunk.len() as u32),
                 &mut read,
             )
         } == 0
@@ -267,6 +289,9 @@ pub(super) fn post(
         }
         bytes.extend_from_slice(&chunk[..read as usize]);
     }
+    if started.elapsed() >= timeout {
+        return Err(ApiError::Timeout);
+    }
     String::from_utf8(bytes).map_err(|_| {
         failure_error(
             EngineFailureKind::InvalidResponse,
@@ -274,6 +299,37 @@ pub(super) fn post(
             false,
         )
     })
+}
+
+/// A trickling response cannot renew the receive budget on each read.
+fn set_remaining_timeout(
+    request: &Handle,
+    started: Instant,
+    budget: Duration,
+) -> Result<(), ApiError> {
+    let remaining = budget
+        .checked_sub(started.elapsed())
+        .ok_or(ApiError::Timeout)?;
+    if remaining.is_zero() {
+        return Err(ApiError::Timeout);
+    }
+    let ms = remaining.as_millis().clamp(1, i32::MAX as u128) as i32;
+    if unsafe { WinHttpSetTimeouts(request.0, ms, ms, ms, ms) } == 0 {
+        return Err(last_error());
+    }
+    let response_ms = ms as u32;
+    if unsafe {
+        WinHttpSetOption(
+            request.0,
+            WINHTTP_OPTION_RECEIVE_RESPONSE_TIMEOUT,
+            (&response_ms as *const u32).cast(),
+            std::mem::size_of::<u32>() as u32,
+        )
+    } == 0
+    {
+        return Err(last_error());
+    }
+    Ok(())
 }
 
 /// Maps WinHTTP timeout separately from retryable transport failures.
@@ -287,11 +343,81 @@ fn last_error() -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::correction::EngineFailure;
     use std::{
         io::{Read, Write},
         net::TcpListener,
         thread,
     };
+
+    /// Revocation at the last transport boundary must send neither headers nor captured text.
+    #[test]
+    fn denied_send_authorization_never_connects_to_provider() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let authorize: SendAuthorization = std::sync::Arc::new(|| None);
+        let outcome = post(
+            &format!("http://127.0.0.1:{port}/v1/chat/completions"),
+            "test-key",
+            "captured text and dictionary",
+            Duration::from_secs(1),
+            Some(&authorize),
+        );
+        assert!(matches!(
+            outcome,
+            Err(ApiError::Failure(EngineFailure {
+                kind: EngineFailureKind::InvalidInput,
+                retryable: false,
+                ..
+            }))
+        ));
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn trickling_response_cannot_extend_the_total_read_budget() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            while !request.windows(4).any(|part| part == b"\r\n\r\n") {
+                let count = stream.read(&mut buffer).unwrap();
+                assert_ne!(count, 0);
+                request.extend_from_slice(&buffer[..count]);
+            }
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: 50\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            for _ in 0..50 {
+                if stream.write_all(b"x").is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(15));
+            }
+        });
+        let started = Instant::now();
+        let result = post(
+            &format!("http://127.0.0.1:{port}/v1/chat/completions"),
+            "test-key",
+            "{}",
+            Duration::from_millis(100),
+            None,
+        );
+        assert!(matches!(result, Err(ApiError::Timeout)));
+        assert!(started.elapsed() < Duration::from_millis(350));
+        server.join().unwrap();
+    }
 
     #[test]
     fn posts_json_and_reads_openai_compatible_response() {
@@ -331,6 +457,7 @@ mod tests {
             "test-key",
             "{}",
             Duration::from_secs(2),
+            None,
         )
         .unwrap();
         assert!(body.contains("corrected_executable_text"));

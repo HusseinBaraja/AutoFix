@@ -78,6 +78,12 @@ public sealed class TriggersConfig
 
 public sealed class ContextConfig
 {
+    [JsonPropertyName("pending_queue_size")]
+    public int PendingQueueSize { get; set; } = 1;
+
+    [JsonPropertyName("pending_queue_full_behavior")]
+    public string PendingQueueFullBehavior { get; set; } = "skip_new";
+
     [JsonPropertyName("initial_context_words")]
     public int InitialContextWords { get; set; } = 25;
 

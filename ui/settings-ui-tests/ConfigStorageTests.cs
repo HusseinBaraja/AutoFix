@@ -5,6 +5,66 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class ConfigStorageTests
 {
+    /// <summary>Old retry counts load and import safely without relaxing save validation.</summary>
+    [TestMethod]
+    public void LegacyApiRetryCountsAreMigratedOnLoadAndImport()
+    {
+        using var fixture = TempConfigFixture.Create();
+        using var source = TempConfigFixture.Create();
+        foreach (var retries in new[] { 2, 255 })
+        {
+            var legacy = $"[api]\nretry_count = {retries}\n";
+            File.WriteAllText(fixture.Path, legacy);
+            Assert.AreEqual(1, fixture.Storage.LoadOrCreate().Api.RetryCount);
+            Assert.AreEqual(legacy, File.ReadAllText(fixture.Path));
+            File.WriteAllText(source.Path, legacy);
+            fixture.Storage.Import(source.Path);
+            Assert.AreEqual(1, fixture.Storage.Load(fixture.Path).Api.RetryCount);
+        }
+        File.WriteAllText(fixture.Path, "[api]\nretry_count = -1\n");
+        Assert.ThrowsException<InvalidDataException>(() => fixture.Storage.Load(fixture.Path));
+    }
+
+    [TestMethod]
+    public void ApiRetryCountAcceptsOnlyZeroOrOne()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var config = AppConfig.Default();
+        foreach (var retries in new[] { 0, 1 })
+        {
+            config.Api.RetryCount = retries;
+            fixture.Storage.Save(config);
+            Assert.AreEqual(retries, fixture.Storage.Load(fixture.Path).Api.RetryCount);
+        }
+        foreach (var retries in new[] { -1, 2, 255 })
+        {
+            config.Api.RetryCount = retries;
+            var error = Assert.ThrowsException<InvalidDataException>(() => fixture.Storage.Save(config));
+            StringAssert.Contains(error.Message, "api.retry_count");
+        }
+    }
+
+    [TestMethod]
+    public void PendingQueueSettingsPersistAndLegacyFilesDefaultToOneAndSkip()
+    {
+        using var fixture = TempConfigFixture.Create();
+        foreach (var policy in new[] { "skip_new", "cancel_oldest", "merge_newest" })
+        {
+            var config = AppConfig.Default();
+            config.Context.PendingQueueSize = 4;
+            config.Context.PendingQueueFullBehavior = policy;
+            fixture.Storage.Save(config);
+            var loaded = fixture.Storage.Load(fixture.Path);
+            Assert.AreEqual(4, loaded.Context.PendingQueueSize);
+            Assert.AreEqual(policy, loaded.Context.PendingQueueFullBehavior);
+        }
+        var legacy = File.ReadAllLines(fixture.Path).Where(line => !line.StartsWith("pending_queue_"));
+        File.WriteAllLines(fixture.Path, legacy);
+        var defaults = fixture.Storage.Load(fixture.Path);
+        Assert.AreEqual(1, defaults.Context.PendingQueueSize);
+        Assert.AreEqual("skip_new", defaults.Context.PendingQueueFullBehavior);
+    }
+
     /// <summary>Saved confidence choices round-trip and imported unsafe low-tier behavior fails validation.</summary>
     [TestMethod]
     public void ConfidenceSettingsRoundTripAndRejectUnsafeLowBehavior()
