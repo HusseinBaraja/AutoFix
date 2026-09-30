@@ -8,6 +8,7 @@ mod message_loop;
 mod paths;
 mod pipeline;
 mod process_group;
+mod replacement;
 mod security;
 mod session;
 mod shortcuts;
@@ -38,11 +39,12 @@ use crate::{
 
 use self::{
     admin::reject_elevated_process,
-    components::{NamedPipeIpcServer, ReplacementEngine},
+    components::NamedPipeIpcServer,
     input_listener::{InputEvent, InputListener},
     paths::RuntimePaths,
     pipeline::{CorrectionPipeline, InputStamp},
     process_group::SiblingDisappearanceMonitor,
+    replacement::ReplacementEngine,
     security::{SecurityDecision, SecurityGate, TriggerKind},
     session::{MovementResolution, SessionManager},
     shortcuts::{GlobalShortcutListener, ShortcutAction},
@@ -62,7 +64,6 @@ struct RuntimeComponents {
     global_shortcut: GlobalShortcutListener,
     input_listener: InputListener,
     input_worker: InputWorker,
-    replacement_engine: ReplacementEngine,
     process_group_monitor: SiblingDisappearanceMonitor,
     shutdown_requested: Arc<AtomicBool>,
 }
@@ -223,7 +224,6 @@ impl RuntimeComponents {
             global_shortcut: GlobalShortcutListener::initialize(config),
             input_listener,
             input_worker,
-            replacement_engine: ReplacementEngine::initialize(),
             process_group_monitor: SiblingDisappearanceMonitor::new(),
             shutdown_requested,
         })
@@ -231,7 +231,6 @@ impl RuntimeComponents {
 
     fn shutdown(self) {
         self.input_worker.shutdown();
-        self.replacement_engine.shutdown();
         drop(self.input_listener);
         self.global_shortcut.shutdown();
         self.ipc_server.shutdown();
@@ -428,6 +427,8 @@ impl InputProcessor {
         }
         let config = &self.config;
         let database = &self.database;
+        let replacement_stamp = Self::input_stamp();
+        let mut replacement_uncertain = false;
         self.pipeline.finish(
             &mut self.session_manager,
             &config.context,
@@ -439,8 +440,24 @@ impl InputProcessor {
             |target, known_chars| {
                 context_capture::read_before_caret(target, &config.context, known_chars)
             },
-            ReplacementEngine::replace,
+            |target, request, output| {
+                let result = ReplacementEngine::replace(target, request, output, replacement_stamp);
+                replacement_uncertain = !result.success && result.may_have_changed;
+                tracing::debug!(
+                    success = result.success,
+                    method = ?result.method,
+                    range = ?result.range,
+                    reason = ?result.reason,
+                    "replacement completed"
+                );
+                result.success
+            },
         );
+        if replacement_uncertain {
+            self.pipeline.cancel();
+            self.session_manager
+                .deactivate(MovementSignal::UnknownPosition);
+        }
         if self.pipeline.take_timeout_notice() {
             timeout_notice::show();
         }
@@ -707,13 +724,60 @@ impl InputProcessor {
                 }
             }
             Some(ShortcutAction::Undo) => {
-                if self.security_allows(TriggerKind::Undo, &self.database) {
-                    tracing::info!("undo pipeline placeholder triggered by shortcut");
-                } else {
-                    tracing::info!("undo shortcut ignored because context is blocked");
-                }
+                self.undo_correction();
             }
             None => {}
+        }
+    }
+
+    fn undo_correction(&mut self) {
+        let stamp = Self::input_stamp();
+        if stamp.sequence != self.processed_input_sequence {
+            return;
+        }
+        let SecurityDecision::Allowed { target } =
+            SecurityGate::check(TriggerKind::Undo, &self.config, &self.database)
+        else {
+            return;
+        };
+        if !self.session_manager.active_matches(&target) {
+            return;
+        }
+        let Some(session) = self.session_manager.active() else {
+            return;
+        };
+        let Some(undo) = session.undo_target() else {
+            return;
+        };
+        let known = format!(
+            "{}{}",
+            session.informative_context(),
+            session.executable_context()
+        );
+        let Some(live) = context_capture::read_before_caret(
+            &target,
+            &self.config.context,
+            known.chars().count(),
+        ) else {
+            return;
+        };
+        if Self::input_stamp() != stamp || !live.ends_with(&known) {
+            return;
+        }
+        self.pipeline.cancel();
+        if let Some(session) = self.session_manager.active_mut() {
+            session.restore_pending();
+        }
+        let result = ReplacementEngine::undo(&target, &undo, stamp);
+        tracing::debug!(success = result.success, method = ?result.method,
+            range = ?result.range, reason = ?result.reason, "app correction undo completed");
+        if result.success {
+            if let Some(session) = self.session_manager.active_mut() {
+                session.undo_last_correction(&self.config.context);
+            }
+        } else if result.may_have_changed {
+            self.session_manager
+                .deactivate(MovementSignal::UnknownPosition);
         }
     }
 
