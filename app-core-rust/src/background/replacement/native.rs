@@ -61,6 +61,12 @@ impl PreparedRange {
         if plan.original.contains('\0') || plan.replacement.contains('\0') {
             return Err("embedded NUL cannot be replaced safely".into());
         }
+        if plan.original.is_empty() && plan.replacement.is_empty() {
+            return Err("empty span cannot authorize a deletion".into());
+        }
+        if plan.range().start_back > 65_536 || plan.replacement.encode_utf16().count() > 65_536 {
+            return Err("replacement range exceeds the input budget".into());
+        }
         if !current(plan) {
             return Err("target or input changed before replacement".into());
         }
@@ -77,22 +83,17 @@ impl PreparedRange {
                 let pattern: IUIAutomationTextPattern =
                     element.GetCurrentPatternAs(UIA_TextPatternId)?;
                 let caret = collapsed_selection(&pattern)?;
-                let span = caret.Clone()?;
-                span.MoveEndpointByUnit(
-                    START,
-                    TextUnit_Character,
-                    -(plan.range().start_back as i32),
-                )?;
-                span.MoveEndpointByUnit(END, TextUnit_Character, -(plan.range().end_back as i32))?;
-                if span.GetText(-1)?.to_string() != plan.original {
+                // Providers differ on supplementary Unicode character units.
+                // Resolve both known spans independently and require exact text.
+                let following = adjacent_range(&caret, plan.following, true)?;
+                let original_end = following.Clone()?;
+                original_end.MoveEndpointByRange(END, &following, START)?;
+                let span = adjacent_range(&original_end, plan.original, true)?;
+                if span.CompareEndpoints(START, &span, END)? > 0
+                    || span.CompareEndpoints(END, &caret, END)? > 0
+                    || span.GetText(-1)?.to_string() != plan.original
+                {
                     return Err(range_error("pre-caret text does not match"));
-                }
-                // The frozen segment may precede newer typing, never guess its distance.
-                let following = span.Clone()?;
-                following.MoveEndpointByRange(START, &span, END)?;
-                following.MoveEndpointByRange(END, &caret, END)?;
-                if following.GetText(-1)?.to_string() != plan.following {
-                    return Err(range_error("known following text does not match"));
                 }
                 Ok(Self {
                     automation,
@@ -103,8 +104,8 @@ impl PreparedRange {
                 })
             })()
         };
-        let range =
-            result.map_err(|error| format!("no reliable collapsed pre-caret range: {error}"))?;
+        // Provider error messages are untrusted and can contain document text.
+        let range = result.map_err(|_| "no reliable collapsed pre-caret range".to_owned())?;
         if !current(plan) || !range.focused() {
             return Err("focus or input changed while proving range".into());
         }
@@ -125,15 +126,9 @@ impl PreparedRange {
     }
 
     fn replace(&self, method: ReplacementMethod, plan: &ReplacementPlan<'_>) -> Attempt {
-        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-            GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
-        };
         // Never release the user's modifiers or inject text through a held hotkey.
         let released = std::time::Instant::now() + std::time::Duration::from_millis(250);
-        while [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
-            .iter()
-            .any(|key| unsafe { GetAsyncKeyState(i32::from(*key)) } < 0)
-        {
+        while super::send_input::modifiers_held() {
             if std::time::Instant::now() >= released || !current(plan) {
                 return Attempt::Unavailable(
                     "shortcut modifiers remain held or input changed".into(),
@@ -153,9 +148,28 @@ impl PreparedRange {
                 }
             }
         } else {
-            if plan.replacement.contains(['\r', '\n', '\t']) {
-                return Attempt::Unavailable("SendInput refuses control characters".into());
+            None
+        };
+        let input_window = if method == ReplacementMethod::SendInput {
+            match unsafe { self.element.CurrentNativeWindowHandle() } {
+                Ok(window) if super::send_input::supports_target(window.0 as isize) => {
+                    Some(window.0 as isize)
+                }
+                _ => {
+                    return Attempt::Unavailable(
+                        "SendInput target has no verified insert semantics".into(),
+                    )
+                }
             }
+        } else {
+            None
+        };
+        let inputs = if input_window.is_some() {
+            match super::send_input::prepare(plan.replacement) {
+                Ok(inputs) => Some(inputs),
+                Err(reason) => return Attempt::Unavailable(reason),
+            }
+        } else {
             None
         };
         // Snapshot every clipboard format before selecting anything in the target.
@@ -174,29 +188,15 @@ impl PreparedRange {
             reason: None,
             may_have_changed: false,
         };
+        let mut selection_attempted = false;
         let operation = (|| -> Result<(), String> {
             if !current(plan) || !self.focused() {
                 return Err("target changed before selection".into());
             }
+            selection_attempted = true;
             unsafe { self.span.Select() }.map_err(|_| "range selection failed")?;
             // Verify Select selected exactly the proven span, not a provider approximation.
-            let selected =
-                unsafe { self.pattern.GetSelection() }.map_err(|_| "selection unreadable")?;
-            if unsafe { selected.Length() }.ok() != Some(1) {
-                return Err("selection is not a single range".into());
-            }
-            let selected = unsafe { selected.GetElement(0) }.map_err(|_| "selection unreadable")?;
-            if unsafe { selected.CompareEndpoints(START, &self.span, START) }.ok() != Some(0)
-                || unsafe { selected.CompareEndpoints(END, &self.span, END) }.ok() != Some(0)
-                || unsafe { selected.GetText(-1) }
-                    .map_err(|_| "selection unreadable")?
-                    .to_string()
-                    != plan.original
-                || !current(plan)
-                || !self.focused()
-            {
-                return Err("selected range or input changed".into());
-            }
+            self.verify_selection(plan)?;
             if let Some(transaction) = clipboard.as_mut() {
                 transaction.install().map_err(|failure| {
                     if failure.clipboard_uncertain {
@@ -208,8 +208,19 @@ impl PreparedRange {
                     failure.reason
                 })?;
             }
+            // Clipboard preparation and provider calls can take time. Recheck the
+            // exact selection and user modifiers at the last mutation boundary.
+            self.verify_selection(plan)?;
+            if super::send_input::modifiers_held() {
+                return Err("shortcut modifier pressed before mutation".into());
+            }
+            if let Some(window) = input_window {
+                if !super::send_input::supports_target(window) || !keyboard_target(window, plan) {
+                    return Err("SendInput keyboard focus or target safety changed".into());
+                }
+            }
             if !current(plan) || !self.focused() {
-                return Err("target or input changed while preparing paste".into());
+                return Err("target or input changed before mutation".into());
             }
             // After this point a failed call may have mutated text: never fall through.
             result.may_have_changed = true;
@@ -219,7 +230,7 @@ impl PreparedRange {
                     || restore_clipboard(clipboard.as_mut(), plan),
                 )?;
             } else {
-                send_text(plan.replacement)?;
+                super::send_input::send(inputs.as_deref().ok_or("SendInput batch unavailable")?)?;
             }
             let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
             loop {
@@ -237,10 +248,9 @@ impl PreparedRange {
             }
         })();
         let restored = restore_clipboard(clipboard.as_mut(), plan);
-        if operation.is_err() && !result.may_have_changed && current(plan) && self.focused() {
-            if unsafe { self.original_caret.Select() }.is_err() {
-                result.may_have_changed = true;
-            }
+        if operation.is_err() && !result.may_have_changed && selection_attempted {
+            // An unverified selection is enough to invalidate the typed anchor.
+            result.may_have_changed = !self.restore_original_caret(plan);
         }
         match (operation, restored) {
             (Ok(()), Ok(())) => result.success = true,
@@ -248,6 +258,48 @@ impl PreparedRange {
             (Err(reason), Err(restore)) => result.reason = Some(format!("{reason}; {restore}")),
         }
         Attempt::Finished(result)
+    }
+
+    fn restore_original_caret(&self, plan: &ReplacementPlan<'_>) -> bool {
+        if !current(plan) || !self.focused() {
+            return false;
+        }
+        unsafe {
+            self.original_caret.Select().is_ok()
+                && collapsed_selection(&self.pattern).is_ok_and(|caret| {
+                    caret.CompareEndpoints(END, &self.original_caret, END).ok() == Some(0)
+                })
+                && current(plan)
+                && self.focused()
+        }
+    }
+
+    fn verify_selection(&self, plan: &ReplacementPlan<'_>) -> Result<(), String> {
+        unsafe {
+            let selections = self
+                .pattern
+                .GetSelection()
+                .map_err(|_| "selection unreadable")?;
+            if selections.Length().ok() != Some(1) {
+                return Err("selection is not a single range".into());
+            }
+            let selected = selections
+                .GetElement(0)
+                .map_err(|_| "selection unreadable")?;
+            if selected.CompareEndpoints(START, &self.span, START).ok() != Some(0)
+                || selected.CompareEndpoints(END, &self.span, END).ok() != Some(0)
+                || selected
+                    .GetText(-1)
+                    .map_err(|_| "selection unreadable")?
+                    .to_string()
+                    != plan.original
+                || !current(plan)
+                || !self.focused()
+            {
+                return Err("selected range or input changed".into());
+            }
+        }
+        Ok(())
     }
 
     fn verify_and_restore_caret(&self, plan: &ReplacementPlan<'_>) -> Result<(), String> {
@@ -259,24 +311,8 @@ impl PreparedRange {
                 let pattern: IUIAutomationTextPattern =
                     element.GetCurrentPatternAs(UIA_TextPatternId)?;
                 let caret = collapsed_selection(&pattern)?;
-                let preceding = caret.Clone()?;
-                preceding.MoveEndpointByUnit(
-                    START,
-                    TextUnit_Character,
-                    -(plan.replacement.chars().count() as i32),
-                )?;
-                if preceding.GetText(-1)?.to_string() != plan.replacement {
-                    return Err(range_error("inserted prefix does not match"));
-                }
-                let following = caret.Clone()?;
-                following.MoveEndpointByUnit(
-                    END,
-                    TextUnit_Character,
-                    plan.following.chars().count() as i32,
-                )?;
-                if following.GetText(-1)?.to_string() != plan.following {
-                    return Err(range_error("following text does not match"));
-                }
+                adjacent_range(&caret, plan.replacement, true)?;
+                let following = adjacent_range(&caret, plan.following, false)?;
                 if !current(plan) || !self.focused() {
                     return Err(range_error("target changed before caret restoration"));
                 }
@@ -291,7 +327,7 @@ impl PreparedRange {
                 }
                 Ok(())
             })()
-            .map_err(|error| error.to_string())
+            .map_err(|_| "native replacement or caret verification failed".to_owned())
         }
     }
 }
@@ -311,6 +347,32 @@ fn restore_clipboard(
 #[cfg(windows)]
 fn range_error(message: &str) -> windows::core::Error {
     windows::core::Error::new(windows::core::HRESULT(0x80004005u32 as i32), message)
+}
+
+/// Resolve a known adjacent span, never search document text or move the caret.
+/// Accept only exact text at the fixed anchor, using scalar or UTF-16 units.
+#[cfg(windows)]
+unsafe fn adjacent_range(
+    anchor: &IUIAutomationTextRange,
+    text: &str,
+    before: bool,
+) -> windows::core::Result<IUIAutomationTextRange> {
+    if anchor.CompareEndpoints(START, anchor, END)? != 0 {
+        return Err(range_error("range anchor is not collapsed"));
+    }
+    for count in [text.chars().count(), text.encode_utf16().count()] {
+        let count = i32::try_from(count).map_err(|_| range_error("range exceeds input budget"))?;
+        let range = anchor.Clone()?;
+        range.MoveEndpointByUnit(
+            if before { START } else { END },
+            TextUnit_Character,
+            if before { -count } else { count },
+        )?;
+        if range.GetText(-1)?.to_string() == text {
+            return Ok(range);
+        }
+    }
+    Err(range_error("adjacent range does not match known text"))
 }
 
 #[cfg(windows)]
@@ -344,46 +406,22 @@ fn current(plan: &ReplacementPlan<'_>) -> bool {
 }
 
 #[cfg(windows)]
-fn send_text(text: &str) -> Result<(), String> {
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
-        VK_BACK,
+fn keyboard_target(window: isize, plan: &ReplacementPlan<'_>) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, GUITHREADINFO,
     };
-    let mut inputs = Vec::new();
-    let units: Vec<_> = text.encode_utf16().collect();
-    for unit in if units.is_empty() { vec![0] } else { units } {
-        for up in [false, true] {
-            inputs.push(INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: if text.is_empty() { VK_BACK } else { 0 },
-                        wScan: unit,
-                        dwFlags: if text.is_empty() {
-                            0
-                        } else {
-                            KEYEVENTF_UNICODE
-                        } | if up { KEYEVENTF_KEYUP } else { 0 },
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            });
+    unsafe {
+        let foreground = GetForegroundWindow();
+        if foreground as isize != plan.target.window_handle {
+            return false;
         }
-    }
-    let sent = unsafe {
-        SendInput(
-            inputs.len() as u32,
-            inputs.as_ptr(),
-            std::mem::size_of::<INPUT>() as i32,
-        )
-    };
-    if sent as usize == inputs.len() {
-        Ok(())
-    } else {
-        Err(format!(
-            "SendInput inserted {sent} of {} events (possibly blocked by UIPI)",
-            inputs.len()
-        ))
+        let mut process = 0;
+        let thread = GetWindowThreadProcessId(foreground, &mut process);
+        let mut info: GUITHREADINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+        process == plan.target.process_id
+            && thread != 0
+            && GetGUIThreadInfo(thread, &mut info) != 0
+            && info.hwndFocus as isize == window
     }
 }

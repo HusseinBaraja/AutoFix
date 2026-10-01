@@ -1,6 +1,6 @@
 use crate::{
     settings::{AppConfig, CorrectionEngine, RunMode},
-    storage::{AppRule, Database},
+    storage::{AppPolicyGuard, AppRule, Database},
 };
 
 use super::target::{self, CorrectionEligibility, FocusedTarget, TargetDetection};
@@ -48,6 +48,31 @@ pub(crate) enum BlockReason {
 pub(crate) struct SecurityGate;
 
 impl SecurityGate {
+    /// Keep the current app rules stable through native mutation and verification.
+    /// Missing/busy storage refuses replacement before any selection or input.
+    pub(super) fn authorize_replacement(
+        trigger: TriggerKind,
+        config: &AppConfig,
+        database: &Database,
+        target: &FocusedTarget,
+    ) -> Option<AppPolicyGuard> {
+        if !config.correction.enabled {
+            return None;
+        }
+        let guard = AppPolicyGuard::acquire(database.path()?).ok()?;
+        let rules = guard.rules().ok()?;
+        matches!(
+            check_detection(
+                trigger,
+                config,
+                &rules,
+                TargetDetection::Available(target.clone())
+            ),
+            SecurityDecision::Allowed { .. }
+        )
+        .then_some(guard)
+    }
+
     /// Missing application policy denies capture and engine execution for every trigger.
     pub(crate) fn check(
         trigger: TriggerKind,
@@ -430,6 +455,95 @@ mod tests {
             local_engine_allowed: true,
             api_engine_allowed: true,
         }
+    }
+
+    #[test]
+    fn replacement_guard_denies_revocation_and_serializes_policy_writes() {
+        let path = std::env::temp_dir().join(format!(
+            "autofix-replacement-policy-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let database = Database::open(&path).unwrap();
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection.busy_timeout(std::time::Duration::ZERO).unwrap();
+        let mut config = AppConfig::default();
+        database
+            .app_rules()
+            .upsert(&allow_rule("notepad.exe"))
+            .unwrap();
+        let editor = target("notepad.exe");
+        let guard = SecurityGate::authorize_replacement(
+            TriggerKind::ManualShortcut,
+            &config,
+            &database,
+            &editor,
+        )
+        .unwrap();
+        // The rule cannot be revoked between authorization and native mutation.
+        assert!(connection
+            .execute("UPDATE app_rules SET list_behavior = 'blocklist'", [])
+            .is_err());
+        drop(guard);
+        database
+            .app_rules()
+            .upsert(&block_rule("notepad.exe"))
+            .unwrap();
+        for trigger in [
+            TriggerKind::ManualShortcut,
+            TriggerKind::Character,
+            TriggerKind::WordCount,
+            TriggerKind::Undo,
+        ] {
+            assert!(
+                SecurityGate::authorize_replacement(trigger, &config, &database, &editor).is_none()
+            );
+        }
+        database
+            .app_rules()
+            .upsert(&allow_rule("notepad.exe"))
+            .unwrap();
+        connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert!(SecurityGate::authorize_replacement(
+            TriggerKind::ManualShortcut,
+            &config,
+            &database,
+            &editor
+        )
+        .is_none());
+        connection.execute_batch("ROLLBACK").unwrap();
+        config.correction.enabled = false;
+        assert!(SecurityGate::authorize_replacement(
+            TriggerKind::ManualShortcut,
+            &config,
+            &database,
+            &editor
+        )
+        .is_none());
+        config.correction.enabled = true;
+        let mut protected = editor.clone();
+        protected.is_password_or_protected = true;
+        assert!(SecurityGate::authorize_replacement(
+            TriggerKind::Undo,
+            &config,
+            &database,
+            &protected
+        )
+        .is_none());
+        connection.execute("DROP TABLE app_rules", []).unwrap();
+        assert!(SecurityGate::authorize_replacement(
+            TriggerKind::ManualShortcut,
+            &config,
+            &database,
+            &editor
+        )
+        .is_none());
+        drop(connection);
+        drop(database);
+        std::fs::remove_file(path).unwrap();
     }
 
     fn block_rule(process_name: &str) -> AppRule {

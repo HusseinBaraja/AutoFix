@@ -1,6 +1,8 @@
 //! The mutation owner. Strategies may fall through only before any target mutation.
 mod clipboard;
 mod native;
+#[cfg(windows)]
+mod send_input;
 #[cfg(test)]
 mod tests;
 
@@ -37,6 +39,20 @@ pub(super) struct ReplacementResult {
     pub(super) reason: Option<String>,
     /// Failed verification or partial input requires dropping the tracked session.
     pub(super) may_have_changed: bool,
+}
+
+impl ReplacementResult {
+    /// Native failures remain visible with default logging. No target text is logged.
+    pub(super) fn log_outcome(&self, undo: bool) {
+        if self.success {
+            tracing::info!(success = true, method = ?self.method, range = ?self.range, undo,
+                "native replacement completed");
+        } else {
+            tracing::warn!(success = false, method = ?self.method, range = ?self.range,
+                reason = ?self.reason, may_have_changed = self.may_have_changed, undo,
+                "native replacement failed or skipped");
+        }
+    }
 }
 
 struct ReplacementPlan<'a> {

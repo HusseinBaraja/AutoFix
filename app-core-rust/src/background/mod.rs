@@ -441,6 +441,17 @@ impl InputProcessor {
                 context_capture::read_before_caret(target, &config.context, known_chars)
             },
             |target, request, output| {
+                let Some(_policy_guard) =
+                    SecurityGate::authorize_replacement(request.trigger, config, database, target)
+                else {
+                    tracing::warn!(
+                        success = false,
+                        method = "none",
+                        reason = "replacement policy unavailable or denied",
+                        "replacement skipped"
+                    );
+                    return false;
+                };
                 let result = ReplacementEngine::replace(
                     target,
                     request,
@@ -449,13 +460,7 @@ impl InputProcessor {
                     config.replacement.clipboard_enabled,
                 );
                 replacement_uncertain = !result.success && result.may_have_changed;
-                tracing::debug!(
-                    success = result.success,
-                    method = ?result.method,
-                    range = ?result.range,
-                    reason = ?result.reason,
-                    "replacement completed"
-                );
+                result.log_outcome(false);
                 result.success
             },
         );
@@ -770,6 +775,20 @@ impl InputProcessor {
         if Self::input_stamp() != stamp || !live.ends_with(&known) {
             return;
         }
+        let Some(_policy_guard) = SecurityGate::authorize_replacement(
+            TriggerKind::Undo,
+            &self.config,
+            &self.database,
+            &target,
+        ) else {
+            tracing::warn!(
+                success = false,
+                method = "none",
+                reason = "replacement policy unavailable or denied",
+                "app correction undo skipped"
+            );
+            return;
+        };
         self.pipeline.cancel();
         if let Some(session) = self.session_manager.active_mut() {
             session.restore_pending();
@@ -780,8 +799,7 @@ impl InputProcessor {
             stamp,
             self.config.replacement.clipboard_enabled,
         );
-        tracing::debug!(success = result.success, method = ?result.method,
-            range = ?result.range, reason = ?result.reason, "app correction undo completed");
+        result.log_outcome(true);
         if result.success {
             if let Some(session) = self.session_manager.active_mut() {
                 session.undo_last_correction(&self.config.context);

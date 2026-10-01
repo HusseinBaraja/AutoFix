@@ -277,14 +277,30 @@ by a new copy. Other clipboard attempts use fallback while recovery is pending.
 
 SendInput fallback inserts UTF-16 Unicode key pairs into the same proved
 selection; an empty replacement deletes the selection with Backspace. It does
-not use or change the clipboard. It refuses control characters and held shortcut
-modifiers (after a bounded release wait). Partial input, failed paste, or failed
+not use or change the clipboard. The entire batch is validated and allocated
+before selection. It runs only after all safer available methods refuse, or the
+clipboard method is disabled. Only standard Unicode Edit controls with known
+insert semantics are supported. Read-only, password, numeric, case-transforming,
+ANSI, custom and RichEdit controls refuse this fallback before selection.
+It refuses all control characters and held shortcut
+modifiers (after a bounded release wait). Immediately before mutation it rechecks
+the exact selected text, input generations, field security, modifiers and native
+keyboard focus. Partial input, failed paste, or failed
 verification stops the strategy chain and invalidates the tracked session.
+If a partial batch ends on a keydown, only its matching keyup is attempted;
+deletion and typing are never retried.
 Verification reacquires a fresh UI Automation provider after mutation and restores
 the caret beyond newer typed text only after checking that text exactly.
+Range proof accepts scalar or UTF-16 provider units only when the text matches
+exactly at its fixed anchor; it never searches for similar text. App rules are
+reread under a SQLite writer reservation held through replacement and app undo.
+Missing or busy policy storage skips mutation. Provider error messages are
+discarded so failure logs cannot contain document text.
 
 Every replacement returns success/failure, the attempted method (or none for
 pre-strategy rejection), the exact range when proved, and a failure reason.
+Failure/skip metadata is logged at warning level under default logging, including
+the attempted method and whether the tracked selection may have changed.
 Range offsets count Unicode characters backwards from the original caret,
 with `start_back >= end_back >= 0`; they are not document byte or UTF-16 offsets.
 App-level undo uses only a recorded app correction that remains fully retained

@@ -17,6 +17,11 @@ before reporting success. Disable it under **Correction > Use clipboard for
 correction** or set `replacement.clipboard_enabled = false` in settings TOML.
 See [the engine documentation](app-core-rust/README.md) for runtime boundaries.
 
+When safer methods are unavailable or clipboard correction is disabled, SendInput
+can replace a verified pre-caret span in supported Unicode Edit controls. Unknown
+controls, unsafe selections and security refusals skip correction and log only
+failure metadata.
+
 ## Run App
 
 From the repository root, build and run AutoFix:

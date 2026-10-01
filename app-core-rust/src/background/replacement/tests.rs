@@ -134,6 +134,45 @@ fn strategy_order_and_preparation_failures_allow_fallback() {
 }
 
 #[test]
+fn successful_safer_method_never_reaches_send_input() {
+    for method in [
+        ReplacementMethod::DirectTextApi,
+        ReplacementMethod::UiAutomation,
+        ReplacementMethod::Clipboard,
+    ] {
+        let target = target();
+        let plan = ReplacementPlan {
+            target: &target,
+            original: "teh",
+            replacement: "the",
+            following: "",
+            stamp: STAMP,
+        };
+        let calls = RefCell::new(Vec::new());
+        let mut safer = FakeStrategy {
+            method,
+            calls: &calls,
+            result: Some(ReplacementResult {
+                success: true,
+                method: Some(method),
+                range: Some(plan.range()),
+                reason: None,
+                may_have_changed: true,
+            }),
+        };
+        let mut fallback = FakeStrategy {
+            method: ReplacementMethod::SendInput,
+            calls: &calls,
+            result: None,
+        };
+        let result = run_strategies(&plan, &mut [&mut safer, &mut fallback], true);
+        assert!(result.success);
+        assert_eq!(result.method, Some(method));
+        assert_eq!(*calls.borrow(), [method]);
+    }
+}
+
+#[test]
 fn no_retry_after_paste_partial_input_or_failed_verification() {
     for reason in [
         "clipboard paste timed out",
@@ -361,10 +400,19 @@ fn native_edit_replacement_smoke() {
         previous,
     };
     thread::sleep(std::time::Duration::from_millis(150));
-    for method in [ReplacementMethod::Clipboard, ReplacementMethod::SendInput] {
+    for (method, original, replacement, following) in [
+        (ReplacementMethod::Clipboard, "teh", "the", ""),
+        (ReplacementMethod::SendInput, "teh", "the", ""),
+        (ReplacementMethod::SendInput, "teh", "the", " newer"),
+        (ReplacementMethod::SendInput, "teh", "", " newer"),
+        (ReplacementMethod::SendInput, "teh", "é😃", ""),
+        (ReplacementMethod::SendInput, "teh", "العربية", ""),
+    ] {
+        let initial = format!("old {original}{following} AFTER");
+        let initial_caret = format!("old {original}{following}").encode_utf16().count();
         unsafe {
-            SetWindowTextW(edit as _, wide("old teh AFTER").as_ptr());
-            SendMessageW(edit as _, EM_SETSEL, 7, 7);
+            SetWindowTextW(edit as _, wide(&initial).as_ptr());
+            SendMessageW(edit as _, EM_SETSEL, initial_caret, initial_caret as isize);
         }
         let super::super::target::TargetDetection::Available(target) =
             super::super::target::detect_focused_target()
@@ -383,7 +431,7 @@ fn native_edit_replacement_smoke() {
                 32
             )
             .as_deref(),
-            Some("old teh")
+            Some(format!("old {original}{following}").as_str())
         );
         let stamp = InputStamp {
             position: super::super::input_listener::current_position_generation(),
@@ -391,9 +439,9 @@ fn native_edit_replacement_smoke() {
         };
         let plan = ReplacementPlan {
             target: &target,
-            original: "teh",
-            replacement: "the",
-            following: "",
+            original,
+            replacement,
+            following,
             stamp,
         };
         let mut result = run_strategies(&plan, &mut [&mut native::NativeStrategy(method)], true);
@@ -431,7 +479,7 @@ fn native_edit_replacement_smoke() {
         {
             assert_eq!(
                 String::from_utf16_lossy(&observed[..observed_length as usize]),
-                "old teh AFTER"
+                initial
             );
             eprintln!("clipboard path safely refused an owner-managed format; checking SendInput fallback");
             continue;
@@ -445,8 +493,8 @@ fn native_edit_replacement_smoke() {
         assert_eq!(
             result.range,
             Some(ReplacedRange {
-                start_back: 3,
-                end_back: 0
+                start_back: original.chars().count() + following.chars().count(),
+                end_back: following.chars().count()
             })
         );
         let mut text = [0u16; 128];
@@ -460,8 +508,12 @@ fn native_edit_replacement_smoke() {
         };
         assert_eq!(
             String::from_utf16_lossy(&text[..length as usize]),
-            "old the AFTER"
+            format!("old {replacement}{following} AFTER")
         );
+        let expected_caret = format!("old {replacement}{following}")
+            .encode_utf16()
+            .count() as u32;
+        assert_eq!((caret_start, caret_end), (expected_caret, expected_caret));
     }
 }
 
