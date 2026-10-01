@@ -5,6 +5,7 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class GracefulEngineStopTests
 {
+    /// <summary>Normal stop waits for cleanup and never reaches forced termination.</summary>
     [TestMethod]
     public void IntentionalStopSignalsAndWaitsWithoutKilling()
     {
@@ -17,6 +18,7 @@ public sealed class GracefulEngineStopTests
         CollectionAssert.AreEqual(new[] { "signal", "drain" }, calls);
     }
 
+    /// <summary>A cleanup timeout falls back to termination only after the wait.</summary>
     [TestMethod]
     public void TimedOutCleanupKillsOnlyAfterWaiting()
     {
@@ -29,6 +31,7 @@ public sealed class GracefulEngineStopTests
         CollectionAssert.AreEqual(new[] { "signal", "drain", "kill" }, calls);
     }
 
+    /// <summary>An already exited engine must not receive signals or termination.</summary>
     [TestMethod]
     public void ExitedEngineNeedsNoSignalOrKill()
     {
@@ -38,6 +41,7 @@ public sealed class GracefulEngineStopTests
             () => throw new AssertFailedException("kill"));
     }
 
+    /// <summary>Stop targets the selected engine PID without signaling a different process.</summary>
     [TestMethod]
     public void StopSignalUsesTheEngineProcessId()
     {

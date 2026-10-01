@@ -71,7 +71,7 @@ struct RuntimeComponents {
 
 struct InputWorker {
     queue: Arc<(Mutex<VecDeque<InputWork>>, Condvar)>,
-    done: mpsc::Receiver<()>,
+    done: mpsc::Receiver<bool>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -199,9 +199,13 @@ impl BackgroundRuntime {
         Ok(Self { components })
     }
 
+    /// Report unresolved cleanup separately from a fully drained graceful exit.
     fn shutdown(self) {
-        self.components.shutdown();
-        tracing::info!("AutoFix background process exited cleanly");
+        if self.components.shutdown() {
+            tracing::info!("AutoFix background process exited cleanly");
+        } else {
+            tracing::warn!("AutoFix background process exited with incomplete cleanup");
+        }
     }
 
     fn run_until_exit(&mut self) {
@@ -238,11 +242,13 @@ impl RuntimeComponents {
         })
     }
 
-    fn shutdown(self) {
-        self.input_worker.shutdown();
+    /// Stop input mutation first and preserve the cleanup outcome through component teardown.
+    fn shutdown(self) -> bool {
+        let clean = self.input_worker.shutdown();
         drop(self.input_listener);
         self.global_shortcut.shutdown();
         self.ipc_server.shutdown();
+        clean
     }
 
     fn run_until_exit(&mut self) {
@@ -364,8 +370,7 @@ impl InputWorker {
                     }
                     processor.finish_correction();
                 }
-                replacement::finish_shutdown();
-                let _ = done_sender.send(());
+                let _ = done_sender.send(replacement::finish_shutdown());
             })
             .map_err(BackgroundError::InputWorker)?;
         Ok(Self {
@@ -401,7 +406,8 @@ impl InputWorker {
         ready.notify_one();
     }
 
-    fn shutdown(mut self) {
+    /// Wait for processor and clipboard cleanup without treating a timeout as success.
+    fn shutdown(mut self) -> bool {
         replacement::begin_shutdown();
         let (lock, ready) = &*self.queue;
         {
@@ -410,12 +416,14 @@ impl InputWorker {
             pending.push_back(InputWork::Shutdown);
             ready.notify_one();
         }
-        if self.done.recv_timeout(Duration::from_secs(4)).is_ok() {
+        if let Ok(clean) = self.done.recv_timeout(Duration::from_secs(4)) {
             if let Some(thread) = self.thread.take() {
                 let _ = thread.join();
             }
+            clean
         } else {
             tracing::warn!("input processor still waiting on UI Automation during shutdown");
+            false
         }
     }
 }

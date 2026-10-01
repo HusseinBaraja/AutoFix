@@ -68,6 +68,7 @@ unsafe fn fingerprint(format: u32, handle: HANDLE) -> Vec<u8> {
     }
 }
 
+/// Verify native preservation, bounded quarantine, newer copies, and both shutdown outcomes.
 #[test]
 #[ignore = "runs native clipboard operations in a child with an isolated window station"]
 fn native_clipboard_preservation_smoke() {
@@ -77,23 +78,26 @@ fn native_clipboard_preservation_smoke() {
         UI::WindowsAndMessaging::WINSTA_ALL_ACCESS,
     };
     if std::env::var("AUTOFIX_CLIPBOARD_TEST_HOST").as_deref() != Ok("1") {
-        let output = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "native_clipboard_preservation_smoke",
-                "--ignored",
-                "--nocapture",
-                "--test-threads=1",
-            ])
-            .env("AUTOFIX_CLIPBOARD_TEST_HOST", "1")
-            .creation_flags(0x08000000)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "isolated clipboard test failed: {} {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
+        for exhausted_exit in ["0", "1"] {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "native_clipboard_preservation_smoke",
+                    "--ignored",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env("AUTOFIX_CLIPBOARD_TEST_HOST", "1")
+                .env("AUTOFIX_CLIPBOARD_TEST_EXHAUSTED_EXIT", exhausted_exit)
+                .creation_flags(0x08000000)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated clipboard test failed: {} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
         return;
     }
     // A clipboard belongs to a window station. Never write to the user's station.
@@ -297,6 +301,11 @@ fn native_clipboard_preservation_smoke() {
     assert!(blocked.restore().is_err());
     drop(blocked);
     assert!(RECOVERY_PENDING.load(Ordering::Acquire));
+    // Keep the lock beyond the active retry budget. Originals and cross-app
+    // exclusion must survive exhaustion until controlled recovery can resume.
+    thread::sleep(Duration::from_millis(2500));
+    assert!(RECOVERY_PENDING.load(Ordering::Acquire));
+    assert!(ClipboardTransaction::prepare("another app correction").is_err());
     release.send(()).unwrap();
     holder.join().unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -340,6 +349,16 @@ fn native_clipboard_preservation_smoke() {
 
     // A permanently invalid publication must terminate, scrub temporary text,
     // and release ownership rather than republish forever.
+    let lock = ClipboardLock::open(seed_owner).unwrap();
+    let original = wide("saved original")
+        .into_iter()
+        .flat_map(u16::to_ne_bytes)
+        .collect::<Vec<_>>();
+    SavedFormat::bytes(UNICODE_TEXT, &original)
+        .unwrap()
+        .publish()
+        .unwrap();
+    drop(lock);
     let mut permanent = ClipboardTransaction::prepare("temporary failure text").unwrap();
     permanent
         .install()
@@ -348,19 +367,40 @@ fn native_clipboard_preservation_smoke() {
         .saved
         .push(SavedFormat::bytes(0, b"invalid format").unwrap());
     permanent.restore_copy = None;
-    permanent.recovery_owner = true;
-    let began = Instant::now();
-    recovery::recover(&mut permanent, Duration::from_millis(100));
-    assert!(began.elapsed() < Duration::from_secs(1));
+    drop(permanent);
+    thread::sleep(Duration::from_millis(2500));
     assert!(
-        permanent.changed,
-        "invalid publication must remain a failure"
+        RECOVERY_PENDING.load(Ordering::Acquire),
+        "permanent failure released exclusion"
+    );
+    assert!(ClipboardTransaction::prepare("another app correction").is_err());
+    let lock = ClipboardLock::open(seed_owner).unwrap();
+    assert!(
+        unsafe { fingerprint(UNICODE_TEXT, GetClipboardData(UNICODE_TEXT)) }.starts_with(&original)
+    );
+    drop(lock);
+    let sequence = unsafe { GetClipboardSequenceNumber() };
+    thread::sleep(Duration::from_millis(500));
+    assert_eq!(
+        unsafe { GetClipboardSequenceNumber() },
+        sequence,
+        "quarantine kept republishing partial data"
     );
     let lock = ClipboardLock::open(seed_owner).unwrap();
-    assert!(unsafe { GetClipboardData(UNICODE_TEXT) }.is_null());
+    assert!(unsafe { EmptyClipboard() } != 0);
+    SavedFormat::bytes(UNICODE_TEXT, &original)
+        .unwrap()
+        .publish()
+        .unwrap();
     drop(lock);
-    unsafe { DestroyWindow(permanent.owner) };
-    drop(permanent);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while RECOVERY_PENDING.load(Ordering::Acquire) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        !RECOVERY_PENDING.load(Ordering::Acquire),
+        "new copy did not end quarantine"
+    );
 
     // EmptyClipboard sends WM_DESTROYCLIPBOARD to the owner synchronously.
     // The recovery thread must service it even when the caller holds the lock.
@@ -403,6 +443,21 @@ fn native_clipboard_preservation_smoke() {
     exiting
         .install()
         .unwrap_or_else(|failure| panic!("{}", failure.reason));
+    if std::env::var("AUTOFIX_CLIPBOARD_TEST_EXHAUSTED_EXIT").as_deref() == Ok("1") {
+        exiting
+            .saved
+            .push(SavedFormat::bytes(0, b"invalid format").unwrap());
+        exiting.restore_copy = None;
+        drop(exiting);
+        assert!(RECOVERY_PENDING.load(Ordering::Acquire));
+        assert!(!shutdown(), "incomplete cleanup was reported as clean");
+        assert!(RECOVERY_PENDING.load(Ordering::Acquire));
+        assert!(ClipboardTransaction::prepare("another app correction").is_err());
+        let lock = ClipboardLock::open(seed_owner).unwrap();
+        assert!(unsafe { EmptyClipboard() } != 0);
+        drop(lock);
+        return;
+    }
     let (ready, started) = mpsc::channel();
     let (release, released) = mpsc::channel();
     let holder = thread::spawn(move || {
@@ -416,7 +471,7 @@ fn native_clipboard_preservation_smoke() {
     drop(exiting);
     assert!(RECOVERY_PENDING.load(Ordering::Acquire));
     release.send(()).unwrap();
-    shutdown();
+    assert!(shutdown(), "restored clipboard was reported as incomplete");
     holder.join().unwrap();
     assert!(!RECOVERY_PENDING.load(Ordering::Acquire));
     assert!(

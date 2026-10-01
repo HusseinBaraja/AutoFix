@@ -31,6 +31,7 @@ impl ShutdownSignal {
 }
 
 impl Drop for ShutdownSignal {
+    /// Release the process-scoped event after engine teardown.
     fn drop(&mut self) {
         unsafe { CloseHandle(self.0) };
     }
@@ -40,6 +41,7 @@ impl Drop for ShutdownSignal {
 mod tests {
     use super::*;
 
+    /// An isolated manual-reset signal remains readable without blocking input processing.
     #[test]
     fn graceful_stop_signal_is_latched_and_polling_is_nonblocking() {
         // Keep the signal isolated from background-runtime tests in this process.

@@ -29,6 +29,7 @@ const STAMP: InputStamp = InputStamp {
     sequence: 2,
 };
 
+/// Pre-mutation authorization rejects title, process policy, and protection changes.
 #[test]
 fn correction_and_undo_refuse_changed_policy_attributes_without_input_movement() {
     let authorized = target();
@@ -42,6 +43,31 @@ fn correction_and_undo_refuse_changed_policy_attributes_without_input_movement()
     changed = authorized.clone();
     changed.is_password_or_protected = true;
     assert!(!native::same_authorized_target(&authorized, &changed));
+}
+
+/// Post-edit title markers are accepted without relaxing process, element, or security checks.
+#[test]
+fn post_mutation_title_change_keeps_identity_and_security_guards() {
+    let authorized = target();
+    let mut changed = authorized.clone();
+    changed.window_title = "*Test".into();
+    assert!(native::same_mutated_target(&authorized, &changed));
+    for mutate in [
+        (|t: &mut FocusedTarget| t.process_id += 1) as fn(&mut FocusedTarget),
+        |t| t.window_handle += 1,
+        |t| t.process_name = "other.exe".into(),
+        |t| t.focused_element_id = None,
+        |t| t.is_password_or_protected = true,
+        |t| t.is_elevated = true,
+        |t| t.is_hidden_or_unavailable = true,
+        |t| t.field_safety_known = false,
+        |t| t.is_secure_desktop = true,
+        |t| t.is_credential_dialog = true,
+    ] {
+        let mut unsafe_target = changed.clone();
+        mutate(&mut unsafe_target);
+        assert!(!native::same_mutated_target(&authorized, &unsafe_target));
+    }
 }
 
 #[test]
@@ -494,6 +520,7 @@ fn native_edit_replacement_smoke() {
     }
     for (method, original, replacement, following) in [
         (ReplacementMethod::Clipboard, "teh", "the", ""),
+        (ReplacementMethod::Clipboard, "teh", "the", " newer"),
         (ReplacementMethod::SendInput, "teh", "the", ""),
         (ReplacementMethod::SendInput, "teh", "the", " newer"),
         (ReplacementMethod::SendInput, "teh", "", " newer"),
@@ -503,6 +530,10 @@ fn native_edit_replacement_smoke() {
         let initial = format!("old {original}{following} AFTER");
         let initial_caret = format!("old {original}{following}").encode_utf16().count();
         unsafe {
+            let root = GetAncestor(edit as _, GA_ROOT);
+            SendMessageW(root, WM_APP + 2, 0, 0);
+            let title = wide("AutoFix replacement test");
+            SendMessageW(root, WM_SETTEXT, 0, title.as_ptr() as isize);
             let text = wide(&initial);
             assert_ne!(
                 SendMessageW(edit as _, WM_SETTEXT, 0, text.as_ptr() as isize),
@@ -540,6 +571,7 @@ fn native_edit_replacement_smoke() {
             following,
             stamp,
         };
+        unsafe { SendMessageW(GetAncestor(edit as _, GA_ROOT), WM_APP + 2, 1, 0) };
         let mut result = run_strategies(&plan, &mut [&mut native::NativeStrategy(method)], true);
         for _ in 0..5 {
             if result.success || result.may_have_changed {
@@ -586,6 +618,12 @@ fn native_edit_replacement_smoke() {
             String::from_utf16_lossy(&observed[..observed_length as usize])
         );
         assert_eq!(result.method, Some(method));
+        let super::super::target::TargetDetection::Available(after) =
+            super::super::target::detect_focused_target()
+        else {
+            panic!("test editor lost focus after mutation")
+        };
+        assert_eq!(after.window_title, "*AutoFix replacement test");
         assert_eq!(
             result.range,
             Some(ReplacedRange {
@@ -613,6 +651,39 @@ fn native_edit_replacement_smoke() {
     }
 }
 
+#[cfg(windows)]
+static NATIVE_TEST_PARENT_PROC: std::sync::atomic::AtomicIsize =
+    std::sync::atomic::AtomicIsize::new(0);
+
+/// Simulate editors that synchronously add a modified-title marker on EN_CHANGE.
+#[cfg(windows)]
+unsafe extern "system" fn native_test_editor_window_proc(
+    window: windows_sys::Win32::Foundation::HWND,
+    message: u32,
+    wparam: usize,
+    lparam: isize,
+) -> isize {
+    use windows_sys::Win32::UI::WindowsAndMessaging::*;
+    if message == WM_APP + 2 {
+        SetWindowLongPtrW(window, GWLP_USERDATA, wparam as isize);
+        return 0;
+    }
+    if message == WM_COMMAND
+        && wparam >> 16 == 0x0300
+        && GetWindowLongPtrW(window, GWLP_USERDATA) != 0
+    {
+        let title: Vec<u16> = "*AutoFix replacement test"
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        SetWindowTextW(window, title.as_ptr());
+    }
+    let previous: WNDPROC =
+        std::mem::transmute(NATIVE_TEST_PARENT_PROC.load(std::sync::atomic::Ordering::Relaxed));
+    CallWindowProcW(previous, window, message, wparam, lparam)
+}
+
+/// Child-owned editor supplies real notifications without reading or editing another app.
 #[cfg(windows)]
 #[test]
 #[ignore = "helper process for native_edit_replacement_smoke"]
@@ -644,6 +715,13 @@ fn native_edit_test_host() {
             ptr::null(),
         );
         assert!(!window.is_null());
+        let previous = SetWindowLongPtrW(
+            window,
+            GWLP_WNDPROC,
+            native_test_editor_window_proc as *const () as isize,
+        );
+        assert_ne!(previous, 0);
+        NATIVE_TEST_PARENT_PROC.store(previous, std::sync::atomic::Ordering::Relaxed);
         let edit = CreateWindowExW(
             0,
             wide("EDIT").as_ptr(),

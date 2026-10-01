@@ -27,9 +27,15 @@ fn shutting_down() -> bool {
 }
 
 /// Join recovery after the input processor has dropped its clipboard transaction.
-pub(super) fn finish_shutdown() {
+pub(super) fn finish_shutdown() -> bool {
     #[cfg(windows)]
-    clipboard::shutdown();
+    {
+        clipboard::shutdown()
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

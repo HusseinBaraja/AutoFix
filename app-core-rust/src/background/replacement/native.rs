@@ -243,7 +243,7 @@ impl PreparedRange {
             }
             let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
             loop {
-                if !current(plan) || !self.focused() {
+                if !current_after_mutation(plan) || !self.focused() {
                     return Err("target or input changed during replacement".into());
                 }
                 let failure = match self.verify_and_restore_caret(plan) {
@@ -321,14 +321,14 @@ impl PreparedRange {
                 let caret = collapsed_selection(&pattern)?;
                 adjacent_range(&caret, plan.replacement, true)?;
                 let following = adjacent_range(&caret, plan.following, false)?;
-                if !current(plan) || !self.focused() {
+                if !current_after_mutation(plan) || !self.focused() {
                     return Err(range_error("target changed before caret restoration"));
                 }
                 following.MoveEndpointByRange(START, &following, END)?;
                 following.Select()?;
                 let restored = collapsed_selection(&pattern)?;
                 if restored.CompareEndpoints(END, &following, END)? != 0
-                    || !current(plan)
+                    || !current_after_mutation(plan)
                     || !self.focused()
                 {
                     return Err(range_error("caret restoration could not be verified"));
@@ -404,6 +404,21 @@ unsafe fn collapsed_selection(
 /// Recheck input generations and the complete authorized target before native actions.
 #[cfg(windows)]
 fn current(plan: &ReplacementPlan<'_>) -> bool {
+    current_target(plan, same_authorized_target)
+}
+
+/// Verify the same eligible field after edits may have marked its title modified.
+#[cfg(windows)]
+fn current_after_mutation(plan: &ReplacementPlan<'_>) -> bool {
+    current_target(plan, same_mutated_target)
+}
+
+/// Bracket target detection with input and shutdown checks for either operation phase.
+#[cfg(windows)]
+fn current_target(
+    plan: &ReplacementPlan<'_>,
+    matches_target: impl FnOnce(&super::FocusedTarget, &super::FocusedTarget) -> bool,
+) -> bool {
     use super::super::{
         input_listener,
         target::{detect_focused_target, TargetDetection},
@@ -412,7 +427,7 @@ fn current(plan: &ReplacementPlan<'_>) -> bool {
         && input_listener::current_position_generation() == plan.stamp.position
         && input_listener::current_input_sequence() == plan.stamp.sequence
         && matches!(detect_focused_target(), TargetDetection::Available(target)
-            if same_authorized_target(plan.target, &target))
+            if matches_target(plan.target, &target))
         && input_listener::current_position_generation() == plan.stamp.position
         && input_listener::current_input_sequence() == plan.stamp.sequence
         && !super::shutting_down()
@@ -425,6 +440,17 @@ pub(super) fn same_authorized_target(
     current: &super::FocusedTarget,
 ) -> bool {
     current.correction_eligibility() == super::CorrectionEligibility::Allowed && current == expected
+}
+
+/// After mutation only the title may change; identity and every safety flag remain bound.
+#[cfg(any(windows, test))]
+pub(super) fn same_mutated_target(
+    expected: &super::FocusedTarget,
+    current: &super::FocusedTarget,
+) -> bool {
+    let mut retitled = current.clone();
+    retitled.window_title.clone_from(&expected.window_title);
+    same_authorized_target(expected, &retitled)
 }
 
 /// Confirm native keyboard focus belongs to the authorized process and control.

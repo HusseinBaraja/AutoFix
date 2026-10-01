@@ -59,6 +59,7 @@ public sealed class EngineProcessLauncher : IEngineProcessLauncher
         public int? ExitCode => process.HasExited ? process.ExitCode : null;
         public bool HasExited => process.HasExited;
 
+        /// <summary>Signal this engine and await native cleanup before forced termination.</summary>
         public void Stop()
         {
             GracefulEngineStop.Run(

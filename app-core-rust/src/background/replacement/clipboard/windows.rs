@@ -214,8 +214,8 @@ unsafe impl Send for Recovery {}
 mod recovery;
 use recovery::recovery_sender;
 /// Drain and stop the recovery worker before the engine exits.
-pub(super) fn shutdown() {
-    recovery::shutdown();
+pub(super) fn shutdown() -> bool {
+    recovery::shutdown()
 }
 
 /// Encode a NUL-terminated Windows string without borrowing temporary data.
@@ -459,8 +459,8 @@ impl ClipboardTransaction {
 
     /// Require an unchanged sequence and publish privacy markers before temporary text.
     pub(in crate::background::replacement) fn install(&mut self) -> Result<(), PreparationFailure> {
-        if super::super::shutting_down() {
-            return Err("clipboard replacement is shutting down".into());
+        if super::super::shutting_down() || RECOVERY_PENDING.load(Ordering::Acquire) {
+            return Err("clipboard replacement is shutting down or quarantined".into());
         }
         let _lock = ClipboardLock::open(self.owner)?;
         if unsafe { GetClipboardSequenceNumber() } != self.sequence {

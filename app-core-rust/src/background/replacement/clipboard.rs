@@ -115,6 +115,6 @@ pub(in crate::background::replacement) use windows::{paste, supports_paste, Clip
 
 /// Finish memory-only recovery before the engine returns to its host.
 #[cfg(windows)]
-pub(super) fn shutdown() {
-    windows::shutdown();
+pub(super) fn shutdown() -> bool {
+    windows::shutdown()
 }

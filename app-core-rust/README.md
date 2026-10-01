@@ -273,14 +273,19 @@ metadata-only warnings and skip clipboard replacement for that process name
 (case-insensitive) until the engine exits. A failed restore removes temporary
 text when the clipboard lock is available, keeps the full saved snapshot in
 memory, and retries recovery on a dedicated worker until restored or superseded
-by a new copy, with at most eight attempts over two seconds. The worker pumps
-clipboard-owner messages while retrying and waiting for the clipboard lock,
-then destroys its owner window so later Copy operations cannot hang. Other
-clipboard attempts use fallback while recovery is pending. The tray sends a
+by a new copy, with at most eight active attempts over two seconds. The worker pumps
+clipboard-owner messages while retrying and waiting for the clipboard lock.
+Exhaustion releases ownership but retains originals in memory and quarantines
+clipboard replacement across all apps. Read-only probes recognize a newer copy
+or resume one restoration when a previously busy lock clears. Partial restorations
+are not emptied and republished on each probe. The gate clears only after full
+restoration or an external copy. Other clipboard attempts use fallback while
+recovery is pending or quarantined. The tray sends a
 process-scoped graceful stop signal and waits for the engine to drain recovery
-before closing its process job. A permanently locked clipboard, exhausted
-restoration attempts, forced termination, or a crash can leave clipboard cleanup
-incomplete; metadata-only warnings report exhausted recovery. Clipboard contents
+before closing its process job. Shutdown makes one final attempt for quarantined
+data and reports incomplete cleanup separately from a clean exit. A permanently
+locked clipboard, failed final restoration, forced termination, or a crash can
+leave clipboard cleanup incomplete; metadata-only warnings report that outcome. Clipboard contents
 are never persisted for crash recovery.
 
 SendInput fallback inserts UTF-16 Unicode key pairs into the same proved
@@ -304,7 +309,10 @@ exactly at its fixed anchor; it never searches for similar text. App rules are
 reread under a SQLite writer reservation held through replacement and app undo.
 Missing or busy policy storage skips mutation. Final native checks require all
 authorized target attributes, including process name and window title, to remain
-unchanged; title changes refuse correction and undo even without caret movement.
+unchanged before mutation; title changes refuse correction and undo even without
+caret movement. After mutation, verification and caret restoration permit an
+editor's modified-title marker while still requiring every other identity and
+safety attribute and the input generations to match.
 Provider error messages are
 discarded so failure logs cannot contain document text.
 
