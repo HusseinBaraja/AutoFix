@@ -133,20 +133,25 @@ impl TypedSession {
     /// Replace only the known text immediately before the caret. The tracked
     /// suffix remains untouched and is never submitted to a correction engine.
     pub(crate) fn replace_executable_suffix(&mut self, original: &str, replacement: &str) -> bool {
-        let original: Vec<char> = original.chars().collect();
-        let replacement: Vec<char> = replacement.chars().collect();
-        if original.len() > self.caret
-            || self.typed[self.caret - original.len()..self.caret] != original
-            || self.typed.len() - original.len() + replacement.len() > MAX_TYPED_CHARS
-        {
+        if !self.can_replace_executable_suffix(original, replacement) {
             return false;
         }
+        let original: Vec<char> = original.chars().collect();
+        let replacement: Vec<char> = replacement.chars().collect();
         self.typed.splice(
             self.caret - original.len()..self.caret,
             replacement.iter().copied(),
         );
         self.caret = self.caret - original.len() + replacement.len();
         true
+    }
+
+    /// Preflight exact suffix ownership and Unicode capacity before native mutation.
+    pub(crate) fn can_replace_executable_suffix(&self, original: &str, replacement: &str) -> bool {
+        let original: Vec<char> = original.chars().collect();
+        original.len() <= self.caret
+            && self.typed[self.caret - original.len()..self.caret] == original
+            && self.typed.len() - original.len() + replacement.chars().count() <= MAX_TYPED_CHARS
     }
 }
 
@@ -239,5 +244,24 @@ mod tests {
         session.input(TypedInput::Right);
         assert_eq!(session.executable_context(), "ABc");
         assert!(!session.replace_executable_suffix("ab", "bad"));
+    }
+
+    /// Preflight counts Unicode scalars and includes tracked text after the caret.
+    #[test]
+    fn correction_preflight_preserves_capacity_and_suffix() {
+        let mut session = session();
+        session.input(TypedInput::Text(format!(
+            "{}😃",
+            "é".repeat(MAX_TYPED_CHARS - 1)
+        )));
+        session.input(TypedInput::Left);
+        let before = session.executable_context();
+        assert!(!session.can_replace_executable_suffix("é", "éé"));
+        assert!(!session.replace_executable_suffix("é", "éé"));
+        assert_eq!(session.executable_context(), before);
+        assert!(session.can_replace_executable_suffix("é", "尾"));
+        assert!(session.replace_executable_suffix("é", "尾"));
+        session.input(TypedInput::Right);
+        assert!(session.executable_context().ends_with("尾😃"));
     }
 }

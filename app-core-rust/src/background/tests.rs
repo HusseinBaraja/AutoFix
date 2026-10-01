@@ -8,6 +8,71 @@ use crate::{background::paths::RuntimePaths, settings::AppConfig};
 
 use super::{admin, load_or_create_config, BackgroundError, BackgroundRuntime};
 
+/// Successful native undo learns only after a stable, successful session commit.
+#[test]
+fn undo_learning_requires_committed_bookkeeping_and_stable_input() {
+    for failure in 0..4 {
+        let mut config = AppConfig::default();
+        config.learning.mode = crate::settings::LearningMode::Automatic;
+        config.learning.rule = crate::settings::LearningRule::Dictionary;
+        let mut processor = super::InputProcessor {
+            learner: crate::dictionary::Learner::default(),
+            pipeline: super::CorrectionPipeline::new().unwrap(),
+            processed_input_sequence: 12,
+            session_manager: super::SessionManager::new(config.context.clone()),
+            config,
+            database: crate::storage::Database::open_memory().unwrap(),
+        };
+        let target = dispatch_target();
+        processor.session_manager.focus(&target);
+        processor
+            .session_manager
+            .input(super::typing::TypedInput::Text("teh".into()));
+        let session = processor.session_manager.active_mut().unwrap();
+        assert!(session.queue_correction("teh".into(), "the".into()));
+        assert!(session.apply_next_correction(&processor.config.context));
+        let undo = session.undo_target().unwrap();
+        processor
+            .session_manager
+            .input(super::typing::TypedInput::Text(" 尾".into()));
+        let stamp = super::InputStamp {
+            position: 7,
+            sequence: 12,
+        };
+        let mut current = stamp;
+        match failure {
+            1 => current.sequence += 1,
+            2 => current.position += 1,
+            3 => processor
+                .session_manager
+                .set_informative_context("different anchor".into()),
+            _ => {}
+        }
+        processor.complete_undo(undo, &target, stamp, current);
+        let policy = processor
+            .database
+            .dictionary()
+            .policy(
+                &target.process_name,
+                &crate::correction::LanguageInfo {
+                    primary_language: None,
+                    detected_languages: Vec::new(),
+                },
+            )
+            .unwrap();
+        if failure == 0 {
+            let session = processor.session_manager.active().unwrap();
+            assert_eq!(session.informative_context(), "teh");
+            assert_eq!(session.editable_context(), " 尾");
+            assert!(session.undo_target().is_none());
+            assert_eq!(policy.terms, ["teh"]);
+        } else {
+            assert!(processor.session_manager.active().is_none());
+            assert!(policy.terms.is_empty());
+        }
+    }
+}
+
 /// Exercise both dispatch checks when hook input arrives before or during the slow gate.
 #[test]
 fn frozen_dispatch_survives_typing_but_manual_and_moved_requests_are_rejected() {

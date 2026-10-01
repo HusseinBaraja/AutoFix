@@ -86,6 +86,7 @@ impl Session {
         }
     }
 
+    /// Evict oldest records after commits or capacity reductions, keeping the newest rejections.
     pub(super) fn limit_undo_history(&mut self, limits: &ContextConfig) {
         let excess = self
             .correction_undo_history
@@ -103,12 +104,15 @@ impl Session {
         }
     }
 
+    /// Keep history text but revoke every native range proof after movement or re-anchoring.
     pub(super) fn invalidate_undo_anchors(&mut self) {
         for entry in &mut self.correction_undo_history {
             entry.informative_start = None;
         }
     }
 
+    /// Expose only the newest fully retained span with the same session and caret anchor.
+    /// Following session text is carried separately so native undo can preserve it.
     pub(in crate::background) fn undo_target(&self) -> Option<CorrectionUndoTarget> {
         let last = self.correction_undo_history.last()?;
         let start = last.informative_start?;
@@ -157,16 +161,19 @@ mod tests {
         typing::{MovementSignal, TypedInput},
     };
 
+    /// Create a session with no imported document context.
     fn session() -> Session {
         Session::new(1, SessionKey::WindowHandle(1))
     }
 
+    /// Simulate a verified app correction through the same session commit path.
     fn correct(session: &mut Session, original: &str, replacement: &str, limits: &ContextConfig) {
         session.input(TypedInput::Text(original.into()), limits);
         assert!(session.queue_correction(original.into(), replacement.into()));
         assert!(session.apply_next_correction(limits));
     }
 
+    /// Repeated undo stops at the configured capacity and preserves evicted corrections.
     #[test]
     fn oldest_entries_are_evicted_at_default_and_custom_capacity() {
         for capacity in [1, 3, 10] {
@@ -195,6 +202,7 @@ mod tests {
         }
     }
 
+    /// Unicode undo restores exact originals while newer typing remains executable.
     #[test]
     fn length_changing_unicode_undo_preserves_new_typing_and_originals_are_informative() {
         let limits = ContextConfig::default();
@@ -213,6 +221,7 @@ mod tests {
         assert_eq!(session.editable_context(), "尾");
     }
 
+    /// Trimming a Unicode prefix preserves complete undo spans and their byte anchors.
     #[test]
     fn shrinking_prefix_preserves_complete_older_spans_and_adjusts_unicode_offsets() {
         let limits = ContextConfig {
@@ -230,6 +239,7 @@ mod tests {
         assert_eq!(session.informative_context(), "teh wierd");
     }
 
+    /// Partial retained spans keep full history text but cannot authorize native undo.
     #[test]
     fn trimming_retains_full_history_text_but_refuses_partial_native_undo() {
         let limits = ContextConfig {
@@ -249,6 +259,7 @@ mod tests {
         assert_eq!(session.correction_undo_history.len(), 1);
     }
 
+    /// Undo records retain the engine decision and verified native range receipt.
     #[test]
     fn receipt_records_session_timestamp_trigger_confidence_and_native_method() {
         let limits = ContextConfig::default();
@@ -279,6 +290,7 @@ mod tests {
         assert_eq!(entry.language.as_deref(), Some("en"));
     }
 
+    /// Caret movement revokes range proof while retaining bounded history in memory.
     #[test]
     fn movement_invalidates_proof_without_discarding_session_history() {
         let limits = ContextConfig::default();
@@ -292,6 +304,7 @@ mod tests {
         assert!(session.undo_target().is_none());
     }
 
+    /// Accepted unchanged text cannot create an app correction to undo.
     #[test]
     fn unchanged_commits_do_not_create_undo_entries() {
         let limits = ContextConfig::default();

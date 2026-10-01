@@ -38,6 +38,7 @@ public sealed partial class MainWindowViewModel
         }
     }
 
+    /// <summary>Resets the editor to a global, all-language word exclusion without saving.</summary>
     private void NewDictionary()
     {
         DictionaryMessage = "";
@@ -46,6 +47,7 @@ public sealed partial class MainWindowViewModel
         DictionaryReplacement = ""; DictionaryKind = "dictionary";
     }
 
+    /// <summary>Refreshes the dictionary section and reports storage errors in the editor.</summary>
     private void LoadDictionary()
     {
         try
@@ -64,6 +66,7 @@ public sealed partial class MainWindowViewModel
         }
     }
 
+    /// <summary>Validates and atomically saves an exclusion, preserving invalid edits for correction.</summary>
     private void SaveDictionary()
     {
         try
@@ -81,6 +84,7 @@ public sealed partial class MainWindowViewModel
         }
     }
 
+    /// <summary>Deletes the selected persisted exclusion and refreshes the editor on success.</summary>
     private void DeleteDictionary()
     {
         if (SelectedDictionary is null) return;

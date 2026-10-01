@@ -12,6 +12,7 @@ const STAMP: InputStamp = InputStamp {
     sequence: 12,
 };
 
+/// Persisted pairs filter worker edits without losing the original correction language.
 #[test]
 fn persisted_pair_filters_worker_edits_and_learns_original_language() {
     let path = std::env::temp_dir().join(format!(
@@ -1003,6 +1004,152 @@ fn finish(
             success
         },
     )
+}
+
+/// A policy writer must not delay accepted no-change commits or later input.
+#[test]
+fn no_change_metadata_contention_never_stalls_completion() {
+    for mode in ["delete", "wal"] {
+        let path = std::env::temp_dir().join(format!(
+            "autofix-nowait-{mode}-{}.sqlite",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let database = crate::storage::Database::open(&path).unwrap();
+        let writer = rusqlite::Connection::open(&path).unwrap();
+        writer.pragma_update(None, "journal_mode", mode).unwrap();
+        let config = AppConfig::default();
+        let mut manager = manager(&config, "hello");
+        let mut pipeline = CorrectionPipeline::with_database(&database).unwrap();
+        submit_frozen(&mut pipeline, &mut manager, &config);
+        wait_completion(&pipeline);
+        manager.input(TypedInput::Text(" 尾".into()));
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let calls = Cell::new(0);
+        let started = Instant::now();
+        assert!(finish(
+            &mut pipeline,
+            &mut manager,
+            &config,
+            STAMP,
+            &calls,
+            false
+        ));
+        assert!(started.elapsed() < Duration::from_millis(250));
+        assert_eq!(calls.get(), 0);
+        assert_eq!(manager.active().unwrap().informative_context(), "hello");
+        assert_eq!(manager.active().unwrap().editable_context(), " 尾");
+        manager.input(TypedInput::Text(" next".into()));
+        assert_eq!(manager.active().unwrap().editable_context(), " 尾 next");
+        assert!(pipeline.active.is_empty());
+        writer.execute_batch("ROLLBACK").unwrap();
+        let count: i64 = writer
+            .query_row("select count(*) from correction_metadata", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        // Losing optional telemetry does not poison later accepted commits.
+        submit(&mut pipeline, &manager, &config);
+        wait_completion(&pipeline);
+        assert!(finish(
+            &mut pipeline,
+            &mut manager,
+            &config,
+            STAMP,
+            &calls,
+            false
+        ));
+        let count: i64 = writer
+            .query_row("select count(*) from correction_metadata", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+        drop(pipeline);
+        drop(writer);
+        drop(database);
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+/// Manual expansion must fit the Unicode typed buffer before any native mutation.
+#[test]
+fn oversized_manual_result_is_refused_before_native_replacement() {
+    let config = AppConfig::default();
+    let original = format!("{}teh", "é".repeat(4093));
+    let mut manager = manager(&config, &original);
+    let mut pipeline = CorrectionPipeline::new().unwrap();
+    submit(&mut pipeline, &manager, &config);
+    wait_completion(&pipeline);
+    let mut state = pipeline.mailbox.0.lock().unwrap();
+    state.completion.as_mut().unwrap().output = CorrectionOutput::changed(
+        format!("{}the!", "é".repeat(4093)),
+        ConfidenceTier::High,
+        None,
+        1,
+    );
+    drop(state);
+    let calls = Cell::new(0);
+    assert!(!finish(
+        &mut pipeline,
+        &mut manager,
+        &config,
+        STAMP,
+        &calls,
+        true
+    ));
+    assert_eq!(calls.get(), 0);
+    assert_eq!(manager.active().unwrap().editable_context(), original);
+    assert!(manager.active().unwrap().informative_context().is_empty());
+    assert!(manager.active().unwrap().undo_target().is_none());
+}
+
+/// Input arriving after a successful edit invalidates ownership and dependent work.
+#[test]
+fn input_race_after_native_success_drops_session_instead_of_restoring_stale_text() {
+    for frozen in [false, true] {
+        let mut config = AppConfig::default();
+        config.context.pending_queue_size = 2;
+        let mut manager = manager(&config, "teh");
+        let mut pipeline = CorrectionPipeline::new().unwrap();
+        if frozen {
+            submit_frozen(&mut pipeline, &mut manager, &config);
+            manager.input(TypedInput::Text(" next".into()));
+            submit_frozen(&mut pipeline, &mut manager, &config);
+        } else {
+            submit(&mut pipeline, &manager, &config);
+        }
+        wait_completion(&pipeline);
+        let live = manager.active().unwrap().executable_context();
+        let current = Cell::new(STAMP);
+        let calls = Cell::new(0);
+        assert!(!pipeline.finish(
+            &mut manager,
+            &config.context,
+            || current.get(),
+            |_| Some(target()),
+            |_, _| Some(live),
+            |_, _, _| {
+                calls.set(calls.get() + 1);
+                current.set(InputStamp {
+                    sequence: STAMP.sequence + 1,
+                    ..STAMP
+                });
+                true
+            }
+        ));
+        assert_eq!(calls.get(), 1);
+        assert!(manager.active().is_none());
+        assert!(pipeline.active.is_empty());
+        assert!(pipeline.mailbox.0.lock().unwrap().jobs.is_empty());
+        manager.focus(&target());
+        manager.input(TypedInput::Text("fresh".into()));
+        assert_eq!(manager.active().unwrap().editable_context(), "fresh");
+        assert!(manager.active().unwrap().undo_target().is_none());
+    }
 }
 
 /// Confirmed replacement commits once and records the original span for undo.

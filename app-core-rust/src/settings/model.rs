@@ -149,6 +149,7 @@ pub(crate) struct ContextConfig {
 }
 
 impl Default for ContextConfig {
+    /// Bound retained context and correction queues, keeping ten session undo entries by default.
     fn default() -> Self {
         Self {
             undo_history_size: default_undo_history_size(),
@@ -164,6 +165,7 @@ impl Default for ContextConfig {
     }
 }
 
+/// Preserve the same ten-entry undo capacity when loading older TOML files.
 fn default_undo_history_size() -> u16 {
     10
 }

@@ -5,12 +5,14 @@ use crate::{
     storage::Database,
 };
 
+/// Build a known or unknown language snapshot for exclusion scope tests.
 fn language(tag: Option<&str>) -> LanguageInfo {
     LanguageInfo {
         primary_language: tag.map(str::to_owned),
         detected_languages: tag.map(|t| vec![t.to_owned()]).unwrap_or_default(),
     }
 }
+/// Build a typo edit at Unicode scalar offsets.
 fn change(start: usize, end: usize, from: &str, to: &str) -> CorrectionChange {
     CorrectionChange {
         start_char: start,
@@ -21,12 +23,14 @@ fn change(start: usize, end: usize, from: &str, to: &str) -> CorrectionChange {
         explanation: None,
     }
 }
+/// Build a silent engine result whose categorized edits can be filtered.
 fn output(text: &str, edits: Vec<CorrectionChange>) -> CorrectionOutput {
     let mut out = CorrectionOutput::changed(text.into(), ConfidenceTier::High, Some(edits), 1);
     out.behavior = crate::correction::ConfidenceBehavior::Silent;
     out
 }
 
+/// App scopes ignore ASCII case, base languages include variants, and unknown text stays protected.
 #[test]
 fn sqlite_scopes_language_and_apps_and_preserves_unknown_language() {
     let db = Database::open_memory().unwrap();
@@ -75,6 +79,7 @@ fn sqlite_scopes_language_and_apps_and_preserves_unknown_language() {
     );
 }
 
+/// Whole-phrase exclusions protect only matching words while unrelated corrections survive.
 #[test]
 fn protects_whole_phrases_without_matching_inside_words_and_keeps_other_edits() {
     let policy = Policy {
@@ -98,6 +103,7 @@ fn protects_whole_phrases_without_matching_inside_words_and_keeps_other_edits() 
     assert_eq!(policy.filter("tehx", out).corrected_executable_text, "thex");
 }
 
+/// Pair rules reject their exact outcome across narrow or broad edits, allowing proven alternatives.
 #[test]
 fn pair_blocks_only_rejected_replacement_and_supports_multiple_edits_in_phrase() {
     let policy = Policy {
@@ -156,6 +162,7 @@ fn pair_blocks_only_rejected_replacement_and_supports_multiple_edits_in_phrase()
     assert!(!policy.filter("teh wierd", out).changes_needed);
 }
 
+/// Rejected pairs cover boundary insertions and deletions as well as substitutions.
 #[test]
 fn insertion_and_deletion_rules_are_enforced() {
     let policy = Policy {
@@ -186,6 +193,7 @@ fn insertion_and_deletion_rules_are_enforced() {
     );
 }
 
+/// Saved pair rules remain active independently of learning and duplicate writes stay unique.
 #[test]
 fn active_pairs_work_when_learning_is_disabled_and_deduplicate() {
     let db = Database::open_memory().unwrap();
@@ -213,6 +221,7 @@ fn active_pairs_work_when_learning_is_disabled_and_deduplicate() {
     );
 }
 
+/// Engine migrations preserve exclusions in a database first initialized by the settings UI.
 #[test]
 fn engine_migrates_database_created_by_settings_first() {
     // File-backed migration is exercised through the production Database entry point.

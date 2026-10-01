@@ -90,6 +90,7 @@ enum InputWork {
 
 const INPUT_WORK_QUEUE_LIMIT: usize = 8;
 
+/// Accept read-only capture only while the hook input sequence remains unchanged.
 fn capture_if_current<T>(
     expected: u64,
     current: impl Fn() -> u64,
@@ -775,6 +776,8 @@ impl InputProcessor {
         }
     }
 
+    /// Restore a verified session correction, committing bookkeeping before optional learning.
+    /// Any uncertain native result or input race revokes the session's editable ownership.
     fn undo_correction(&mut self) {
         let stamp = Self::input_stamp();
         if stamp.sequence != self.processed_input_sequence {
@@ -836,26 +839,45 @@ impl InputProcessor {
         result.log_outcome(true);
         drop(_policy_guard);
         if result.success {
-            if let Some(session) = self.session_manager.active_mut() {
-                session.undo_last_correction(&self.config.context);
-            }
-            if self.config.learning.mode != crate::settings::LearningMode::Off {
-                if let Some(rejection) = crate::dictionary::Rejection::from_undo(
-                    &undo.original,
-                    &undo.corrected,
-                    undo.language.clone(),
-                    target.process_name.clone(),
-                ) {
-                    self.learner.rejected(
-                        rejection,
-                        &self.config.learning,
-                        &self.database.dictionary(),
-                    );
-                }
-            }
+            self.complete_undo(undo, &target, stamp, Self::input_stamp());
         } else if result.may_have_changed {
             self.session_manager
                 .deactivate(MovementSignal::UnknownPosition);
+        }
+    }
+
+    /// Commit a successful native undo before learning; lost ownership drops the session.
+    fn complete_undo(
+        &mut self,
+        undo: session::CorrectionUndoTarget,
+        target: &target::FocusedTarget,
+        stamp: InputStamp,
+        current_stamp: InputStamp,
+    ) {
+        if current_stamp != stamp
+            || !self
+                .session_manager
+                .active_mut()
+                .is_some_and(|session| session.undo_last_correction(&self.config.context))
+        {
+            self.session_manager
+                .deactivate(MovementSignal::UnknownPosition);
+            tracing::warn!("undo bookkeeping lost session ownership");
+            return;
+        }
+        if self.config.learning.mode != crate::settings::LearningMode::Off {
+            if let Some(rejection) = crate::dictionary::Rejection::from_undo(
+                &undo.original,
+                &undo.corrected,
+                undo.language,
+                target.process_name.clone(),
+            ) {
+                self.learner.rejected(
+                    rejection,
+                    &self.config.learning,
+                    &self.database.dictionary(),
+                );
+            }
         }
     }
 

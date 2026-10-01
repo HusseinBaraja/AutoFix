@@ -19,6 +19,7 @@ pub(crate) struct Repository<'a> {
 }
 
 impl<'a> Repository<'a> {
+    /// Borrow the engine's exclusion database without creating a separate storage owner.
     pub(crate) fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
@@ -58,6 +59,8 @@ impl<'a> Repository<'a> {
         Ok(policy)
     }
 
+    /// Persist an authorized rejection using the selected rule and app scope, deduplicating it.
+    /// The learning owner must establish opt-in or consent before calling this method.
     pub(crate) fn remember(&self, rejection: &Rejection, config: &LearningConfig) -> Result<()> {
         let app = config.per_app.then(|| rejection.app.to_ascii_lowercase());
         match config.rule {
@@ -83,6 +86,7 @@ impl<'a> Repository<'a> {
     }
 }
 
+/// Match global/base/regional tags, protecting all app rules when detection is uncertain.
 fn language_matches(tag: Option<&str>, language: &LanguageInfo) -> bool {
     let Some(tag) = tag else {
         return true;
@@ -204,6 +208,7 @@ impl Policy {
     }
 }
 
+/// Detect edits inside a protected term; insertions at its outside boundaries remain allowed.
 fn overlaps(change: &CorrectionChange, start: usize, end: usize) -> bool {
     if change.start_char == change.end_char {
         change.start_char > start && change.start_char < end
@@ -212,6 +217,7 @@ fn overlaps(change: &CorrectionChange, start: usize, end: usize) -> bool {
     }
 }
 
+/// Include boundary insertions when checking the exact outcome of a rejected pair.
 fn pair_overlaps(change: &CorrectionChange, start: usize, end: usize) -> bool {
     if change.start_char == change.end_char {
         change.start_char >= start && change.start_char <= end
@@ -220,6 +226,7 @@ fn pair_overlaps(change: &CorrectionChange, start: usize, end: usize) -> bool {
     }
 }
 
+/// Find whole-term matches at Unicode scalar offsets with ASCII-insensitive comparison.
 fn occurrences(text: &[char], term: &str) -> Vec<(usize, usize)> {
     let term: Vec<char> = term.chars().collect();
     if term.is_empty() || term.len() > text.len() {
@@ -241,10 +248,12 @@ fn occurrences(text: &[char], term: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// Keep letters, digits, underscores and apostrophes within one protected word.
 fn word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '\''
 }
 
+/// Render validated, nonoverlapping edits inside a scalar range, refusing mismatched originals.
 fn render(text: &[char], start: usize, end: usize, changes: &[CorrectionChange]) -> Option<String> {
     let mut sorted: Vec<_> = changes.iter().collect();
     sorted.sort_by_key(|c| c.start_char);

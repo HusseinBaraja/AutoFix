@@ -514,8 +514,34 @@ impl Session {
 
     /// Queue a replacement only for an exact, stable typed suffix.
     pub(crate) fn queue_correction(&mut self, original: String, replacement: String) -> bool {
+        if !self.can_complete_correction(None, &original, &replacement) {
+            return false;
+        }
+        self.pending_corrections.push_back(PendingCorrection {
+            original,
+            replacement,
+            versions: self.versions,
+        });
+        true
+    }
+
+    /// Prove bookkeeping can retain a changed result before authorizing its native edit.
+    /// Frozen prefixes retire into informative context; manual suffixes need typed capacity.
+    pub(super) fn can_complete_correction(
+        &self,
+        segment_id: Option<u64>,
+        original: &str,
+        replacement: &str,
+    ) -> bool {
+        if let Some(id) = segment_id {
+            return self
+                .frozen_segments
+                .front()
+                .is_some_and(|segment| segment.id() == id)
+                && self.pending_matches(id, original);
+        }
         if original.is_empty()
-            || !self.executable_context().ends_with(&original)
+            || !self.executable_context().ends_with(original)
             || original.chars().count()
                 > self
                     .executable_context()
@@ -526,12 +552,8 @@ impl Session {
         {
             return false;
         }
-        self.pending_corrections.push_back(PendingCorrection {
-            original,
-            replacement,
-            versions: self.versions,
-        });
-        true
+        self.executable
+            .can_replace_executable_suffix(original, replacement)
     }
 
     /// Commit a queued replacement into read-only context and record its undo span.
@@ -583,6 +605,7 @@ impl SessionManager {
         }
     }
 
+    /// Apply live limits to retained context, undo history and oversized executable segments.
     pub(crate) fn update_limits(&mut self, limits: ContextConfig) {
         self.limits = limits;
         let active_limits = self.limits.clone();
@@ -647,6 +670,7 @@ impl SessionManager {
             .map_or(0, Session::movement_capture_extra_chars)
     }
 
+    /// Resolve the new caret using read-only evidence, then enforce the active text limit.
     pub(crate) fn resolve_movement(&mut self, preceding: Option<&str>) -> MovementResolution {
         let limits = self.limits.clone();
         self.active_mut()
@@ -1299,6 +1323,7 @@ mod tests {
         assert_eq!(session.executable_context(), "");
     }
 
+    /// Executable word limits accept the configured boundary and retire only excess known text.
     #[test]
     fn configurable_word_limit_commits_on_exceeding() {
         let limits = ContextConfig {
@@ -1382,6 +1407,7 @@ mod tests {
         assert_eq!(session.informative_context(), "extra");
     }
 
+    /// Informative context truncation cannot leave a partial span eligible for undo.
     #[test]
     fn undo_refuses_incomplete_corrected_span_after_informative_limit() {
         let limits = ContextConfig {
@@ -1517,6 +1543,7 @@ mod tests {
         assert!(manager.active().unwrap().executable_context().is_empty());
     }
 
+    /// Repeated undo restores earlier corrections in order without losing newer typing.
     #[test]
     fn undo_history_can_walk_back_multiple_corrections() {
         let limits = ContextConfig::default();
@@ -1537,6 +1564,7 @@ mod tests {
         assert_eq!(session.executable_context(), "");
     }
 
+    /// Live capacity reductions evict oldest records and session deletion removes all history.
     #[test]
     fn history_limit_reload_evicts_oldest_and_session_deletion_drops_history() {
         let mut limits = ContextConfig::default();

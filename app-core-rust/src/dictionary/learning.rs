@@ -73,6 +73,7 @@ struct PendingConsent {
 }
 
 impl Learner {
+    /// Handle only a successful AutoFix undo according to the current opt-in policy.
     pub(crate) fn rejected(
         &mut self,
         rejection: Rejection,
@@ -82,6 +83,8 @@ impl Learner {
         self.rejected_with(rejection, config, repository, confirm);
     }
 
+    /// Run at most one consent prompt while leaving input processing available.
+    /// Off never prompts or writes; automatic writes the authorized rejection directly.
     fn rejected_with(
         &mut self,
         rejection: Rejection,
@@ -134,12 +137,14 @@ impl Learner {
     }
 }
 
+/// Save a consented rejection and report storage failure without logging its text.
 fn remember(repository: &Repository<'_>, rejection: &Rejection, config: &LearningConfig) {
     if repository.remember(rejection, config).is_err() {
         tracing::warn!("learning could not save exclusion");
     }
 }
 
+/// Ask for native Yes/No consent with No selected by default; only Yes permits storage.
 fn confirm(rejection: &Rejection) -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         MessageBoxW, IDYES, MB_DEFBUTTON2, MB_YESNO,
@@ -166,6 +171,7 @@ fn confirm(rejection: &Rejection) -> bool {
 mod tests {
     use super::*;
     use crate::{correction::LanguageInfo, storage::Database};
+    /// Build a successful undo rejection with English and app scope.
     fn rejection() -> Rejection {
         Rejection::from_undo(
             "I typed teh today",
@@ -175,6 +181,7 @@ mod tests {
         )
         .unwrap()
     }
+    /// Count applicable saved word exclusions for the test application.
     fn terms(db: &Database) -> usize {
         let p = db
             .dictionary()
@@ -189,6 +196,7 @@ mod tests {
         p.terms.len()
     }
 
+    /// Learning isolates changed words and phrases, including Unicode, spacing and deletions.
     #[test]
     fn extracts_complete_changed_words_and_unicode_phrases() {
         assert_eq!(rejection().original, "teh");
@@ -215,6 +223,7 @@ mod tests {
         }
     }
 
+    /// Default-off undo never asks or persists; automatic learning stores one scoped exclusion.
     #[test]
     fn default_undo_never_writes_or_prompts_and_automatic_deduplicates() {
         let db = Database::open_memory().unwrap();
@@ -238,6 +247,7 @@ mod tests {
         assert_eq!(terms(&db), 1);
     }
 
+    /// Only accepted, uncancelled consent persists a rejection; changing settings revokes consent.
     #[test]
     fn ask_requires_consent_and_cancels_when_disabled() {
         let db = Database::open_memory().unwrap();

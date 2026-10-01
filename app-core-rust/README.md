@@ -286,8 +286,16 @@ document order. Invalidated requests also restore any still-active segment;
 movement and lost caret ownership continue through the final-fix/re-anchor rules.
 Only validated unchanged results with `no_correction_needed` or
 `all_candidates_protected` accept the original text into informative context;
-language and confidence skips retain executable text. Results are
-consumed once. Only completed silent corrections above low confidence reach the
+language and confidence skips retain executable text. Accepted no-change commits
+are recorded as metadata without running migrations or waiting for SQLite locks.
+An active policy writer or unavailable database skips only this optional event;
+the accepted context commit and input processing continue.
+Changed results preflight exact session ownership and typed-buffer capacity
+before native mutation. If input races with a successful mutation or session
+bookkeeping cannot commit it, pending requests are cancelled and session
+ownership is invalidated. Undo likewise commits its session update before
+learning; a lost input snapshot invalidates ownership and skips learning.
+Results are consumed once. Only completed silent corrections above low confidence reach the
 replacement boundary. Failed and suppressed manual edits do not commit executable
 context. Tests cover delayed engines, frozen queues and overflow policies,
 manual override, stale and reordered results, queued input,

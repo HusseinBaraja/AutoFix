@@ -385,6 +385,7 @@ impl CorrectionPipeline {
         let mut active = self.active.pop_front().unwrap();
         let validation_stamp = current_stamp();
         let segment_id = active.request.pending_segment_id;
+        let mut native_changed = false;
         // Every completion releases its slot. Only accepted results commit;
         // failed or skipped work returns to executable context below.
         let applied = (|| {
@@ -474,8 +475,19 @@ impl CorrectionPipeline {
                 return false;
             }
             let confirmation = if output.changes_needed {
+                if !session.can_complete_correction(
+                    segment_id,
+                    original,
+                    &output.corrected_executable_text,
+                ) {
+                    return false;
+                }
                 let confirmation = replace(&target, &active.request, &output).into();
                 if !confirmation.success {
+                    return false;
+                }
+                native_changed = true;
+                if current_stamp() != validation_stamp {
                     return false;
                 }
                 Some(confirmation)
@@ -513,6 +525,14 @@ impl CorrectionPipeline {
             completed
         })();
         if !applied {
+            if native_changed {
+                // The document changed but session ownership was not committed.
+                // Never restore unchecked originals into a now-stale executable range.
+                self.cancel();
+                manager.deactivate(super::typing::MovementSignal::UnknownPosition);
+                tracing::warn!("replacement bookkeeping lost session ownership");
+                return false;
+            }
             if let (Some(id), Some(session)) = (segment_id, manager.active_mut()) {
                 if session.id() == active.request.session_id {
                     for cancelled in session.restore_pending_from(id) {
@@ -524,7 +544,8 @@ impl CorrectionPipeline {
         applied
     }
 
-    /// Record accepted commits once, using metadata only even in full-debug mode.
+    /// Record accepted commits once without waiting on SQLite policy reservations.
+    /// Metadata contains no document text, even in full-debug mode.
     fn log_no_change_commit(
         &self,
         request: &CorrectionRequest,
@@ -567,10 +588,7 @@ impl CorrectionPipeline {
             result_reason: reason.into(),
             latency_ms,
         };
-        if crate::storage::Database::open(path)
-            .and_then(|database| database.correction_metadata().record(&metadata))
-            .is_err()
-        {
+        if crate::storage::Database::record_metadata_nowait(path, &metadata).is_err() {
             tracing::warn!(
                 session_id = request.session_id,
                 "no-change metadata unavailable"

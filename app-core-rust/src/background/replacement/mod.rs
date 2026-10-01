@@ -75,6 +75,7 @@ pub(super) struct ReplacementConfirmation {
 }
 
 impl From<ReplacementResult> for ReplacementConfirmation {
+    /// Pass the verified native receipt to session bookkeeping without document text.
     fn from(result: ReplacementResult) -> Self {
         Self {
             success: result.success,
@@ -86,6 +87,7 @@ impl From<ReplacementResult> for ReplacementConfirmation {
 
 #[cfg(test)]
 impl From<bool> for ReplacementConfirmation {
+    /// Supply a minimal success receipt for tests that replace through a fake native boundary.
     fn from(success: bool) -> Self {
         Self {
             success,

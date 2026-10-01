@@ -7,6 +7,7 @@ namespace AutoFix.SettingsUi.Settings;
 /// <summary>Edits the engine's SQLite exclusions, including learned pairs.</summary>
 public sealed class DictionaryStorage(string databasePath)
 {
+    /// <summary>Lists word exclusions and active pair rules with their language and app scopes.</summary>
     public IReadOnlyList<DictionaryItem> List()
     {
         using var connection = Open();
@@ -70,12 +71,14 @@ public sealed class DictionaryStorage(string databasePath)
         transaction.Commit();
     }
 
+    /// <summary>Removes the selected exclusion from its source table by persistent identity.</summary>
     public void Delete(DictionaryItem entry)
     {
         using var connection = Open();
         Delete(connection, null, entry);
     }
 
+    /// <summary>Deletes within an optional edit transaction, rejecting unknown rule kinds.</summary>
     private static void Delete(SqliteConnection connection, SqliteTransaction? transaction, DictionaryItem entry)
     {
         using var command = connection.CreateCommand();
@@ -88,6 +91,7 @@ public sealed class DictionaryStorage(string databasePath)
         command.ExecuteNonQuery();
     }
 
+    /// <summary>Opens local storage and ensures exclusion tables; schema versions belong to the engine.</summary>
     private SqliteConnection Open()
     {
         var directory = Path.GetDirectoryName(databasePath);

@@ -10,6 +10,7 @@ use super::{
     AppConfig, ValidateConfig,
 };
 
+/// Undo capacity round-trips through TOML and defaults to ten for legacy files.
 #[test]
 fn undo_capacity_round_trips_and_legacy_settings_keep_ten_entries() {
     let mut config = AppConfig::default();
@@ -47,6 +48,7 @@ fn undo_capacity_round_trips_and_legacy_settings_keep_ten_entries() {
     }
 }
 
+/// Learning stays off for legacy settings and explicit policy choices round-trip.
 #[test]
 fn learning_is_opt_in_and_round_trips_with_legacy_defaults() {
     use super::{LearningMode, LearningRule};
