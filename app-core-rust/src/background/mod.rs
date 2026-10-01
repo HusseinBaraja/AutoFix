@@ -103,6 +103,7 @@ fn capture_if_current<T>(
 }
 
 struct InputProcessor {
+    learner: crate::dictionary::Learner,
     pipeline: CorrectionPipeline,
     processed_input_sequence: u64,
     config: AppConfig,
@@ -312,6 +313,7 @@ impl InputWorker {
             .name("autofix-input-processing".into())
             .spawn(move || {
                 let mut processor = InputProcessor {
+                    learner: crate::dictionary::Learner::default(),
                     pipeline,
                     processed_input_sequence: input_listener::current_input_sequence(),
                     session_manager: SessionManager::new(config.context.clone()),
@@ -439,6 +441,8 @@ impl InputProcessor {
 
     /// Defer completion until hook input is drained, then validate the live target and caret.
     fn finish_correction(&mut self) {
+        self.learner
+            .poll(&self.config.learning, &self.database.dictionary());
         // Frozen ranges may survive processed typing, but never guess what keys
         // still queued in the hooks did to the target.
         if Self::input_stamp().sequence != self.processed_input_sequence {
@@ -471,6 +475,17 @@ impl InputProcessor {
                     );
                     return false;
                 };
+                // Recheck live exclusions under the same writer reservation as mutation.
+                let Ok(policy) = database
+                    .dictionary()
+                    .policy(&target.process_name, &request.language_info)
+                else {
+                    tracing::warn!("replacement skipped: exclusions unavailable");
+                    return false;
+                };
+                if policy.filter(&request.executable_context, output.clone()) != *output {
+                    return false;
+                }
                 let result = ReplacementEngine::replace(
                     target,
                     request,
@@ -819,9 +834,24 @@ impl InputProcessor {
             self.config.replacement.clipboard_enabled,
         );
         result.log_outcome(true);
+        drop(_policy_guard);
         if result.success {
             if let Some(session) = self.session_manager.active_mut() {
                 session.undo_last_correction(&self.config.context);
+            }
+            if self.config.learning.mode != crate::settings::LearningMode::Off {
+                if let Some(rejection) = crate::dictionary::Rejection::from_undo(
+                    &undo.original,
+                    &undo.corrected,
+                    undo.language.clone(),
+                    target.process_name.clone(),
+                ) {
+                    self.learner.rejected(
+                        rejection,
+                        &self.config.learning,
+                        &self.database.dictionary(),
+                    );
+                }
             }
         } else if result.may_have_changed {
             self.session_manager
@@ -960,10 +990,10 @@ impl InputProcessor {
                 request.confidence_behavior = self.config.confidence_behavior();
                 let dictionary = match self
                     .database
-                    .custom_dictionary()
-                    .entries_for_app(&target.process_name)
+                    .dictionary()
+                    .policy(&target.process_name, &request.language_info)
                 {
-                    Ok(entries) => entries,
+                    Ok(policy) => policy.terms,
                     Err(error) => {
                         tracing::warn!(%error, "correction skipped: dictionary unavailable");
                         return false;
@@ -985,8 +1015,16 @@ impl InputProcessor {
                     tracing::debug!(session_id = request.session_id, ?request.versions,
                         ?request.engine, ?request.mode, trigger = request.trigger.as_str(),
                         "correction queued");
-                    self.pipeline
-                        .submit(request, session, target, stamp, &self.config, dictionary);
+                    if !self.pipeline.submit(
+                        request,
+                        session,
+                        target,
+                        stamp,
+                        &self.config,
+                        dictionary,
+                    ) {
+                        return false;
+                    }
                     if manual {
                         self.pipeline.wait_manual();
                         self.finish_correction();

@@ -12,6 +12,77 @@ const STAMP: InputStamp = InputStamp {
     sequence: 12,
 };
 
+#[test]
+fn persisted_pair_filters_worker_edits_and_learns_original_language() {
+    let path = std::env::temp_dir().join(format!(
+        "autofix-pair-pipeline-{}.sqlite",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let db = crate::storage::Database::open(&path).unwrap();
+    let rejection = crate::dictionary::Rejection::from_undo(
+        "teh",
+        "the",
+        Some("en".into()),
+        "notepad.exe".into(),
+    )
+    .unwrap();
+    let learning = crate::settings::LearningConfig {
+        mode: crate::settings::LearningMode::Automatic,
+        ..Default::default()
+    };
+    db.dictionary().remember(&rejection, &learning).unwrap();
+    let mut config = AppConfig::default();
+    config.correction.preferred_language = Some("en".into());
+    let mut manager = manager(&config, "teh wierd");
+    let mut pipeline = CorrectionPipeline::with_database(&db).unwrap();
+    let mut request = request(&manager, &config);
+    request.language_info = crate::correction::LanguageInfo {
+        primary_language: Some("en".into()),
+        detected_languages: vec!["en".into()],
+    };
+    assert!(pipeline.submit(
+        request,
+        manager.active().unwrap(),
+        target(),
+        STAMP,
+        &config,
+        vec![]
+    ));
+    wait_completion(&pipeline);
+    let replaced = Cell::new(0);
+    assert!(finish(
+        &mut pipeline,
+        &mut manager,
+        &config,
+        STAMP,
+        &replaced,
+        true
+    ));
+    assert_eq!(replaced.get(), 1);
+    assert_eq!(manager.active().unwrap().informative_context(), "teh weird");
+    assert_eq!(
+        manager
+            .active()
+            .unwrap()
+            .undo_target()
+            .unwrap()
+            .language
+            .as_deref(),
+        Some("en")
+    );
+    assert!(manager
+        .active_mut()
+        .unwrap()
+        .undo_last_correction(&config.context));
+    assert_eq!(manager.active().unwrap().informative_context(), "teh wierd");
+    drop(pipeline);
+    drop(db);
+    std::fs::remove_file(path).unwrap();
+}
+
 /// A real queued API job must not transmit after revocation commits behind an earlier send.
 #[test]
 fn queued_api_job_is_denied_after_rule_revocation_and_releases_its_slot() {
@@ -632,6 +703,7 @@ fn input_processor_defers_frozen_completion_until_hook_input_is_drained() {
     submit_frozen(&mut pipeline, &mut manager, &config);
     wait_completion(&pipeline);
     let mut processor = crate::background::InputProcessor {
+        learner: crate::dictionary::Learner::default(),
         pipeline,
         processed_input_sequence: crate::background::input_listener::current_input_sequence()
             .wrapping_sub(1),

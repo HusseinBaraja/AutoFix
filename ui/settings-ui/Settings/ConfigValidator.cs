@@ -36,6 +36,8 @@ public static class ConfigValidator
         RequireChoice("context.pending_queue_full_behavior", config.Context.PendingQueueFullBehavior,
             new HashSet<string> { "skip_new", "cancel_oldest", "merge_newest" });
         ValidateCorrection(config);
+        RequireChoice("learning.mode", config.Learning.Mode, new HashSet<string> { "off", "ask", "automatic" });
+        RequireChoice("learning.rule", config.Learning.Rule, new HashSet<string> { "dictionary", "pair" });
         ValidateApi(config);
         ValidateLogging(config);
     }
@@ -91,7 +93,7 @@ public static class ConfigValidator
     }
 
     /// <summary>Checks RFC 5646 structure without requiring IANA-registered subtags.</summary>
-    private static bool ValidLanguageTag(string tag)
+    public static bool ValidLanguageTag(string tag)
     {
         string[] grandfathered = [
             "en-GB-oed", "i-ami", "i-bnn", "i-default", "i-enochian", "i-hak", "i-klingon",

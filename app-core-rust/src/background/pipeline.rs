@@ -49,6 +49,7 @@ struct Job {
     api: ApiEngineConfig,
     cancelled: Arc<AtomicBool>,
     authorization: SendAuthorization,
+    exclusions: crate::dictionary::Policy,
 }
 
 struct Completion {
@@ -149,7 +150,9 @@ impl CorrectionPipeline {
                     if job.cancelled.load(Ordering::Acquire) {
                         continue;
                     }
-                    let output = correct(&job);
+                    let output = job
+                        .exclusions
+                        .filter(&job.input.executable_context, correct(&job));
                     let (lock, ready) = &*worker_mailbox;
                     let mut state = lock.lock().unwrap();
                     // Transport may finish after cancellation; never publish that result.
@@ -178,7 +181,7 @@ impl CorrectionPipeline {
         stamp: InputStamp,
         config: &AppConfig,
         dictionary: Vec<String>,
-    ) {
+    ) -> bool {
         if request.pending_segment_id.is_none() {
             self.cancel();
         }
@@ -228,6 +231,19 @@ impl CorrectionPipeline {
             confidence_behavior: request.confidence_behavior.clone(),
             suggestion_ui_available: false,
         };
+        let exclusions = match self.database_path.as_deref() {
+            Some(path) => match crate::storage::Database::open(path).and_then(|db| {
+                db.dictionary()
+                    .policy(&target.process_name, &request.language_info)
+            }) {
+                Ok(policy) => policy,
+                Err(_) => {
+                    tracing::warn!("correction skipped: exclusions unavailable");
+                    return false;
+                }
+            },
+            None => crate::dictionary::Policy::default(),
+        };
         self.active.push_back(ActiveRequest {
             id,
             request: request.clone(),
@@ -246,8 +262,10 @@ impl CorrectionPipeline {
             api: (&config.api).into(),
             cancelled,
             authorization,
+            exclusions,
         });
         ready.notify_all();
+        true
     }
 
     /// Cancel all admitted work and clear queued jobs, completions, and timeout feedback.
@@ -449,7 +467,8 @@ impl CorrectionPipeline {
                 return false;
             }
             let session = manager.active_mut().unwrap();
-            if let Some(id) = segment_id {
+            let changed = output.changes_needed;
+            let completed = if let Some(id) = segment_id {
                 session.complete_pending(id, Some(&output.corrected_executable_text), limits)
             } else if output.changes_needed {
                 session.queue_correction(original.clone(), output.corrected_executable_text)
@@ -457,7 +476,11 @@ impl CorrectionPipeline {
             } else {
                 session.complete_without_changes(limits);
                 true
+            };
+            if completed && changed {
+                session.record_undo_language(active.request.language_info.primary_language.clone());
             }
+            completed
         })();
         if !applied {
             if let (Some(id), Some(session)) = (segment_id, manager.active_mut()) {

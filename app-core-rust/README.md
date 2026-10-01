@@ -19,6 +19,29 @@ the correction mode, enabled grammar categories, language and mixed-language
 policy, dictionary and protected terms, trigger, and confidence behavior. Its
 result includes corrected executable text, change need and optional details,
 confidence, no-change reason, latency, and completion/error/timeout status.
+
+`src/dictionary` owns persistent exclusions and optional learning. SQLite stores
+word/phrase entries and active pair-specific rules. App process matching ignores
+ASCII case. `und` and null language scopes protect every language; base tags such
+as `en` apply to variants such as `en-US`. Regional tags match the resolved tag.
+Unknown or mixed language conservatively protects all entries for the app.
+Both engine routes enforce whole-term boundaries, including phrases, and filter
+blocked pairs while preserving unrelated edits. Exclusions are snapshotted for
+execution. Broad edits that cross a pair's boundary are refused when unchanged
+context cannot prove a different replacement. Exclusions are reread
+under the replacement writer reservation; a newly
+blocked edit refuses the in-flight replacement.
+
+Learning defaults to off. Only a verified, successful AutoFix undo supplies a
+rejection, using the original/replacement span and the correction's recorded
+language. It never captures document text or native Ctrl+Z. The smallest changed
+word/phrase is learned; multiple separated changes form one phrase. Ask mode uses
+a separate, coalesced native Yes/No prompt, defaults to No, and stores no text
+until consent. Input processing remains available while the prompt is open.
+Changing learning settings cancels pending consent. Automatic mode writes the
+selected dictionary or pair exclusion after successful undo. Disabling learning
+does not disable existing rules. Suggestion rejection remains unavailable with
+the planned suggestion UI; failed or refused undo never learns.
 `LocalRuleEngine`, `LocalMlEngine`, `OpenAiCompatibleApiEngine`, and
 `CustomApiEngine` implement the same interface. `LocalRuleEngine` provides fast,
 deterministic English correction for a conservative list of clear misspellings.

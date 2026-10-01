@@ -14,6 +14,19 @@ Local ML correction, suggestion acceptance, IME composition, and direct text API
 or UI Automation mutation remain planned. App-level undo restores only recorded
 corrections whose exact span and caret can still be verified.
 
+**Dictionary** settings edit words and phrases that AutoFix must never correct,
+plus specific pairs such as `teh` → `the` that must never be applied. Entries live
+in `%LOCALAPPDATA%\AutoFix\autofix.sqlite`, with a language tag and optional app
+process scope. `und` protects all languages; an empty app scope applies everywhere.
+
+Learning defaults to **Off — undo only**. App-level undo only restores the
+correction unless you choose **Ask after undo** or **Automatically learn**.
+Ask shows “Don't correct this again?” after a successful undo; only Yes saves an
+exclusion. Choose whether to protect the original word/phrase or only the rejected
+pair, and whether learning applies just to that app. Existing exclusions stay
+active when learning is off. Native Ctrl+Z and suggestion rejection are not tracked;
+use AutoFix's undo shortcut to reject an applied correction.
+
 Native clipboard replacement preserves all readable formats and restores them
 before reporting success. Disable it under **Correction > Use clipboard for
 correction** or set `replacement.clipboard_enabled = false` in settings TOML.

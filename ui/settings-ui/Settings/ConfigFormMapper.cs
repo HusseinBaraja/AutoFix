@@ -37,6 +37,9 @@ public static class ConfigFormMapper
         ApplyContext(config, values);
         ApplyCorrection(config, values);
         config.Replacement.ClipboardEnabled = Toggle(values, "replacement.clipboard_enabled");
+        config.Learning.Mode = Dropdown(values, "learning.mode");
+        config.Learning.Rule = Dropdown(values, "learning.rule");
+        config.Learning.PerApp = Toggle(values, "learning.per_app");
         ApplyApi(config, values);
         ApplyFeedback(config, values);
         ApplyLogging(config, values);

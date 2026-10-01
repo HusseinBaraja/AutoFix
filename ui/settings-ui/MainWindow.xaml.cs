@@ -9,12 +9,15 @@ namespace AutoFix.SettingsUi;
 
 public partial class MainWindow : Window
 {
-    private readonly MainWindowViewModel viewModel = new();
+    private readonly MainWindowViewModel viewModel;
     private string? hotkeyBeforeRecording;
     private SettingCardViewModel? recordingHotkey;
 
-    public MainWindow()
+    public MainWindow() : this(new MainWindowViewModel()) { }
+
+    internal MainWindow(MainWindowViewModel viewModel)
     {
+        this.viewModel = viewModel;
         InitializeComponent();
         DataContext = viewModel;
     }

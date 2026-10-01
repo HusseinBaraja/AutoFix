@@ -27,6 +27,9 @@ pub(crate) struct Database {
 }
 
 impl Database {
+    pub(crate) fn dictionary(&self) -> crate::dictionary::Repository<'_> {
+        crate::dictionary::Repository::new(&self.connection)
+    }
     /// File identity for fresh policy reads on a separate transport connection.
     pub(crate) fn path(&self) -> Option<&Path> {
         self.connection

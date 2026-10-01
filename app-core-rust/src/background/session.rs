@@ -40,6 +40,7 @@ pub(crate) struct PendingCorrection {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CorrectionUndo {
+    language: Option<String>,
     original: String,
     replacement: String,
     informative_start: usize,
@@ -49,6 +50,7 @@ pub(crate) struct CorrectionUndo {
 
 /// Only a recorded, fully retained app correction may make informative text editable.
 pub(super) struct CorrectionUndoTarget {
+    pub(super) language: Option<String>,
     pub(super) corrected: String,
     pub(super) original: String,
     pub(super) following: String,
@@ -570,6 +572,7 @@ impl Session {
             .filter(|start| self.informative_context.get(*start..) == Some(replacement.as_str()))
         {
             self.correction_undo_history.push(CorrectionUndo {
+                language: None,
                 complete_range_retained: replacement == correction.replacement,
                 original: correction.original,
                 replacement,
@@ -591,6 +594,7 @@ impl Session {
             return None;
         }
         Some(CorrectionUndoTarget {
+            language: last.language.clone(),
             corrected: last.replacement.clone(),
             original: last.original.clone(),
             following: format!(
@@ -599,6 +603,13 @@ impl Session {
                 self.executable_context()
             ),
         })
+    }
+
+    /// Keep the correction's language with its memory-only undo record.
+    pub(super) fn record_undo_language(&mut self, language: Option<String>) {
+        if let Some(last) = self.correction_undo_history.last_mut() {
+            last.language = language;
+        }
     }
 
     /// Restore a recorded original in session context while preserving newer typed text.

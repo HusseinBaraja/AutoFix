@@ -16,9 +16,38 @@ pub(crate) struct AppConfig {
     pub(crate) correction: CorrectionConfig,
     #[serde(default)]
     pub(crate) replacement: ReplacementConfig,
+    #[serde(default)]
+    pub(crate) learning: LearningConfig,
     pub(crate) api: ApiConfig,
     pub(crate) feedback: FeedbackConfig,
     pub(crate) logging: LoggingConfig,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct LearningConfig {
+    #[serde(default)]
+    pub(crate) mode: LearningMode,
+    #[serde(default)]
+    pub(crate) rule: LearningRule,
+    #[serde(default)]
+    pub(crate) per_app: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LearningMode {
+    #[default]
+    Off,
+    Ask,
+    Automatic,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LearningRule {
+    Dictionary,
+    #[default]
+    Pair,
 }
 
 impl AppConfig {

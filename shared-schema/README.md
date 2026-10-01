@@ -10,6 +10,20 @@ This component owns stable contracts between:
 
 Keep schemas explicit, versioned, and documented. Avoid storing executable runtime state here; this area is for contracts, structured settings, and compatibility notes.
 
+`[learning]` is optional in TOML. `mode` accepts `off` (default), `ask`, or
+`automatic`; `rule` accepts `pair` (default) or `dictionary`; `per_app` defaults
+to false. Rust and WPF use the same defaults and reject unknown choices.
+Learning changes only future exclusions after successful app-level undo.
+Exclusions remain active independently of these settings.
+
+The WPF editor and Rust engine share `custom_dictionary_entries` and
+`learned_correction_rules` in `autofix.sqlite`. Null app scope means all apps;
+`und` dictionary language and null/`und` pair language mean all languages.
+Active pairs use `learning_enabled = 1` and `rule_type = 'pair'`. SQLite row IDs
+identify editor updates and deletes; dictionary/rule edits use transactions.
+The engine owns migration versions and accepts tables initialized by settings.
+No dictionary IPC is required: the settings editor writes the same local database.
+
 Confidence settings retain the existing TOML values: `silent`, `suggestion`, and
 `do_nothing`. High defaults to `silent`, medium to `suggestion`, and low is fixed
 to `do_nothing`. In v1, medium `suggestion` means manual-only with available

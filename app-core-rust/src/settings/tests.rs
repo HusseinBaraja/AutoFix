@@ -11,6 +11,40 @@ use super::{
 };
 
 #[test]
+fn learning_is_opt_in_and_round_trips_with_legacy_defaults() {
+    use super::{LearningMode, LearningRule};
+    let mut config = AppConfig::default();
+    assert_eq!(config.learning.mode, LearningMode::Off);
+    for mode in [
+        LearningMode::Off,
+        LearningMode::Ask,
+        LearningMode::Automatic,
+    ] {
+        for rule in [LearningRule::Dictionary, LearningRule::Pair] {
+            config.learning.mode = mode;
+            config.learning.rule = rule;
+            config.learning.per_app = true;
+            let encoded = config_to_toml(&config).unwrap();
+            assert_eq!(
+                super::toml_io::parse_config(&encoded).unwrap().learning,
+                config.learning
+            );
+        }
+    }
+    let mut document = toml::Value::try_from(&config).unwrap();
+    document.as_table_mut().unwrap().remove("learning");
+    let legacy = toml::to_string(&document).unwrap();
+    assert_eq!(
+        super::toml_io::parse_config(&legacy).unwrap().learning.mode,
+        LearningMode::Off
+    );
+    assert!(super::toml_io::parse_config(
+        &legacy.replace("[general]", "[learning]\nmode = 'invalid'\n[general]")
+    )
+    .is_err());
+}
+
+#[test]
 fn clipboard_preference_round_trips_and_legacy_configs_keep_default() {
     let mut config = AppConfig::default();
     assert!(config.replacement.clipboard_enabled);

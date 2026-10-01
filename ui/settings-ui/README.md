@@ -11,6 +11,17 @@ This component owns settings mode:
 
 The UI should remain a thin product surface over explicit config and IPC contracts from `shared-schema`. Background correction behavior belongs in `app-core-rust`.
 
+The **Dictionary** section lists and edits SQLite word/phrase exclusions and
+pair-specific rules. New entry, Save, Delete selected, and Refresh work with the
+background process running or stopped. Language uses a BCP 47 tag (`und` for all
+languages); blank app scope means all apps. Invalid edits preserve the saved row.
+The engine sees saved exclusions on future requests and rechecks before mutation.
+Learning controls round-trip through TOML: off (default), ask after AutoFix undo,
+or automatic; protect the original or only the rejected pair; optionally scope
+new learned entries to the current app. Refresh shows newly learned entries.
+The optional consent prompt is owned by the engine and works while settings are
+closed. Native Ctrl+Z and the planned suggestion UI do not supply rejections.
+
 Correction settings offer typos-only and typos-plus-grammar modes. Grammar
 category switches are available in grammar mode; the saved enabled list is
 empty in typos-only mode. An older `punctuation` setting loads as `spacing`.

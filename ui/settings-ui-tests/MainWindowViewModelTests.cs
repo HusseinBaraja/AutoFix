@@ -8,6 +8,94 @@ namespace AutoFix.SettingsUi.Tests;
 public sealed class MainWindowViewModelTests
 {
     [TestMethod]
+    public void DictionaryWindowEditsScopedPairsAndPreservesInvalidEdits()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            MainWindow? window = null;
+            try
+            {
+                using var fixture = TempConfigFixture.Create();
+                var config = AppConfig.Default(); config.Onboarding.Completed = true;
+                fixture.Storage.Save(config);
+                var storage = new DictionaryStorage(Path.Combine(fixture.Root, "autofix.sqlite"));
+                var viewModel = new MainWindowViewModel(new FakeBackgroundIpcClient(), fixture.Storage,
+                    new AppRuleStorage(Path.Combine(fixture.Root, "autofix.sqlite")), new NullConfigFileDialog(), new FakeApiKeyStatus(false), new FakeStartupRegistration());
+                window = new MainWindow(viewModel) { ShowActivated = false, Left = -10000, Top = -10000, Width = 1080, Height = 1150 };
+                window.Show();
+                viewModel.SelectedSection = viewModel.Sections.Single(s => s.ShowsDictionary);
+                viewModel.DictionaryKind = "pair";
+                Pump();
+                var boxes = Descendants(window).OfType<System.Windows.Controls.TextBox>().ToArray();
+                void Type(string name, string text) => boxes.Single(b => System.Windows.Automation.AutomationProperties.GetName(b) == name)
+                    .SetCurrentValue(System.Windows.Controls.TextBox.TextProperty, text);
+                void Click(string content)
+                {
+                    var button = Descendants(window).OfType<System.Windows.Controls.Button>().Single(b => Equals(b.Content, content));
+                    Assert.IsNotNull(button.Command);
+                    button.Command.Execute(button.CommandParameter);
+                    Pump();
+                }
+                Type("Dictionary word or phrase", "teh phrase");
+                Type("Blocked replacement", "the phrase");
+                Type("Dictionary language", "en-US");
+                Type("Dictionary app scope", "Notepad.EXE");
+                Click("Save entry");
+                var row = storage.List().Single();
+                Assert.AreEqual("teh phrase", row.Word);
+                Assert.AreEqual("the phrase", row.Replacement);
+                Assert.AreEqual("notepad.exe", row.App);
+                var grid = Descendants(window).OfType<System.Windows.Controls.DataGrid>().Single(g => System.Windows.Automation.AutomationProperties.GetName(g) == "Dictionary");
+                grid.SelectedItem = grid.Items[0];
+                Pump();
+                Assert.AreEqual("teh phrase", viewModel.DictionaryWord);
+                Assert.IsTrue(viewModel.IsPairRule);
+                var preview = Environment.GetEnvironmentVariable("AUTOFIX_SETTINGS_PREVIEW");
+                if (!string.IsNullOrEmpty(preview))
+                {
+                    window.UpdateLayout();
+                    var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                    bitmap.Render(window);
+                    var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                    encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+                    using var file = File.Create(preview); encoder.Save(file);
+                }
+                Type("Dictionary language", "invalid-!");
+                Click("Save entry");
+                Assert.AreEqual("Exclusion not saved.", viewModel.StatusTitle);
+                StringAssert.Contains(viewModel.DictionaryMessage, "BCP 47");
+                Assert.AreEqual("en-US", storage.List().Single().Language);
+                Type("Dictionary language", "fr");
+                Click("Save entry");
+                Assert.AreEqual("fr", storage.List().Single().Language);
+                grid.SelectedItem = grid.Items[0];
+                Pump();
+                Click("Delete selected");
+                Assert.AreEqual(0, storage.List().Count);
+            }
+            catch (Exception error) { failure = error; }
+            finally { window?.Close(); }
+        }) { IsBackground = true };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(15)), "WPF dictionary flow timed out.");
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    private static void Pump() => System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
+
+    private static IEnumerable<System.Windows.DependencyObject> Descendants(System.Windows.DependencyObject root)
+    {
+        for (var i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+            yield return child;
+            foreach (var descendant in Descendants(child)) yield return descendant;
+        }
+    }
+
+    [TestMethod]
     public async Task SettingChangeSavesConfigAutomatically()
     {
         using var fixture = TempConfigFixture.Create();

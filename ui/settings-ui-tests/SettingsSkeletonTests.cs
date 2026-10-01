@@ -40,6 +40,7 @@ public sealed class SettingsSkeletonTests
                 "Shortcuts",
                 "Triggers",
                 "Correction",
+                "Dictionary",
                 "Engines",
                 "Context",
                 "Feedback",

@@ -112,6 +112,7 @@ public static class SettingsSkeleton
                 IsAvailable = false,
             },
         ]),
+        DictionarySection(config),
         Section("Engines", "Local and API correction providers",
         [
             Dropdown("Engine", "Route correction requests.", "correction.engine", config.Correction.Engine, Engines()),
@@ -223,4 +224,15 @@ public static class SettingsSkeleton
             Description = "Per-app correction scope, triggers, and engine permissions",
             ShowsAppRules = true,
         };
+
+    private static SettingsSectionViewModel DictionarySection(AppConfig config)
+    {
+        var section = new SettingsSectionViewModel { Name = "Dictionary", Description = "Words, phrases, and rejected correction pairs", ShowsDictionary = true };
+        section.Settings.Add(Dropdown("Learn from undo", "Off by default. App-level undo rejects a correction. Ask requires your consent before saving text.", "learning.mode", config.Learning.Mode,
+            [new("Off — undo only", "off"), new("Ask after undo", "ask"), new("Automatically learn", "automatic")]));
+        section.Settings.Add(Dropdown("Learned exclusion", "Protect the original word or phrase, or block only the rejected replacement.", "learning.rule", config.Learning.Rule,
+            [new("Never change this to that", "pair"), new("Never correct the original", "dictionary")]));
+        section.Settings.Add(Toggle("Learn for this app only", "Limit new learned entries to the app where you undid the correction.", "learning.per_app", config.Learning.PerApp));
+        return section;
+    }
 }

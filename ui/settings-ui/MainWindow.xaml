@@ -373,17 +373,42 @@
 
                     <Border Style="{StaticResource TableShell}"
                             Visibility="{Binding SelectedSection.HasDictionary, Converter={StaticResource BoolToVisibility}}">
-                        <DataGrid ItemsSource="{Binding SelectedSection.Dictionary}"
+                        <StackPanel Margin="16">
+                            <TextBlock Text="Custom dictionary and pair rules" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <TextBlock Text="Select an entry to edit. Language: BCP 47 tag (en, en-US); und protects all languages. Empty app scope applies everywhere." TextWrapping="Wrap" Margin="0,0,0,12" />
+                            <WrapPanel Margin="0,0,0,12">
+                                <Button Content="New entry" Command="{Binding NewDictionaryCommand}" Margin="0,0,8,0" />
+                                <Button Content="Refresh" Command="{Binding RefreshDictionaryCommand}" Margin="0,0,8,0" />
+                                <Button Content="Delete selected" Command="{Binding DeleteDictionaryCommand}" />
+                            </WrapPanel>
+                        <DataGrid ItemsSource="{Binding SelectedSection.Dictionary}" SelectedItem="{Binding SelectedDictionary}"
                                   AutomationProperties.Name="Dictionary"
+                                  IsReadOnly="True" MaxHeight="250"
                                   AutoGenerateColumns="False"
                                   CanUserAddRows="False"
                                   HeadersVisibility="Column">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="Word" Binding="{Binding Word}" Width="*" />
-                                <DataGridTextColumn Header="Language" Binding="{Binding Language}" Width="120" />
-                                <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="160" />
+                                <DataGridTextColumn Header="Word / phrase" Binding="{Binding Word}" Width="*" />
+                                <DataGridTextColumn Header="Language" Binding="{Binding Language}" Width="85" />
+                                <DataGridTextColumn Header="App" Binding="{Binding AppLabel}" Width="110" />
+                                <DataGridTextColumn Header="Rule" Binding="{Binding RuleLabel}" Width="110" />
+                                <DataGridTextColumn Header="Blocked replacement" Binding="{Binding Replacement}" Width="*" />
                             </DataGrid.Columns>
                         </DataGrid>
+                            <ComboBox ItemsSource="{Binding DictionaryKinds}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding DictionaryKind}" Margin="0,12,0,8" AutomationProperties.Name="Exclusion type" />
+                            <TextBlock Text="Original word or phrase" />
+                            <Border Style="{StaticResource InputShell}" Margin="0,4,0,8"><TextBox Text="{Binding DictionaryWord, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Dictionary word or phrase" /></Border>
+                            <StackPanel Visibility="{Binding IsPairRule, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="Never change it to (empty blocks deletion)" />
+                                <Border Style="{StaticResource InputShell}" Margin="0,4,0,8"><TextBox Text="{Binding DictionaryReplacement, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Blocked replacement" /></Border>
+                            </StackPanel>
+                            <TextBlock Text="Language" />
+                            <Border Style="{StaticResource InputShell}" Margin="0,4,0,8"><TextBox Text="{Binding DictionaryLanguage, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Dictionary language" /></Border>
+                            <TextBlock Text="App process (optional, for example notepad.exe)" />
+                            <Border Style="{StaticResource InputShell}" Margin="0,4,0,12"><TextBox Text="{Binding DictionaryApp, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Dictionary app scope" /></Border>
+                            <Button Content="Save entry" Command="{Binding SaveDictionaryCommand}" HorizontalAlignment="Left" />
+                            <TextBlock Text="{Binding DictionaryMessage}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                        </StackPanel>
                     </Border>
                 </StackPanel>
             </ScrollViewer>
