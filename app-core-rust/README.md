@@ -179,10 +179,16 @@ versions. Captured field text may enter informative context; executable context
 contains only text typed during the current engine run.
 On a successful correction, corrected text becomes read-only informative
 context. Automatic correction retires only its frozen segment and preserves newer
-executable text. A manual trigger or final fix with no changes
-does the same with the original text. Exceeding the configured executable word
-limit also commits the current segment. New typing starts a fresh executable
-segment. Undo restores the corrected span in informative context to its
+executable text. Validated no-change results from manual, word-count, character,
+and final-fix requests commit the original segment without replacement or an
+undo entry. Each accepted result logs one metadata-only event and writes a
+`correction_metadata` row with trigger, engine, confidence, reason, latency, and
+replacement method `none`; no context text enters these logs. Failed, stale,
+timed-out, unsupported-language, and confidence-suppressed results stay executable.
+Exceeding `context.executable_context_max_words` (default 80) also commits the
+current segment, including after caret movement resolves and after a limit update.
+This size-limit commit logs only session and word-count metadata. New typing
+starts a fresh executable segment. Undo restores the corrected span in informative context to its
 original text and leaves newer executable text intact. Informative context is
 shrunk in app memory after every append and commit. Shrinking stays within the
 configured character budget, prefers configured sentence boundaries, and

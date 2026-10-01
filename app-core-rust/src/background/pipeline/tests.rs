@@ -703,6 +703,15 @@ fn failed_frozen_prefix_restores_dependents_and_can_be_corrected_on_retry() {
 /// Every trigger accepts only checked unchanged text and shrinks its read-only context.
 #[test]
 fn unchanged_commit_policy_preserves_skips_for_all_triggers() {
+    let path = std::env::temp_dir().join(format!(
+        "autofix-no-change-{}.sqlite",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let database = crate::storage::Database::open(&path).unwrap();
+    let connection = rusqlite::Connection::open(&path).unwrap();
     for trigger in [
         TriggerKind::ManualShortcut,
         TriggerKind::WordCount,
@@ -721,9 +730,12 @@ fn unchanged_commit_policy_preserves_skips_for_all_triggers() {
         ] {
             let mut config = AppConfig::default();
             config.context.informative_context_max_chars = 12;
+            config.logging.debug_mode_enabled = true;
+            config.logging.full_text_debug_mode_enabled = true;
             let mut manager = manager(&config, "hello");
             manager.set_informative_context("Old context ".into());
-            let mut pipeline = CorrectionPipeline::new().unwrap();
+            database.clear_logs().unwrap();
+            let mut pipeline = CorrectionPipeline::with_database(&database).unwrap();
             if matches!(trigger, TriggerKind::WordCount | TriggerKind::Character) {
                 submit_frozen(&mut pipeline, &mut manager, &config);
                 pipeline.active.front_mut().unwrap().request.trigger = trigger;
@@ -749,8 +761,12 @@ fn unchanged_commit_policy_preserves_skips_for_all_triggers() {
                 .completion
                 .as_mut()
                 .unwrap()
-                .output =
-                CorrectionOutput::unchanged("hello".into(), ConfidenceTier::Low, reason.clone(), 0);
+                .output = CorrectionOutput::unchanged(
+                "hello".into(),
+                ConfidenceTier::Low,
+                reason.clone(),
+                17,
+            );
             let accepted = matches!(
                 reason,
                 NoChangeReason::NoCorrectionNeeded | NoChangeReason::AllCandidatesProtected
@@ -761,6 +777,48 @@ fn unchanged_commit_policy_preserves_skips_for_all_triggers() {
                 accepted
             );
             assert_eq!(calls.get(), 0);
+            // A completion is consumed once, including its metadata event.
+            assert!(!finish(
+                &mut pipeline,
+                &mut manager,
+                &config,
+                STAMP,
+                &calls,
+                false
+            ));
+            let events: i64 = connection
+                .query_row("select count(*) from correction_metadata", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(events, i64::from(accepted));
+            if accepted {
+                let metadata: (String, String, String, String, String, String, u64) = connection.query_row(
+                    "select session_id, app_process_name, trigger_type, confidence_tier, replacement_method, result_reason, latency_ms from correction_metadata",
+                    [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?))
+                ).unwrap();
+                assert_eq!(
+                    metadata,
+                    (
+                        manager.active().unwrap().id().to_string(),
+                        "notepad.exe".into(),
+                        trigger.as_str().into(),
+                        "low".into(),
+                        "none".into(),
+                        if reason == NoChangeReason::NoCorrectionNeeded {
+                            "no_correction_needed"
+                        } else {
+                            "all_candidates_protected"
+                        }
+                        .into(),
+                        17
+                    )
+                );
+            }
+            let debug_events: i64 = connection
+                .query_row("select count(*) from debug_events", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(debug_events, 0);
             let session = manager.active().unwrap();
             let newer = if matches!(trigger, TriggerKind::WordCount | TriggerKind::Character) {
                 " 尾"
@@ -784,6 +842,9 @@ fn unchanged_commit_policy_preserves_skips_for_all_triggers() {
             assert!(session.undo_target().is_none());
         }
     }
+    drop(connection);
+    drop(database);
+    std::fs::remove_file(path).unwrap();
 }
 
 /// Completion rejects position changes and input arriving during live security validation.

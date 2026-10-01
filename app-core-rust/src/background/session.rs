@@ -301,10 +301,21 @@ impl Session {
             self.versions.executable = self.versions.executable.wrapping_add(1);
             self.pending_corrections.clear();
         }
-        if self.editable_context().split_whitespace().count()
-            > usize::from(limits.executable_context_max_words)
-        {
+        self.enforce_executable_limit(limits);
+    }
+
+    /// Retire oversized active text only after its pre-caret position is known.
+    fn enforce_executable_limit(&mut self, limits: &ContextConfig) {
+        let words = self.editable_context().split_whitespace().count();
+        if !self.position_uncertain() && words > usize::from(limits.executable_context_max_words) {
             self.commit_executable(limits);
+            tracing::info!(
+                session_id = self.id,
+                executable_words = words,
+                max_words = limits.executable_context_max_words,
+                reason = "executable_context_max_words",
+                "original context committed"
+            );
         }
     }
 
@@ -577,12 +588,7 @@ impl SessionManager {
         let active_limits = self.limits.clone();
         for session in self.sessions.values_mut() {
             session.shrink_informative(&active_limits);
-            if !session.position_uncertain()
-                && session.executable_context().split_whitespace().count()
-                    > usize::from(active_limits.executable_context_max_words)
-            {
-                session.commit_executable(&active_limits);
-            }
+            session.enforce_executable_limit(&active_limits);
         }
     }
 
@@ -645,7 +651,9 @@ impl SessionManager {
         let limits = self.limits.clone();
         self.active_mut()
             .map_or(MovementResolution::Continued, |session| {
-                session.resolve_movement(preceding, &limits)
+                let resolution = session.resolve_movement(preceding, &limits);
+                session.enforce_executable_limit(&limits);
+                resolution
             })
     }
 
@@ -1309,6 +1317,41 @@ mod tests {
         assert_eq!(manager.active().unwrap().executable_context(), "");
         manager.input(TypedInput::Text(" four".into()));
         assert_eq!(manager.active().unwrap().executable_context(), " four");
+    }
+
+    /// Every movement-resolution route must bound resumed executable typing.
+    #[test]
+    fn movement_resolution_commits_oversized_original_context() {
+        for route in 0..4 {
+            let limits = ContextConfig {
+                executable_context_max_words: 1,
+                informative_context_max_chars: 12,
+                ..ContextConfig::default()
+            };
+            let mut manager = SessionManager::new(limits);
+            manager.focus(&target(1, 10, None));
+            manager.input(TypedInput::Text("typed".into()));
+            manager.input(if route < 2 {
+                TypedInput::Left
+            } else {
+                TypedInput::Uncertain(MovementSignal::HomeEnd)
+            });
+            manager.input(TypedInput::Text(" one two".into()));
+            assert!(manager.active().unwrap().position_uncertain());
+            manager.resolve_movement(match route {
+                1 => Some("type one two"),
+                3 => Some("typed gap one two"),
+                _ => None,
+            });
+            let session = manager.active().unwrap();
+            assert!(!session.position_uncertain());
+            assert_eq!(session.executable_context(), "", "route {route}");
+            assert!(session.informative_context().ends_with("one two"));
+            assert!(session.informative_context().chars().count() <= 12);
+            assert!(session.undo_target().is_none());
+            manager.input(TypedInput::Text("new".into()));
+            assert_eq!(manager.active().unwrap().editable_context(), "new");
+        }
     }
 
     #[test]

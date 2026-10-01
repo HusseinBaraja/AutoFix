@@ -423,6 +423,11 @@ impl CorrectionPipeline {
                 return false;
             }
             let original = &active.request.executable_context;
+            let no_change_reason = match output.no_change_reason {
+                Some(NoChangeReason::NoCorrectionNeeded) => Some("no_correction_needed"),
+                Some(NoChangeReason::AllCandidatesProtected) => Some("all_candidates_protected"),
+                _ => None,
+            };
             if output.changes_needed {
                 if target.focused_element_id.is_none()
                     || output.behavior != ConfidenceBehavior::Silent
@@ -431,14 +436,7 @@ impl CorrectionPipeline {
                 {
                     return false;
                 }
-            } else if output.corrected_executable_text != *original
-                || !matches!(
-                    output.no_change_reason,
-                    Some(
-                        NoChangeReason::NoCorrectionNeeded | NoChangeReason::AllCandidatesProtected
-                    )
-                )
-            {
+            } else if output.corrected_executable_text != *original || no_change_reason.is_none() {
                 return false;
             }
             if let Some(id) = segment_id {
@@ -503,6 +501,14 @@ impl CorrectionPipeline {
                     confidence,
                     confirmation.unwrap(),
                 );
+            } else if completed {
+                self.log_no_change_commit(
+                    &active.request,
+                    &active.target,
+                    confidence,
+                    no_change_reason.unwrap(),
+                    output.engine_latency_ms,
+                );
             }
             completed
         })();
@@ -516,6 +522,60 @@ impl CorrectionPipeline {
             }
         }
         applied
+    }
+
+    /// Record accepted commits once, using metadata only even in full-debug mode.
+    fn log_no_change_commit(
+        &self,
+        request: &CorrectionRequest,
+        target: &FocusedTarget,
+        confidence: ConfidenceTier,
+        reason: &str,
+        latency_ms: u64,
+    ) {
+        tracing::info!(
+            session_id = request.session_id,
+            trigger = request.trigger.as_str(),
+            engine = ?request.engine,
+            confidence = ?confidence,
+            reason,
+            latency_ms,
+            replacement_method = "none",
+            "no-change context committed"
+        );
+        let Some(path) = self.database_path.as_deref() else {
+            return;
+        };
+        let metadata = crate::storage::CorrectionMetadata {
+            session_id: request.session_id.to_string(),
+            app_process_name: target.process_name.clone(),
+            trigger_type: request.trigger.as_str().into(),
+            confidence_tier: match confidence {
+                ConfidenceTier::High => "high",
+                ConfidenceTier::Medium => "medium",
+                ConfidenceTier::Low => "low",
+            }
+            .into(),
+            engine_used: match request.engine {
+                EngineKind::LocalRule => "local_rule",
+                EngineKind::LocalMl => "local_ml",
+                EngineKind::OpenAiCompatibleApi => "open_ai_compatible_api",
+                EngineKind::CustomApi => "custom_api",
+            }
+            .into(),
+            replacement_method: "none".into(),
+            result_reason: reason.into(),
+            latency_ms,
+        };
+        if crate::storage::Database::open(path)
+            .and_then(|database| database.correction_metadata().record(&metadata))
+            .is_err()
+        {
+            tracing::warn!(
+                session_id = request.session_id,
+                "no-change metadata unavailable"
+            );
+        }
     }
 }
 
