@@ -210,8 +210,9 @@ before processing subsequent typing, including keys in the same input batch.
 New typing starts a fresh executable context while correction runs asynchronously.
 `context.pending_queue_full_behavior` defaults to `skip_new`, which skips the
 new automatic trigger and retains current typing. `cancel_oldest` cancels the
-oldest pending request, retires its original text into informative context, and
-admits the new segment. `merge_newest` cancels the newest pending request, merges
+oldest pending request and its dependent newer requests, restores their unchecked
+text to executable context, and admits the combined segment for a new check.
+`merge_newest` cancels the newest pending request, merges
 its typed text back into the active executable context, and waits for the next
 trigger. Manual correction cancels pending work and restores its original text
 to the active context before taking its selection or caret snapshot.
@@ -246,7 +247,7 @@ writes from IPC and the settings UI, including when SQLite uses WAL mode.
 Revocation takes effect when the rule write commits: a send already holding the
 reservation may finish first, and transmitted data cannot be recalled. Missing,
 unreadable, or busy policy storage denies the send without waiting or retrying.
-Denied frozen jobs retire their original text and release queue capacity through
+Denied frozen jobs restore their original text and release queue capacity through
 normal failed completion. Completion rechecks the live security gate
 and focused target, then input generations again after those checks. Completions
 wait for hook input to be processed and retire frozen ranges in document order.
@@ -257,8 +258,14 @@ after a frozen segment. Missing captures or mismatches discard the result; no
 fuzzy search or replacement is attempted. Selected-text results are discarded
 because their replacement range cannot be proven before the caret, even when
 arbitrary selected-text correction is enabled.
-Failed, suppressed, or refused frozen results release their slot and retire the
-original text without applying engine output. Results are
+Failed, suppressed, or refused frozen results release their slot and restore the
+original text and dependent newer segments to active executable context. Their
+queued requests are cancelled so a later trigger can check the combined text in
+document order. Invalidated requests also restore any still-active segment;
+movement and lost caret ownership continue through the final-fix/re-anchor rules.
+Only validated unchanged results with `no_correction_needed` or
+`all_candidates_protected` accept the original text into informative context;
+language and confidence skips retain executable text. Results are
 consumed once. Only completed silent corrections above low confidence reach the
 replacement boundary. Failed and suppressed manual edits do not commit executable
 context. Tests cover delayed engines, frozen queues and overflow policies,

@@ -312,7 +312,18 @@ impl CorrectionPipeline {
     }
 
     /// Frozen work survives newer typing; manual snapshots remain strict.
-    pub(super) fn invalidate(&mut self, manager: &SessionManager, stamp: InputStamp) {
+    pub(super) fn invalidate(&mut self, manager: &mut SessionManager, stamp: InputStamp) {
+        // Losing worker ownership does not mean the typed segment was checked.
+        // Return it and its dependent suffix to the active context when present.
+        for active in &self.active {
+            if let Some(session) = manager.active_mut() {
+                if session.id() == active.request.session_id && !active.valid(session, stamp) {
+                    if let Some(id) = active.request.pending_segment_id {
+                        session.restore_pending_from(id);
+                    }
+                }
+            }
+        }
         self.active.retain(|active| {
             if manager
                 .active()
@@ -373,8 +384,8 @@ impl CorrectionPipeline {
         let mut active = self.active.pop_front().unwrap();
         let validation_stamp = current_stamp();
         let segment_id = active.request.pending_segment_id;
-        // Every completion releases its slot, including errors, suppressed
-        // outputs and refused mutation. Frozen original text retires unchanged.
+        // Every completion releases its slot. Only accepted results commit;
+        // failed or skipped work returns to executable context below.
         let applied = (|| {
             let output = completion.output;
             let notify_timeout = output.status == EngineStatus::TimedOut
@@ -469,7 +480,7 @@ impl CorrectionPipeline {
             let session = manager.active_mut().unwrap();
             let changed = output.changes_needed;
             let completed = if let Some(id) = segment_id {
-                session.complete_pending(id, Some(&output.corrected_executable_text), limits)
+                session.complete_pending(id, &output.corrected_executable_text, limits)
             } else if output.changes_needed {
                 session.queue_correction(original.clone(), output.corrected_executable_text)
                     && session.apply_next_correction(limits)
@@ -485,7 +496,9 @@ impl CorrectionPipeline {
         if !applied {
             if let (Some(id), Some(session)) = (segment_id, manager.active_mut()) {
                 if session.id() == active.request.session_id {
-                    session.complete_pending(id, None, limits);
+                    for cancelled in session.restore_pending_from(id) {
+                        self.cancel_segment(cancelled);
+                    }
                 }
             }
         }

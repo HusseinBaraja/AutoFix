@@ -44,8 +44,10 @@ Pending correction settings live in the existing `[context]` TOML section:
 waiting requests per session. `pending_queue_full_behavior` accepts `skip_new`
 (default), `cancel_oldest`, and `merge_newest`. Merge cancels the newest pending
 request, restores its typed text into the active context alongside new typing,
-and waits for the next automatic trigger. Older settings files default to one
-pending correction and skipping new triggers. Queue contents remain memory-only.
+and waits for the next automatic trigger. Cancel-oldest cancels the oldest and
+dependent newer requests, then resubmits all unchecked text with the new segment.
+It does not commit cancelled text into informative context. Older settings files
+default to one pending correction and skipping new triggers. Queue contents remain memory-only.
 
 API settings retain `timeout_manual_ms = 3000`, `timeout_auto_ms = 700`,
 `retry_count = 1`, and `fallback_to_local = false` defaults. Retry count accepts

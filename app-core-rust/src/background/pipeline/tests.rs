@@ -220,26 +220,18 @@ fn queued_api_job_is_denied_after_rule_revocation_and_releases_its_slot() {
         |_, _| panic!("revoked target must not be captured"),
         |_, _, _| panic!("revoked target must not be edited")
     ));
-    wait_completion(&pipeline);
-    assert!(!pipeline.finish(
-        &mut manager,
-        &config.context,
-        || STAMP,
-        |_| panic!("denied send must complete silently"),
-        |_, _| panic!("denied send must not capture"),
-        |_, _, _| panic!("denied send must not replace")
-    ));
+    // The rejected first segment restores the dependent queued request too.
     let listener = server.join().unwrap();
     assert_eq!(
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock
     );
     assert!(pipeline.active.is_empty());
+    assert_eq!(manager.active().unwrap().informative_context(), "");
     assert_eq!(
-        manager.active().unwrap().informative_context(),
-        "First. Second."
+        manager.active().unwrap().editable_context(),
+        "First. Second. next"
     );
-    assert_eq!(manager.active().unwrap().editable_context(), " next");
     assert!(!pipeline.take_timeout_notice());
 }
 
@@ -373,8 +365,8 @@ fn automatic_timeout_releases_frozen_slot_without_live_target_calls() {
     ));
     assert!(!pipeline.take_timeout_notice());
     assert!(pipeline.active.is_empty());
-    assert_eq!(manager.active().unwrap().informative_context(), "teh");
-    assert_eq!(manager.active().unwrap().editable_context(), " next");
+    assert_eq!(manager.active().unwrap().informative_context(), "");
+    assert_eq!(manager.active().unwrap().editable_context(), "teh next");
 }
 
 /// Build a safe ordinary control with stable focus identity.
@@ -447,10 +439,12 @@ fn submit_frozen(
         .active_mut()
         .unwrap()
         .freeze_pending(&config.context);
-    if let Some(id) = cancelled {
+    for id in cancelled {
         pipeline.cancel_segment(id);
     }
     let id = segment.unwrap();
+    (request.informative_context, request.executable_context) =
+        manager.active().unwrap().pending_context(id).unwrap();
     request.pending_segment_id = Some(id);
     pipeline.submit(
         request,
@@ -486,7 +480,7 @@ fn delayed_frozen_corrections_keep_all_results_and_preserve_newer_typing() {
         sequence: STAMP.sequence + 5,
         ..STAMP
     };
-    pipeline.invalidate(&manager, stamp);
+    pipeline.invalidate(&mut manager, stamp);
     assert_eq!(pipeline.active.len(), 2);
     release_tx.send(()).unwrap();
     wait_completion(&pipeline);
@@ -550,7 +544,11 @@ fn cancel_oldest_suppresses_late_transport_and_runs_new_segment() {
     submit_frozen(&mut pipeline, &mut manager, &config);
     assert!(cancelled.load(Ordering::Acquire));
     assert_eq!(pipeline.active.len(), 1);
-    assert_eq!(manager.active().unwrap().informative_context(), "teh");
+    assert_eq!(manager.active().unwrap().informative_context(), "");
+    assert_eq!(
+        pipeline.active.front().unwrap().request.executable_context,
+        "teh teh"
+    );
     release_tx.send(()).unwrap();
     let newest = started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     assert_ne!(first, newest);
@@ -565,14 +563,14 @@ fn cancel_oldest_suppresses_late_transport_and_runs_new_segment() {
         &Cell::new(0),
         true
     ));
-    assert_eq!(manager.active().unwrap().informative_context(), "teh the");
+    assert_eq!(manager.active().unwrap().informative_context(), "the the");
 }
 
-/// Failed and suppressed corrections retire originals without importing engine output.
+/// Failed and suppressed corrections restore unchecked text and release capacity.
 #[test]
 fn frozen_failures_release_capacity_without_committing_engine_output() {
     let config = AppConfig::default();
-    for failure in 0..5 {
+    for failure in 0..9 {
         let mut manager = manager(&config, "teh");
         let mut pipeline = CorrectionPipeline::new().unwrap();
         submit_frozen(&mut pipeline, &mut manager, &config);
@@ -586,6 +584,34 @@ fn frozen_failures_release_capacity_without_committing_engine_output() {
                 1 => output.behavior = ConfidenceBehavior::Suggestion,
                 2 => output.confidence = ConfidenceTier::Low,
                 3 | 4 => {}
+                5 => {
+                    *output = CorrectionOutput::failed(
+                        "teh".into(),
+                        crate::correction::EngineFailure {
+                            kind: crate::correction::EngineFailureKind::Internal,
+                            message: "test failure".into(),
+                            retryable: false,
+                        },
+                        0,
+                    )
+                }
+                6 => output.behavior = ConfidenceBehavior::DoNothing,
+                7 => {
+                    *output = CorrectionOutput::unchanged(
+                        "teh".into(),
+                        ConfidenceTier::Medium,
+                        NoChangeReason::ConfidenceBelowConfiguredBehavior,
+                        0,
+                    )
+                }
+                8 => {
+                    *output = CorrectionOutput::unchanged(
+                        "teh".into(),
+                        ConfidenceTier::Low,
+                        NoChangeReason::UnsupportedLanguage,
+                        0,
+                    )
+                }
                 _ => unreachable!(),
             }
         }
@@ -603,14 +629,160 @@ fn frozen_failures_release_capacity_without_committing_engine_output() {
             }
         ));
         assert_eq!(calls.get(), usize::from(failure == 3));
-        assert_eq!(manager.active().unwrap().informative_context(), "teh");
-        assert_eq!(manager.active().unwrap().editable_context(), " next");
+        assert_eq!(manager.active().unwrap().informative_context(), "");
+        assert_eq!(manager.active().unwrap().editable_context(), "teh next");
+        assert!(manager.active().unwrap().undo_target().is_none());
         assert!(manager
             .active_mut()
             .unwrap()
             .freeze_pending(&config.context)
             .0
             .is_some());
+    }
+}
+
+/// Failure cancels dependent work and preserves the whole span for a successful retry.
+#[test]
+fn failed_frozen_prefix_restores_dependents_and_can_be_corrected_on_retry() {
+    let mut config = AppConfig::default();
+    config.context.pending_queue_size = 2;
+    let mut manager = manager(&config, "teh");
+    let mut pipeline = CorrectionPipeline::new().unwrap();
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    wait_completion(&pipeline);
+    manager.input(TypedInput::Text(" wierd".into()));
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    let cancelled = pipeline.active.back().unwrap().cancelled.clone();
+    manager.input(TypedInput::Text(" 尾".into()));
+    pipeline
+        .mailbox
+        .0
+        .lock()
+        .unwrap()
+        .completion
+        .as_mut()
+        .unwrap()
+        .output = CorrectionOutput::timed_out("teh".into(), 700);
+    assert!(!finish(
+        &mut pipeline,
+        &mut manager,
+        &config,
+        STAMP,
+        &Cell::new(0),
+        false
+    ));
+    assert!(cancelled.load(Ordering::Acquire));
+    assert!(pipeline.active.is_empty());
+    assert_eq!(manager.active().unwrap().informative_context(), "");
+    assert_eq!(manager.active().unwrap().editable_context(), "teh wierd 尾");
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    wait_completion(&pipeline);
+    assert!(finish(
+        &mut pipeline,
+        &mut manager,
+        &config,
+        STAMP,
+        &Cell::new(0),
+        true
+    ));
+    assert_eq!(
+        manager.active().unwrap().informative_context(),
+        "the weird 尾"
+    );
+    assert_eq!(manager.active().unwrap().editable_context(), "");
+    assert!(manager
+        .active_mut()
+        .unwrap()
+        .undo_last_correction(&config.context));
+    assert_eq!(
+        manager.active().unwrap().informative_context(),
+        "teh wierd 尾"
+    );
+}
+
+/// Every trigger accepts only checked unchanged text and shrinks its read-only context.
+#[test]
+fn unchanged_commit_policy_preserves_skips_for_all_triggers() {
+    for trigger in [
+        TriggerKind::ManualShortcut,
+        TriggerKind::WordCount,
+        TriggerKind::Character,
+        TriggerKind::FinalFixBeforeReanchor,
+    ] {
+        for reason in [
+            NoChangeReason::NoCorrectionNeeded,
+            NoChangeReason::AllCandidatesProtected,
+            NoChangeReason::ConfidenceBelowConfiguredBehavior,
+            NoChangeReason::UnsupportedLanguage,
+            NoChangeReason::UncertainLanguage,
+            NoChangeReason::EngineUnavailable,
+            NoChangeReason::TimedOut,
+            NoChangeReason::EngineError,
+        ] {
+            let mut config = AppConfig::default();
+            config.context.informative_context_max_chars = 12;
+            let mut manager = manager(&config, "hello");
+            manager.set_informative_context("Old context ".into());
+            let mut pipeline = CorrectionPipeline::new().unwrap();
+            if matches!(trigger, TriggerKind::WordCount | TriggerKind::Character) {
+                submit_frozen(&mut pipeline, &mut manager, &config);
+                pipeline.active.front_mut().unwrap().request.trigger = trigger;
+                manager.input(TypedInput::Text(" 尾".into()));
+            } else {
+                let mut request = request(&manager, &config);
+                request.trigger = trigger;
+                assert!(pipeline.submit(
+                    request,
+                    manager.active().unwrap(),
+                    target(),
+                    STAMP,
+                    &config,
+                    vec![]
+                ));
+            }
+            wait_completion(&pipeline);
+            pipeline
+                .mailbox
+                .0
+                .lock()
+                .unwrap()
+                .completion
+                .as_mut()
+                .unwrap()
+                .output =
+                CorrectionOutput::unchanged("hello".into(), ConfidenceTier::Low, reason.clone(), 0);
+            let accepted = matches!(
+                reason,
+                NoChangeReason::NoCorrectionNeeded | NoChangeReason::AllCandidatesProtected
+            );
+            let calls = Cell::new(0);
+            assert_eq!(
+                finish(&mut pipeline, &mut manager, &config, STAMP, &calls, false),
+                accepted
+            );
+            assert_eq!(calls.get(), 0);
+            let session = manager.active().unwrap();
+            let newer = if matches!(trigger, TriggerKind::WordCount | TriggerKind::Character) {
+                " 尾"
+            } else {
+                ""
+            };
+            assert_eq!(
+                session.editable_context(),
+                if accepted {
+                    newer.to_owned()
+                } else {
+                    format!("hello{newer}")
+                }
+            );
+            if accepted {
+                assert!(session.informative_context().ends_with("hello"));
+                assert!(session.informative_context().chars().count() <= 12);
+            } else {
+                assert_eq!(session.informative_context(), "Old context ");
+            }
+            assert!(session.undo_target().is_none());
+        }
     }
 }
 
@@ -929,7 +1101,8 @@ fn live_range_must_match_exactly_before_caret() {
             }
         ));
         assert_eq!(calls.get(), 0);
-        assert_eq!(manager.active().unwrap().informative_context(), "teh");
+        assert_eq!(manager.active().unwrap().informative_context(), "");
+        assert_eq!(manager.active().unwrap().editable_context(), "teh");
     }
 }
 
@@ -1121,7 +1294,7 @@ fn slow_engine_never_blocks_automatic_input_and_keeps_only_latest_queued_work() 
     let cancelled = Arc::clone(&pipeline.active.front().unwrap().cancelled);
     let start = Instant::now();
     manager.input(TypedInput::Text("!".into()));
-    pipeline.invalidate(&manager, STAMP);
+    pipeline.invalidate(&mut manager, STAMP);
     assert!(cancelled.load(Ordering::Acquire));
     manager.input(TypedInput::Backspace);
     for _ in 0..32 {

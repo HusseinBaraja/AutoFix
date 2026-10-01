@@ -890,15 +890,18 @@ impl InputProcessor {
                 ) {
                     // Freeze the entire current context, including earlier
                     // skipped boundaries. New keys belong to a fresh context.
-                    request.executable_context = editable_snapshot.clone();
                     let (segment, cancelled) = session.freeze_pending(&self.config.context);
-                    if let Some(id) = cancelled {
+                    for id in cancelled {
                         self.pipeline.cancel_segment(id);
                     }
                     if let Some(id) = segment {
+                        // Overflow can restore older unchecked text. Snapshot
+                        // the admitted range after reservation, not before it.
+                        (request.informative_context, request.executable_context) =
+                            session.pending_context(id).unwrap();
                         request.pending_segment_id = Some(id);
                         pending.push(PendingTrigger {
-                            editable_snapshot,
+                            editable_snapshot: request.executable_context.clone(),
                             request,
                         });
                     }
@@ -945,7 +948,7 @@ impl InputProcessor {
         check_target: impl FnOnce(TriggerKind, &AppConfig, &Database) -> SecurityDecision,
     ) -> bool {
         self.pipeline
-            .invalidate(&self.session_manager, current_stamp());
+            .invalidate(&mut self.session_manager, current_stamp());
         let frozen = request.pending_segment_id.is_some();
         if !self.config.correction.enabled || !stamp.permits(current_stamp(), frozen) {
             return false;

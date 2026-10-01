@@ -368,8 +368,8 @@ fn automatic_triggers_in_one_batch_obey_capacity_and_overflow_policy() {
             }
             crate::settings::PendingQueueFullBehavior::CancelOldest => {
                 assert_eq!(valid.len(), 1);
-                assert_eq!(valid[0].request.executable_context, " next.");
-                assert_eq!(valid[0].request.informative_context, "first.");
+                assert_eq!(valid[0].request.executable_context, "first. next.");
+                assert_eq!(valid[0].request.informative_context, "");
                 assert_eq!(session.editable_context(), "");
             }
             crate::settings::PendingQueueFullBehavior::MergeNewest => {
