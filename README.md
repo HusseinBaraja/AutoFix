@@ -8,9 +8,14 @@ Planned capabilities include:
 - Local or API-backed correction engines.
 - Typos-only and typos-plus-grammar modes.
 - Custom dictionaries, app rules, blocklists, and allowlists.
-- Clipboard preservation, app-level undo, and secure-field blocking.
+- App-level undo and secure-field blocking.
 
 This repository is currently in setup stage.
+
+Native clipboard replacement preserves all readable formats and restores them
+before reporting success. Disable it under **Correction > Use clipboard for
+correction** or set `replacement.clipboard_enabled = false` in settings TOML.
+See [the engine documentation](app-core-rust/README.md) for runtime boundaries.
 
 ## Run App
 

@@ -82,10 +82,14 @@ impl ReplacementStrategy for DeferredStrategy {
 fn run_strategies(
     plan: &ReplacementPlan<'_>,
     strategies: &mut [&mut dyn ReplacementStrategy],
+    clipboard_allowed: bool,
 ) -> ReplacementResult {
     let mut method = None;
     let mut reasons = Vec::new();
     for strategy in strategies {
+        if strategy.method() == ReplacementMethod::Clipboard && !clipboard_allowed {
+            continue;
+        }
         method = Some(strategy.method());
         match strategy.replace(plan) {
             Attempt::Unavailable(reason) => reasons.push(reason),
@@ -109,6 +113,7 @@ impl ReplacementEngine {
         request: &CorrectionRequest,
         output: &CorrectionOutput,
         stamp: InputStamp,
+        clipboard_enabled: bool,
     ) -> ReplacementResult {
         let reason = if target.correction_eligibility() != CorrectionEligibility::Allowed {
             Some("target is protected, unavailable or unsupported")
@@ -148,7 +153,7 @@ impl ReplacementEngine {
             following: &request.replacement_following_text,
             stamp,
         };
-        Self::execute(&plan)
+        Self::execute(&plan, clipboard_enabled)
     }
 
     /// Informative text is editable only through a session-issued app correction record.
@@ -156,17 +161,21 @@ impl ReplacementEngine {
         target: &FocusedTarget,
         undo: &super::session::CorrectionUndoTarget,
         stamp: InputStamp,
+        clipboard_enabled: bool,
     ) -> ReplacementResult {
-        Self::execute(&ReplacementPlan {
-            target,
-            original: &undo.corrected,
-            replacement: &undo.original,
-            following: &undo.following,
-            stamp,
-        })
+        Self::execute(
+            &ReplacementPlan {
+                target,
+                original: &undo.corrected,
+                replacement: &undo.original,
+                following: &undo.following,
+                stamp,
+            },
+            clipboard_enabled,
+        )
     }
 
-    fn execute(plan: &ReplacementPlan<'_>) -> ReplacementResult {
+    fn execute(plan: &ReplacementPlan<'_>, clipboard_enabled: bool) -> ReplacementResult {
         run_strategies(
             plan,
             &mut [
@@ -175,6 +184,7 @@ impl ReplacementEngine {
                 &mut native::NativeStrategy(ReplacementMethod::Clipboard),
                 &mut native::NativeStrategy(ReplacementMethod::SendInput),
             ],
+            clipboard_enabled && clipboard::allowed_for(&plan.target.process_name),
         )
     }
 }

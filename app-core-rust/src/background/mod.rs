@@ -441,7 +441,13 @@ impl InputProcessor {
                 context_capture::read_before_caret(target, &config.context, known_chars)
             },
             |target, request, output| {
-                let result = ReplacementEngine::replace(target, request, output, replacement_stamp);
+                let result = ReplacementEngine::replace(
+                    target,
+                    request,
+                    output,
+                    replacement_stamp,
+                    config.replacement.clipboard_enabled,
+                );
                 replacement_uncertain = !result.success && result.may_have_changed;
                 tracing::debug!(
                     success = result.success,
@@ -768,7 +774,12 @@ impl InputProcessor {
         if let Some(session) = self.session_manager.active_mut() {
             session.restore_pending();
         }
-        let result = ReplacementEngine::undo(&target, &undo, stamp);
+        let result = ReplacementEngine::undo(
+            &target,
+            &undo,
+            stamp,
+            self.config.replacement.clipboard_enabled,
+        );
         tracing::debug!(success = result.success, method = ?result.method,
             range = ?result.range, reason = ?result.reason, "app correction undo completed");
         if result.success {

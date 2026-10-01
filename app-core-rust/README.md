@@ -256,10 +256,24 @@ Clipboard replacement uses synchronous `WM_PASTE` on recognized native Edit
 and RichEdit controls. It snapshots every enumerated clipboard format, including
 registered binary formats, bitmaps, palettes and metafiles, before changing the
 clipboard. Owner-managed or unreadable formats refuse this strategy before any
-clipboard write. The temporary Unicode text disables clipboard history and
-cloud upload. Restoration runs after success or failure and on scope exit.
-An external clipboard change is retained and reported as a failure instead of
-overwriting the user's newer copy. Restoration errors are reported, not hidden.
+clipboard write. It preallocates a complete restoration set, proves the target
+selection while the clipboard stays untouched, then installs temporary Unicode
+text immediately before synchronous paste. Privacy markers are installed before
+text to disable clipboard history and cloud upload. Restoration runs immediately
+after paste (including paste failure), before target verification, and on scope
+exit. Success requires both verified replacement and complete restoration.
+Ownership and independent copies of published data distinguish Windows-synthesized formats from
+an external clipboard change. A user's newer copy is retained and the attempt
+fails rather than overwriting it.
+
+`replacement.clipboard_enabled` defaults to true. The settings UI exposes
+**Correction > Use clipboard for correction**; disabling it skips clipboard
+preparation for both correction and app-level undo. Restoration failures emit
+metadata-only warnings and skip clipboard replacement for that process name
+(case-insensitive) until the engine exits. A failed restore removes temporary
+text when the clipboard lock is available, keeps the full saved snapshot in
+memory, and retries recovery on a dedicated worker until restored or superseded
+by a new copy. Other clipboard attempts use fallback while recovery is pending.
 
 SendInput fallback inserts UTF-16 Unicode key pairs into the same proved
 selection; an empty replacement deletes the selection with Backspace. It does
@@ -278,8 +292,15 @@ in informative context. It verifies the live anchor and restores that recorded
 span, preserving newer executable text. Memory truncation, movement, unknown
 selection geometry and secure fields block native undo.
 
-Focused tests cover strategy ordering, fail-closed authorization, mutation
-failures, Unicode ranges, clipboard handle copying and app-owned undo spans.
+Focused tests cover strategy ordering, the clipboard disable preference,
+fail-closed authorization, mutation failures, Unicode ranges, rich/binary format
+restoration, restoration failures and retry, Windows-synthesized formats,
+per-app fallback preference, clipboard handle copying and app-owned undo spans.
+The opt-in `native_clipboard_preservation_smoke` runs in a child with a separate
+noninteractive Windows window station and seeds rich text, HTML, binary data
+and a bitmap. It verifies actual native paste, restoration, recovery from a
+locked clipboard, and retention of a newer copy without touching the desktop
+clipboard. It refuses a visible station or unrelated existing clipboard data.
 The opt-in `native_edit_replacement_smoke` test owns a separate native editor;
 it checks clipboard/SendInput and preservation of the document suffix on an
 interactive Windows desktop. It safely refuses unsupported clipboard formats.

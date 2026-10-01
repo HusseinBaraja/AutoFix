@@ -160,20 +160,9 @@ impl PreparedRange {
         };
         // Snapshot every clipboard format before selecting anything in the target.
         let mut clipboard = if paste_window.is_some() {
-            match super::clipboard::ClipboardTransaction::begin(plan.replacement) {
+            match super::clipboard::ClipboardTransaction::prepare(plan.replacement) {
                 Ok(transaction) => Some(transaction),
-                Err(failure) if !failure.clipboard_uncertain => {
-                    return Attempt::Unavailable(failure.reason)
-                }
-                Err(failure) => {
-                    return Attempt::Finished(ReplacementResult {
-                        success: false,
-                        method: Some(method),
-                        range: Some(plan.range()),
-                        reason: Some(failure.reason),
-                        may_have_changed: true,
-                    })
-                }
+                Err(reason) => return Attempt::Unavailable(reason),
             }
         } else {
             None
@@ -208,10 +197,27 @@ impl PreparedRange {
             {
                 return Err("selected range or input changed".into());
             }
+            if let Some(transaction) = clipboard.as_mut() {
+                transaction.install().map_err(|failure| {
+                    if failure.clipboard_uncertain {
+                        super::clipboard::restore_failed(
+                            &plan.target.process_name,
+                            plan.target.process_id,
+                        );
+                    }
+                    failure.reason
+                })?;
+            }
+            if !current(plan) || !self.focused() {
+                return Err("target or input changed while preparing paste".into());
+            }
             // After this point a failed call may have mutated text: never fall through.
             result.may_have_changed = true;
             if let Some(window) = paste_window {
-                super::clipboard::paste(window)?;
+                super::clipboard::paste_and_restore(
+                    || super::clipboard::paste(window),
+                    || restore_clipboard(clipboard.as_mut(), plan),
+                )?;
             } else {
                 send_text(plan.replacement)?;
             }
@@ -230,14 +236,12 @@ impl PreparedRange {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
         })();
+        let restored = restore_clipboard(clipboard.as_mut(), plan);
         if operation.is_err() && !result.may_have_changed && current(plan) && self.focused() {
             if unsafe { self.original_caret.Select() }.is_err() {
                 result.may_have_changed = true;
             }
         }
-        let restored = clipboard
-            .as_mut()
-            .map_or(Ok(()), |transaction| transaction.restore());
         match (operation, restored) {
             (Ok(()), Ok(())) => result.success = true,
             (Err(reason), Ok(())) | (Ok(()), Err(reason)) => result.reason = Some(reason),
@@ -290,6 +294,18 @@ impl PreparedRange {
             .map_err(|error| error.to_string())
         }
     }
+}
+
+#[cfg(windows)]
+fn restore_clipboard(
+    clipboard: Option<&mut super::clipboard::ClipboardTransaction>,
+    plan: &ReplacementPlan<'_>,
+) -> Result<(), String> {
+    let result = clipboard.map_or(Ok(()), |transaction| transaction.restore());
+    if result.is_err() {
+        super::clipboard::restore_failed(&plan.target.process_name, plan.target.process_id);
+    }
+    result
 }
 
 #[cfg(windows)]

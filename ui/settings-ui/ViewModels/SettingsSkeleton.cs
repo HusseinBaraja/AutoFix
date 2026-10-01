@@ -92,6 +92,7 @@ public static class SettingsSkeleton
         Section("Correction", "Mode and confidence behavior",
         [
             Toggle("Correction enabled", "Allow AutoFix to apply corrections.", "correction.enabled", config.Correction.Enabled),
+            Toggle("Use clipboard for correction", "Temporarily paste corrections through the clipboard and restore its previous contents. Turn off to use other replacement methods.", "replacement.clipboard_enabled", config.Replacement.ClipboardEnabled),
             Dropdown("Correction mode", "Choose typos only or grammar-aware correction.", "correction.mode", config.Correction.Mode, Modes()),
             Text("Preferred language", "Optional BCP 47 tag, such as en-US. Empty uses automatic detection.", "correction.preferred_language", config.Correction.PreferredLanguage ?? ""),
             Text("App language overrides", "Comma-separated process.exe=language-tag entries.", "correction.app_language_overrides", ConfigValue.Join(config.Correction.AppLanguageOverrides)),

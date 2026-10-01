@@ -29,6 +29,45 @@ const STAMP: InputStamp = InputStamp {
     sequence: 2,
 };
 
+#[test]
+fn disabling_clipboard_skips_its_preparation_and_uses_fallback() {
+    let target = target();
+    let plan = ReplacementPlan {
+        target: &target,
+        original: "teh",
+        replacement: "the",
+        following: "",
+        stamp: STAMP,
+    };
+    let calls = RefCell::new(Vec::new());
+    let mut clipboard = FakeStrategy {
+        method: ReplacementMethod::Clipboard,
+        calls: &calls,
+        result: Some(ReplacementResult {
+            success: true,
+            method: Some(ReplacementMethod::Clipboard),
+            range: Some(plan.range()),
+            reason: None,
+            may_have_changed: true,
+        }),
+    };
+    let mut fallback = FakeStrategy {
+        method: ReplacementMethod::SendInput,
+        calls: &calls,
+        result: Some(ReplacementResult {
+            success: true,
+            method: Some(ReplacementMethod::SendInput),
+            range: Some(plan.range()),
+            reason: None,
+            may_have_changed: true,
+        }),
+    };
+    let result = run_strategies(&plan, &mut [&mut clipboard, &mut fallback], false);
+    assert!(result.success);
+    assert_eq!(result.method, Some(ReplacementMethod::SendInput));
+    assert_eq!(*calls.borrow(), [ReplacementMethod::SendInput]);
+}
+
 struct FakeStrategy<'a> {
     method: ReplacementMethod,
     calls: &'a RefCell<Vec<ReplacementMethod>>,
@@ -82,7 +121,7 @@ fn strategy_order_and_preparation_failures_allow_fallback() {
         .iter_mut()
         .map(|s| s as &mut dyn ReplacementStrategy)
         .collect();
-    let result = run_strategies(&plan, &mut refs);
+    let result = run_strategies(&plan, &mut refs, true);
     assert!(result.success);
     assert_eq!(*calls.borrow(), methods);
     assert_eq!(
@@ -127,7 +166,7 @@ fn no_retry_after_paste_partial_input_or_failed_verification() {
             calls: &calls,
             result: None,
         };
-        let result = run_strategies(&plan, &mut [&mut clipboard, &mut fallback]);
+        let result = run_strategies(&plan, &mut [&mut clipboard, &mut fallback], true);
         assert!(!result.success);
         assert!(result.may_have_changed);
         assert_eq!(result.reason.as_deref(), Some(reason));
@@ -151,7 +190,7 @@ fn unavailable_result_has_method_reason_and_unknown_range() {
         calls: &calls,
         result: None,
     };
-    let result = run_strategies(&plan, &mut [&mut strategy]);
+    let result = run_strategies(&plan, &mut [&mut strategy], true);
     assert!(!result.success);
     assert_eq!(result.method, Some(ReplacementMethod::SendInput));
     assert_eq!(result.range, None);
@@ -209,7 +248,7 @@ fn protected_selected_empty_suppressed_and_failed_requests_never_reach_native_st
             6 => output.corrected_executable_text = "bad\0text".into(),
             _ => unreachable!(),
         }
-        let result = ReplacementEngine::replace(&target, &request, &output, STAMP);
+        let result = ReplacementEngine::replace(&target, &request, &output, STAMP, true);
         assert!(!result.success);
         assert_eq!(result.method, None);
         assert_eq!(result.range, None);
@@ -357,13 +396,13 @@ fn native_edit_replacement_smoke() {
             following: "",
             stamp,
         };
-        let mut result = run_strategies(&plan, &mut [&mut native::NativeStrategy(method)]);
+        let mut result = run_strategies(&plan, &mut [&mut native::NativeStrategy(method)], true);
         for _ in 0..5 {
             if result.success || result.may_have_changed {
                 break;
             }
             thread::sleep(std::time::Duration::from_millis(50));
-            result = run_strategies(&plan, &mut [&mut native::NativeStrategy(method)]);
+            result = run_strategies(&plan, &mut [&mut native::NativeStrategy(method)], true);
         }
         let mut caret_start = 0u32;
         let mut caret_end = 0u32;

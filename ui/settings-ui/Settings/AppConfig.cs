@@ -22,6 +22,9 @@ public sealed class AppConfig
     [JsonPropertyName("correction")]
     public CorrectionConfig Correction { get; set; } = new();
 
+    [JsonPropertyName("replacement")]
+    public ReplacementConfig Replacement { get; set; } = new();
+
     [JsonPropertyName("api")]
     public ApiConfig Api { get; set; } = new();
 
@@ -47,6 +50,12 @@ public sealed class GeneralConfig
 
     [JsonPropertyName("run_mode")]
     public string RunMode { get; set; } = "blocklist";
+}
+
+public sealed class ReplacementConfig
+{
+    [JsonPropertyName("clipboard_enabled")]
+    public bool ClipboardEnabled { get; set; } = true;
 }
 
 public sealed class ShortcutsConfig
