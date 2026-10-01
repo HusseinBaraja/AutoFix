@@ -17,6 +17,10 @@ public static class ConfigValidator
         RequireChoice("general.run_mode", config.General.RunMode, RunModes);
         RequireHotkey("shortcuts.correct", config.Shortcuts.Correct);
         RequireHotkey("shortcuts.undo", config.Shortcuts.Undo);
+        if (config.Context.UndoHistorySize is < 1 or > 1000)
+        {
+            throw Invalid("context.undo_history_size", "must be between 1 and 1000");
+        }
         if (HotkeyFormatter.Conflicts(config.Shortcuts.Correct, config.Shortcuts.Undo))
         {
             throw Invalid("shortcuts.undo", "must not match correction shortcut");

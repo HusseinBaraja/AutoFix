@@ -37,6 +37,12 @@ impl Error for ConfigValidationError {}
 
 impl ValidateConfig for AppConfig {
     fn validate(&self) -> Result<(), ConfigValidationError> {
+        if !(1..=1000).contains(&self.context.undo_history_size) {
+            return Err(ConfigValidationError::new(
+                "context.undo_history_size",
+                "must be between 1 and 1000",
+            ));
+        }
         if !(1..=16).contains(&self.context.pending_queue_size) {
             return Err(ConfigValidationError::new(
                 "context.pending_queue_size",

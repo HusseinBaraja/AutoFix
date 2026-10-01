@@ -134,6 +134,8 @@ impl Default for TriggersConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ContextConfig {
+    #[serde(default = "default_undo_history_size")]
+    pub(crate) undo_history_size: u16,
     #[serde(default = "default_pending_queue_size")]
     pub(crate) pending_queue_size: u16,
     #[serde(default)]
@@ -149,6 +151,7 @@ pub(crate) struct ContextConfig {
 impl Default for ContextConfig {
     fn default() -> Self {
         Self {
+            undo_history_size: default_undo_history_size(),
             pending_queue_size: 1,
             pending_queue_full_behavior: PendingQueueFullBehavior::SkipNew,
             initial_context_words: 25,
@@ -159,6 +162,10 @@ impl Default for ContextConfig {
             executable_context_max_words: 80,
         }
     }
+}
+
+fn default_undo_history_size() -> u16 {
+    10
 }
 
 fn default_pending_queue_size() -> u16 {

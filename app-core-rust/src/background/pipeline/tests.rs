@@ -218,7 +218,7 @@ fn queued_api_job_is_denied_after_rule_revocation_and_releases_its_slot() {
         || STAMP,
         |_| None,
         |_, _| panic!("revoked target must not be captured"),
-        |_, _, _| panic!("revoked target must not be edited")
+        |_, _, _| -> bool { panic!("revoked target must not be edited") }
     ));
     // The rejected first segment restores the dependent queued request too.
     let listener = server.join().unwrap();
@@ -337,7 +337,7 @@ fn stale_cancelled_or_secure_timeouts_cannot_show_notices() {
                 Some(live)
             },
             |_, _| panic!("timeout must not read target text"),
-            |_, _, _| panic!("timeout must not replace text"),
+            |_, _, _| -> bool { panic!("timeout must not replace text") },
         ));
         assert!(!pipeline.take_timeout_notice());
     }
@@ -361,7 +361,7 @@ fn automatic_timeout_releases_frozen_slot_without_live_target_calls() {
         || STAMP,
         |_| panic!("automatic timeout must skip live security/UIA calls"),
         |_, _| panic!("automatic timeout must not capture text"),
-        |_, _, _| panic!("automatic timeout must not replace text"),
+        |_, _, _| -> bool { panic!("automatic timeout must not replace text") },
     ));
     assert!(!pipeline.take_timeout_notice());
     assert!(pipeline.active.is_empty());
@@ -808,7 +808,7 @@ fn frozen_result_revalidates_queued_position_and_input_during_security_check() {
                 Some(target())
             },
             |_, _| panic!("raced input reached live range validation"),
-            |_, _, _| panic!("raced input reached replacement")
+            |_, _, _| -> bool { panic!("raced input reached replacement") }
         ));
     }
 }
@@ -1067,7 +1067,7 @@ fn security_and_input_changes_during_live_validation_block_replacement() {
                 Some(target)
             },
             |_, _| panic!("invalid result reached live range validation"),
-            |_, _, _| panic!("invalid result reached replacement")
+            |_, _, _| -> bool { panic!("invalid result reached replacement") }
         ));
         assert_eq!(manager.active().unwrap().editable_context(), "teh");
     }
@@ -1198,7 +1198,7 @@ fn unchanged_success_commits_only_after_validation() {
         || STAMP,
         |_| Some(target()),
         |_, _| Some(live),
-        |_, _, _| panic!("unchanged text needs no replacement")
+        |_, _, _| -> bool { panic!("unchanged text needs no replacement") }
     ));
     assert_eq!(manager.active().unwrap().informative_context(), "hello");
     assert_eq!(manager.active().unwrap().editable_context(), "");

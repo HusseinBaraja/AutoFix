@@ -29,6 +29,7 @@ public static class ConfigFormMapper
         config.General.RunMode = Dropdown(values, "general.run_mode");
         config.Shortcuts.Correct = Hotkey(values, "shortcuts.correct");
         config.Shortcuts.Undo = Hotkey(values, "shortcuts.undo");
+        config.Context.UndoHistorySize = Int(values, "context.undo_history_size");
         config.Shortcuts.CorrectArbitrarySelection = Toggle(values, "shortcuts.correct_arbitrary_selection");
         config.Triggers.WordCountEnabled = Toggle(values, "triggers.word_count_enabled");
         config.Triggers.WordCount = Int(values, "triggers.word_count");

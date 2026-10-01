@@ -201,6 +201,21 @@ their owning process exits. All session state disappears on engine exit or
 termination and is never written to disk. Session completion methods do not
 themselves change target text; the replacement engine must confirm mutation first.
 
+Undo history is owned by `src/background/session/undo.rs`. The configurable
+`context.undo_history_size` defaults to 10 and accepts 1–1000 entries per session;
+overflow and capacity reductions evict the oldest entries. Each record retains
+the session ID, original executable-context Unicode range, verified native range
+relative to the correction-time caret when available, exact original/corrected
+text, commit timestamp, trigger, confidence tier, replacement method and language.
+Only verified app-made corrections enter history. No history text is persisted.
+Context shrinking adjusts byte anchors for fully retained spans and invalidates
+partial spans without truncating the recorded text. Movement and re-anchoring
+invalidate range proofs; session deletion drops history. Undo requires the latest
+entry's complete span at the verified current caret, restores its exact original
+text through the replacement engine, and pops the entry only after success.
+Newer typed text remains executable; restored text stays informative. Native
+Ctrl+Z is never used as the undo mechanism.
+
 The correction pipeline uses one worker, a FIFO of requests, and one completion
 slot with backpressure so results cannot overwrite each other. Each session has
 one active executable context and a bounded pending correction queue.
@@ -354,7 +369,7 @@ Range offsets count Unicode characters backwards from the original caret,
 with `start_back >= end_back >= 0`; they are not document byte or UTF-16 offsets.
 App-level undo uses only a recorded app correction that remains fully retained
 in informative context. It verifies the live anchor and restores that recorded
-span, preserving newer executable text. Memory truncation, movement, unknown
+span, preserving newer executable text. Truncation of that span, movement, unknown
 selection geometry and secure fields block native undo.
 
 Focused tests cover strategy ordering, the clipboard disable preference,
@@ -367,7 +382,8 @@ and a bitmap. It verifies actual native paste, restoration, recovery from a
 locked clipboard, and retention of a newer copy without touching the desktop
 clipboard. It refuses a visible station or unrelated existing clipboard data.
 The opt-in `native_edit_replacement_smoke` test owns a separate native editor;
-it checks clipboard/SendInput and preservation of the document suffix on an
+it checks clipboard/SendInput correction and recorded app undo, preserving the
+newer executable text, caret and document suffix on an
 interactive Windows desktop. It safely refuses unsupported clipboard formats.
 
 Feature code should be organized by product behavior, not technical layer. Keep modules small, private by default, and colocate tests with the behavior they verify.

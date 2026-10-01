@@ -153,7 +153,7 @@ fn finish_unchanged_dispatch(
             || stamp,
             |_| Some(target.clone()),
             |_, _| Some(live_text.into()),
-            |_, _, _| panic!("unchanged text must not be replaced"),
+            |_, _, _| -> bool { panic!("unchanged text must not be replaced") },
         ) {
             return;
         }

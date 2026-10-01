@@ -11,6 +11,43 @@ use super::{
 };
 
 #[test]
+fn undo_capacity_round_trips_and_legacy_settings_keep_ten_entries() {
+    let mut config = AppConfig::default();
+    assert_eq!(config.context.undo_history_size, 10);
+    for size in [1, 10, 1000] {
+        config.context.undo_history_size = size;
+        let encoded = config_to_toml(&config).unwrap();
+        assert_eq!(
+            super::toml_io::parse_config(&encoded)
+                .unwrap()
+                .context
+                .undo_history_size,
+            size
+        );
+    }
+    let encoded = config_to_toml(&config).unwrap();
+    let legacy = encoded
+        .lines()
+        .filter(|line| !line.starts_with("undo_history_size"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        super::toml_io::parse_config(&legacy)
+            .unwrap()
+            .context
+            .undo_history_size,
+        10
+    );
+    for size in [0, 1001] {
+        config.context.undo_history_size = size;
+        assert_eq!(
+            config.validate().unwrap_err().field(),
+            "context.undo_history_size"
+        );
+    }
+}
+
+#[test]
 fn learning_is_opt_in_and_round_trips_with_legacy_defaults() {
     use super::{LearningMode, LearningRule};
     let mut config = AppConfig::default();

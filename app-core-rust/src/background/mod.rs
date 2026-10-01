@@ -473,7 +473,7 @@ impl InputProcessor {
                         reason = "replacement policy unavailable or denied",
                         "replacement skipped"
                     );
-                    return false;
+                    return replacement::ReplacementConfirmation::default();
                 };
                 // Recheck live exclusions under the same writer reservation as mutation.
                 let Ok(policy) = database
@@ -481,10 +481,10 @@ impl InputProcessor {
                     .policy(&target.process_name, &request.language_info)
                 else {
                     tracing::warn!("replacement skipped: exclusions unavailable");
-                    return false;
+                    return replacement::ReplacementConfirmation::default();
                 };
                 if policy.filter(&request.executable_context, output.clone()) != *output {
-                    return false;
+                    return replacement::ReplacementConfirmation::default();
                 }
                 let result = ReplacementEngine::replace(
                     target,
@@ -495,7 +495,7 @@ impl InputProcessor {
                 );
                 replacement_uncertain = !result.success && result.may_have_changed;
                 result.log_outcome(false);
-                result.success
+                result.into()
             },
         );
         if replacement_uncertain {

@@ -1,5 +1,5 @@
 //! Frozen automatic segments stay separate from the one active editable context.
-use super::{ContextConfig, CorrectionUndo, Session};
+use super::{ContextConfig, Session};
 use crate::settings::PendingQueueFullBehavior;
 
 pub(super) struct FrozenSegment {
@@ -131,23 +131,13 @@ impl Session {
         self.append_informative(corrected, limits);
         self.versions.context = self.versions.context.wrapping_add(1);
         if corrected != segment.original {
-            let retained_chars = corrected
-                .chars()
-                .count()
-                .min(self.informative_context.chars().count());
-            let retained: String = corrected
-                .chars()
-                .skip(corrected.chars().count() - retained_chars)
-                .collect();
-            let start = self.informative_context.len() - retained.len();
-            self.correction_undo_history.push(CorrectionUndo {
-                language: None,
-                complete_range_retained: retained == corrected,
-                original: segment.original,
-                replacement: retained,
-                informative_start: start,
-                caret_anchor: self.versions.caret_anchor,
-            });
+            let executable_range = 0..segment.original.chars().count();
+            self.record_undo(
+                segment.original,
+                corrected.to_owned(),
+                executable_range,
+                limits,
+            );
         }
         true
     }
@@ -189,7 +179,7 @@ impl Session {
     ) {
         self.informative_context = context;
         self.shrink_informative(limits);
-        self.correction_undo_history.clear();
+        self.invalidate_undo_anchors();
         self.versions.context = self.versions.context.wrapping_add(1);
         self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
         for segment in &mut self.frozen_segments {

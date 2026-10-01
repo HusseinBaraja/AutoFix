@@ -14,6 +14,14 @@ Local ML correction, suggestion acceptance, IME composition, and direct text API
 or UI Automation mutation remain planned. App-level undo restores only recorded
 corrections whose exact span and caret can still be verified.
 
+Undo defaults to **Ctrl+Alt+Z**. Under **Shortcuts**, configure the hotkey and
+**Undo history entries** (default 10, range 1–1000). Each session keeps its own
+history in memory and deletes it with the session. Repeated undo restores the
+latest recorded correction first, preserving newly typed text and text after
+the caret. Restored originals become informative context; only new typing stays
+executable. AutoFix replaces the verified corrected span directly instead of
+sending the target application's Ctrl+Z.
+
 **Dictionary** settings edit words and phrases that AutoFix must never correct,
 plus specific pairs such as `teh` → `the` that must never be applied. Entries live
 in `%LOCALAPPDATA%\AutoFix\autofix.sqlite`, with a language tag and optional app

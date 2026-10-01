@@ -13,6 +13,7 @@ use std::{
 };
 
 use super::{
+    replacement::ReplacementConfirmation,
     security::TriggerKind,
     session::{Session, SessionManager},
     target::{CorrectionEligibility, FocusedTarget},
@@ -355,14 +356,14 @@ impl CorrectionPipeline {
     }
 
     /// Take once: duplicates and reordered completions cannot reach the mutation owner.
-    pub(super) fn finish(
+    pub(super) fn finish<R: Into<ReplacementConfirmation>>(
         &mut self,
         manager: &mut SessionManager,
         limits: &ContextConfig,
         current_stamp: impl Fn() -> InputStamp,
         check_target: impl FnOnce(TriggerKind) -> Option<FocusedTarget>,
         read_before_caret: impl FnOnce(&FocusedTarget, usize) -> Option<String>,
-        replace: impl FnOnce(&FocusedTarget, &CorrectionRequest, &CorrectionOutput) -> bool,
+        replace: impl FnOnce(&FocusedTarget, &CorrectionRequest, &CorrectionOutput) -> R,
     ) -> bool {
         self.timeout_notice = false;
         self.invalidate(manager, current_stamp());
@@ -474,11 +475,18 @@ impl CorrectionPipeline {
             {
                 return false;
             }
-            if output.changes_needed && !replace(&target, &active.request, &output) {
-                return false;
-            }
+            let confirmation = if output.changes_needed {
+                let confirmation = replace(&target, &active.request, &output).into();
+                if !confirmation.success {
+                    return false;
+                }
+                Some(confirmation)
+            } else {
+                None
+            };
             let session = manager.active_mut().unwrap();
             let changed = output.changes_needed;
+            let confidence = output.confidence;
             let completed = if let Some(id) = segment_id {
                 session.complete_pending(id, &output.corrected_executable_text, limits)
             } else if output.changes_needed {
@@ -489,7 +497,12 @@ impl CorrectionPipeline {
                 true
             };
             if completed && changed {
-                session.record_undo_language(active.request.language_info.primary_language.clone());
+                session.record_undo_metadata(
+                    active.request.language_info.primary_language.clone(),
+                    active.request.trigger,
+                    confidence,
+                    confirmation.unwrap(),
+                );
             }
             completed
         })();

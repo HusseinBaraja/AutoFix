@@ -7,6 +7,34 @@ namespace AutoFix.SettingsUi.Tests;
 public sealed class ConfigFormMapperTests
 {
     [TestMethod]
+    public void UndoShortcutAndHistorySurviveFormStorageAndLegacyLoad()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var sections = SettingsSkeleton.CreateSections();
+        Assert.AreEqual("Ctrl+Alt+Z", Card(sections, "shortcuts.undo").Hotkey);
+        Assert.AreEqual("10", Card(sections, "context.undo_history_size").TextValue);
+        Card(sections, "shortcuts.undo").Hotkey = "Ctrl+Shift+Z";
+        foreach (var size in new[] { 1, 25, 1000 })
+        {
+            Card(sections, "context.undo_history_size").TextValue = size.ToString();
+            fixture.Storage.Save(ConfigFormMapper.BuildConfig(sections));
+            var loaded = fixture.Storage.Load(fixture.Path);
+            Assert.AreEqual(size, loaded.Context.UndoHistorySize);
+            Assert.AreEqual("Ctrl+Shift+Z", loaded.Shortcuts.Undo);
+            Assert.AreEqual(size.ToString(), Card(SettingsSkeleton.CreateSections(loaded), "context.undo_history_size").TextValue);
+        }
+        var legacy = File.ReadAllLines(fixture.Path).Where(line => !line.StartsWith("undo_history_size", StringComparison.Ordinal));
+        File.WriteAllLines(fixture.Path, legacy);
+        Assert.AreEqual(10, fixture.Storage.Load(fixture.Path).Context.UndoHistorySize);
+        foreach (var size in new[] { "0", "1001" })
+        {
+            Card(sections, "context.undo_history_size").TextValue = size;
+            var error = Assert.ThrowsException<InvalidDataException>(() => ConfigFormMapper.BuildConfig(sections));
+            Assert.AreEqual("context.undo_history_size: must be between 1 and 1000", error.Message);
+        }
+    }
+
+    [TestMethod]
     public void ClipboardPreferenceSurvivesFormAndStorageRoundTrip()
     {
         using var fixture = TempConfigFixture.Create();

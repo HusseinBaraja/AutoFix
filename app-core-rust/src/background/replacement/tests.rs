@@ -648,6 +648,58 @@ fn native_edit_replacement_smoke() {
             .encode_utf16()
             .count() as u32;
         assert_eq!((caret_start, caret_end), (expected_caret, expected_caret));
+
+        // Exercise app undo using committed history, never target Ctrl+Z.
+        let limits = AppConfig::default().context;
+        let mut manager = SessionManager::new(limits.clone());
+        manager.focus(&after);
+        manager.set_informative_context("old ".into());
+        manager.input(TypedInput::Text(original.into()));
+        let segment = manager
+            .active_mut()
+            .unwrap()
+            .freeze_pending(&limits)
+            .0
+            .unwrap();
+        manager.input(TypedInput::Text(following.into()));
+        assert!(manager
+            .active_mut()
+            .unwrap()
+            .complete_pending(segment, replacement, &limits));
+        let undo = manager.active().unwrap().undo_target().unwrap();
+        let undone =
+            ReplacementEngine::undo(&after, &undo, stamp, method == ReplacementMethod::Clipboard);
+        assert!(undone.success, "{undone:?}");
+        assert!(manager.active_mut().unwrap().undo_last_correction(&limits));
+        assert_eq!(
+            manager.active().unwrap().informative_context(),
+            format!("old {original}")
+        );
+        assert_eq!(manager.active().unwrap().editable_context(), following);
+        let restored_length = unsafe {
+            SendMessageW(
+                edit as _,
+                WM_GETTEXT,
+                observed.len(),
+                observed.as_mut_ptr() as isize,
+            )
+        };
+        assert_eq!(
+            String::from_utf16_lossy(&observed[..restored_length as usize]),
+            initial
+        );
+        unsafe {
+            SendMessageW(
+                edit as _,
+                0x00b0,
+                &mut caret_start as *mut u32 as usize,
+                &mut caret_end as *mut u32 as isize,
+            );
+        }
+        assert_eq!(
+            (caret_start as usize, caret_end as usize),
+            (initial_caret, initial_caret)
+        );
     }
 }
 

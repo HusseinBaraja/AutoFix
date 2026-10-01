@@ -2,6 +2,11 @@
 
 WPF settings application for AutoFix.
 
+**Shortcuts** configures correction and app-level undo hotkeys (undo defaults to
+Ctrl+Alt+Z), plus undo history capacity (default 10, range 1–1000). Capacity saves
+as `context.undo_history_size`; legacy settings keep the default. History itself
+is memory-only and deleted with its session.
+
 This component owns settings mode:
 
 - Flow Launcher-style settings window.

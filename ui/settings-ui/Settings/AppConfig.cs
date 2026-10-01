@@ -100,6 +100,9 @@ public sealed class TriggersConfig
 
 public sealed class ContextConfig
 {
+    [JsonPropertyName("undo_history_size")]
+    public int UndoHistorySize { get; set; } = 10;
+
     [JsonPropertyName("pending_queue_size")]
     public int PendingQueueSize { get; set; } = 1;
 
