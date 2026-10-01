@@ -3,14 +3,18 @@ use super::{Attempt, ReplacementMethod, ReplacementPlan, ReplacementResult, Repl
 pub(super) struct NativeStrategy(pub(super) ReplacementMethod);
 
 impl ReplacementStrategy for NativeStrategy {
+    /// Identify the mutation method for strategy ordering and failure metadata.
     fn method(&self) -> ReplacementMethod {
         self.0
     }
+
+    /// Attempt only the requested native method after proving the pre-caret range.
     fn replace(&mut self, plan: &ReplacementPlan<'_>) -> Attempt {
         replace(self.0, plan)
     }
 }
 
+/// Attempt only the requested native method after proving the pre-caret range.
 #[cfg(windows)]
 fn replace(method: ReplacementMethod, plan: &ReplacementPlan<'_>) -> Attempt {
     use windows::Win32::{
@@ -23,6 +27,7 @@ fn replace(method: ReplacementMethod, plan: &ReplacementPlan<'_>) -> Attempt {
     }
     struct Apartment;
     impl Drop for Apartment {
+        /// Balance the COM initialization on the thread that acquired it.
         fn drop(&mut self) {
             unsafe { CoUninitialize() };
         }
@@ -34,6 +39,7 @@ fn replace(method: ReplacementMethod, plan: &ReplacementPlan<'_>) -> Attempt {
     }
 }
 
+/// Refuse native mutation on platforms without Windows replacement APIs.
 #[cfg(not(windows))]
 fn replace(_: ReplacementMethod, _: &ReplacementPlan<'_>) -> Attempt {
     Attempt::Unavailable("native replacement requires Windows".into())
@@ -57,6 +63,7 @@ struct PreparedRange {
 
 #[cfg(windows)]
 impl PreparedRange {
+    /// Prove exact session text at a collapsed caret without modifying the document.
     fn new(plan: &ReplacementPlan<'_>) -> Result<Self, String> {
         if plan.original.contains('\0') || plan.replacement.contains('\0') {
             return Err("embedded NUL cannot be replaced safely".into());
@@ -91,7 +98,7 @@ impl PreparedRange {
                 let span = adjacent_range(&original_end, plan.original, true)?;
                 if span.CompareEndpoints(START, &span, END)? > 0
                     || span.CompareEndpoints(END, &caret, END)? > 0
-                    || span.GetText(-1)?.to_string() != plan.original
+                    || span.GetText(-1)? != plan.original
                 {
                     return Err(range_error("pre-caret text does not match"));
                 }
@@ -112,6 +119,7 @@ impl PreparedRange {
         Ok(range)
     }
 
+    /// Require the same focused UI Automation element throughout the operation.
     fn focused(&self) -> bool {
         unsafe {
             self.automation
@@ -125,6 +133,7 @@ impl PreparedRange {
         }
     }
 
+    /// Attempt only the requested native method after proving the pre-caret range.
     fn replace(&self, method: ReplacementMethod, plan: &ReplacementPlan<'_>) -> Attempt {
         // Never release the user's modifiers or inject text through a held hotkey.
         let released = std::time::Instant::now() + std::time::Duration::from_millis(250);
@@ -260,6 +269,7 @@ impl PreparedRange {
         Attempt::Finished(result)
     }
 
+    /// Undo selection only while the original target and input stamp remain current.
     fn restore_original_caret(&self, plan: &ReplacementPlan<'_>) -> bool {
         if !current(plan) || !self.focused() {
             return false;
@@ -274,6 +284,7 @@ impl PreparedRange {
         }
     }
 
+    /// Reject approximate provider selections before publishing or injecting text.
     fn verify_selection(&self, plan: &ReplacementPlan<'_>) -> Result<(), String> {
         unsafe {
             let selections = self
@@ -288,11 +299,7 @@ impl PreparedRange {
                 .map_err(|_| "selection unreadable")?;
             if selected.CompareEndpoints(START, &self.span, START).ok() != Some(0)
                 || selected.CompareEndpoints(END, &self.span, END).ok() != Some(0)
-                || selected
-                    .GetText(-1)
-                    .map_err(|_| "selection unreadable")?
-                    .to_string()
-                    != plan.original
+                || selected.GetText(-1).map_err(|_| "selection unreadable")? != plan.original
                 || !current(plan)
                 || !self.focused()
             {
@@ -302,6 +309,7 @@ impl PreparedRange {
         Ok(())
     }
 
+    /// Reacquire the provider and prove replacement and following text before moving the caret.
     fn verify_and_restore_caret(&self, plan: &ReplacementPlan<'_>) -> Result<(), String> {
         unsafe {
             (|| -> windows::core::Result<()> {
@@ -332,6 +340,7 @@ impl PreparedRange {
     }
 }
 
+/// Restore saved formats and disable this app's clipboard strategy after failure.
 #[cfg(windows)]
 fn restore_clipboard(
     clipboard: Option<&mut super::clipboard::ClipboardTransaction>,
@@ -344,6 +353,7 @@ fn restore_clipboard(
     result
 }
 
+/// Create internal range errors; discard provider error text at the public boundary.
 #[cfg(windows)]
 fn range_error(message: &str) -> windows::core::Error {
     windows::core::Error::new(windows::core::HRESULT(0x80004005u32 as i32), message)
@@ -368,13 +378,14 @@ unsafe fn adjacent_range(
             TextUnit_Character,
             if before { -count } else { count },
         )?;
-        if range.GetText(-1)?.to_string() == text {
+        if range.GetText(-1)? == text {
             return Ok(range);
         }
     }
     Err(range_error("adjacent range does not match known text"))
 }
 
+/// Accept exactly one empty selection, with no assumption about its active endpoint.
 #[cfg(windows)]
 unsafe fn collapsed_selection(
     pattern: &IUIAutomationTextPattern,
@@ -390,21 +401,33 @@ unsafe fn collapsed_selection(
     Ok(caret)
 }
 
+/// Recheck input generations and the complete authorized target before native actions.
 #[cfg(windows)]
 fn current(plan: &ReplacementPlan<'_>) -> bool {
     use super::super::{
         input_listener,
-        target::{detect_focused_target, CorrectionEligibility, TargetDetection},
+        target::{detect_focused_target, TargetDetection},
     };
-    input_listener::current_position_generation() == plan.stamp.position
+    !super::shutting_down()
+        && input_listener::current_position_generation() == plan.stamp.position
         && input_listener::current_input_sequence() == plan.stamp.sequence
         && matches!(detect_focused_target(), TargetDetection::Available(target)
-            if target.correction_eligibility() == CorrectionEligibility::Allowed
-                && target.process_id == plan.target.process_id
-                && target.window_handle == plan.target.window_handle
-                && target.focused_element_id == plan.target.focused_element_id)
+            if same_authorized_target(plan.target, &target))
+        && input_listener::current_position_generation() == plan.stamp.position
+        && input_listener::current_input_sequence() == plan.stamp.sequence
+        && !super::shutting_down()
 }
 
+/// Bind mutation to every policy-bearing attribute of the authorized target.
+#[cfg(any(windows, test))]
+pub(super) fn same_authorized_target(
+    expected: &super::FocusedTarget,
+    current: &super::FocusedTarget,
+) -> bool {
+    current.correction_eligibility() == super::CorrectionEligibility::Allowed && current == expected
+}
+
+/// Confirm native keyboard focus belongs to the authorized process and control.
 #[cfg(windows)]
 fn keyboard_target(window: isize, plan: &ReplacementPlan<'_>) -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::{

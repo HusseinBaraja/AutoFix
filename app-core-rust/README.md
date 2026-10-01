@@ -273,7 +273,15 @@ metadata-only warnings and skip clipboard replacement for that process name
 (case-insensitive) until the engine exits. A failed restore removes temporary
 text when the clipboard lock is available, keeps the full saved snapshot in
 memory, and retries recovery on a dedicated worker until restored or superseded
-by a new copy. Other clipboard attempts use fallback while recovery is pending.
+by a new copy, with at most eight attempts over two seconds. The worker pumps
+clipboard-owner messages while retrying and waiting for the clipboard lock,
+then destroys its owner window so later Copy operations cannot hang. Other
+clipboard attempts use fallback while recovery is pending. The tray sends a
+process-scoped graceful stop signal and waits for the engine to drain recovery
+before closing its process job. A permanently locked clipboard, exhausted
+restoration attempts, forced termination, or a crash can leave clipboard cleanup
+incomplete; metadata-only warnings report exhausted recovery. Clipboard contents
+are never persisted for crash recovery.
 
 SendInput fallback inserts UTF-16 Unicode key pairs into the same proved
 selection; an empty replacement deletes the selection with Backspace. It does
@@ -294,7 +302,10 @@ the caret beyond newer typed text only after checking that text exactly.
 Range proof accepts scalar or UTF-16 provider units only when the text matches
 exactly at its fixed anchor; it never searches for similar text. App rules are
 reread under a SQLite writer reservation held through replacement and app undo.
-Missing or busy policy storage skips mutation. Provider error messages are
+Missing or busy policy storage skips mutation. Final native checks require all
+authorized target attributes, including process name and window title, to remain
+unchanged; title changes refuse correction and undo even without caret movement.
+Provider error messages are
 discarded so failure logs cannot contain document text.
 
 Every replacement returns success/failure, the attempted method (or none for

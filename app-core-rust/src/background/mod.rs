@@ -65,6 +65,7 @@ struct RuntimeComponents {
     input_listener: InputListener,
     input_worker: InputWorker,
     process_group_monitor: SiblingDisappearanceMonitor,
+    shutdown_signal: process_group::ShutdownSignal,
     shutdown_requested: Arc<AtomicBool>,
 }
 
@@ -136,6 +137,7 @@ pub(crate) enum BackgroundError {
     Database(rusqlite::Error),
     InputHook(u32),
     InputWorker(std::io::Error),
+    ShutdownSignal(u32),
 }
 
 impl fmt::Display for BackgroundError {
@@ -151,6 +153,10 @@ impl fmt::Display for BackgroundError {
                 formatter,
                 "failed to install input listener: Windows error {code}"
             ),
+            Self::ShutdownSignal(code) => write!(
+                formatter,
+                "failed to create engine stop signal: Windows error {code}"
+            ),
             Self::InputWorker(source) => {
                 write!(formatter, "failed to start input worker: {source}")
             }
@@ -165,7 +171,7 @@ impl Error for BackgroundError {
             Self::Config(source) => Some(source),
             Self::Database(source) => Some(source),
             Self::InputWorker(source) => Some(source),
-            Self::ElevatedProcess | Self::InputHook(_) => None,
+            Self::ElevatedProcess | Self::InputHook(_) | Self::ShutdownSignal(_) => None,
         }
     }
 }
@@ -211,6 +217,8 @@ impl RuntimeComponents {
         database: Database,
     ) -> Result<Self, BackgroundError> {
         let input_listener = InputListener::initialize().map_err(BackgroundError::InputHook)?;
+        let shutdown_signal =
+            process_group::ShutdownSignal::new().map_err(BackgroundError::ShutdownSignal)?;
         let input_worker = InputWorker::start(config.clone(), database)?;
         Ok(Self {
             config_path: paths.config_path().to_path_buf(),
@@ -225,6 +233,7 @@ impl RuntimeComponents {
             input_listener,
             input_worker,
             process_group_monitor: SiblingDisappearanceMonitor::new(),
+            shutdown_signal,
             shutdown_requested,
         })
     }
@@ -261,7 +270,7 @@ impl RuntimeComponents {
                 }
             }
 
-            self.shutdown_requested.load(Ordering::Relaxed)
+            self.shutdown_requested.load(Ordering::Relaxed) || self.shutdown_signal.requested()
         });
     }
 
@@ -355,6 +364,7 @@ impl InputWorker {
                     }
                     processor.finish_correction();
                 }
+                replacement::finish_shutdown();
                 let _ = done_sender.send(());
             })
             .map_err(BackgroundError::InputWorker)?;
@@ -392,6 +402,7 @@ impl InputWorker {
     }
 
     fn shutdown(mut self) {
+        replacement::begin_shutdown();
         let (lock, ready) = &*self.queue;
         {
             let mut pending = lock.lock().unwrap();
@@ -399,7 +410,7 @@ impl InputWorker {
             pending.push_back(InputWork::Shutdown);
             ready.notify_one();
         }
-        if self.done.recv_timeout(Duration::from_millis(500)).is_ok() {
+        if self.done.recv_timeout(Duration::from_secs(4)).is_ok() {
             if let Some(thread) = self.thread.take() {
                 let _ = thread.join();
             }

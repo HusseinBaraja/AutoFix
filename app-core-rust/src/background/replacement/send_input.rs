@@ -31,6 +31,7 @@ pub(super) fn prepare(text: &str) -> Result<Vec<INPUT>, String> {
     Ok(inputs)
 }
 
+/// Keep each Unicode unit or virtual key adjacent to its matching release.
 fn push_pair(inputs: &mut Vec<INPUT>, key: u16, scan: u16, flags: u32) {
     for up in [false, true] {
         inputs.push(INPUT {
@@ -48,6 +49,7 @@ fn push_pair(inputs: &mut Vec<INPUT>, key: u16, scan: u16, flags: u32) {
     }
 }
 
+/// Refuse insertion through held user shortcut modifiers without releasing their keys.
 pub(super) fn modifiers_held() -> bool {
     [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
         .iter()
@@ -98,10 +100,12 @@ pub(super) fn send(inputs: &[INPUT]) -> Result<(), String> {
     check_sent(sent as usize, inputs.len())
 }
 
+/// After a partial batch, release only the last injected keydown.
 fn pending_keyup(sent: usize, inputs: &[INPUT]) -> Option<&INPUT> {
     (sent % 2 == 1).then(|| inputs.get(sent)).flatten()
 }
 
+/// Treat every incomplete input batch as uncertain mutation and never retry it.
 fn check_sent(sent: usize, expected: usize) -> Result<(), String> {
     if sent == expected {
         Ok(())

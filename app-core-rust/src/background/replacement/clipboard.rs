@@ -10,21 +10,30 @@ struct ClipboardPolicy {
     failed_apps: HashSet<String>,
 }
 impl ClipboardPolicy {
+    /// Refuse clipboard mutation for apps with a prior restoration failure this run.
     fn allowed(&self, app: &str) -> bool {
         !self.failed_apps.contains(&app.to_ascii_lowercase())
     }
+
+    /// Remember failure by case-insensitive process name without retaining target text.
     #[cfg(any(windows, test))]
     fn failed(&mut self, app: &str) {
         self.failed_apps.insert(app.to_ascii_lowercase());
     }
 }
+
+/// Share memory-only fallback preferences across correction and undo.
 fn policy() -> &'static Mutex<ClipboardPolicy> {
     static POLICY: OnceLock<Mutex<ClipboardPolicy>> = OnceLock::new();
     POLICY.get_or_init(|| Mutex::new(ClipboardPolicy::default()))
 }
+
+/// A poisoned policy lock fails closed to the non-clipboard fallback.
 pub(super) fn allowed_for(app: &str) -> bool {
     policy().lock().is_ok_and(|policy| policy.allowed(app))
 }
+
+/// Record per-app fallback and emit metadata without clipboard or document contents.
 #[cfg(windows)]
 pub(super) fn restore_failed(app: &str, process_id: u32) {
     if let Ok(mut policy) = policy().lock() {
@@ -83,6 +92,7 @@ fn restore_snapshot<T>(
     failure.map_or(Ok(()), Err)
 }
 
+/// Allow only published formats and their known Windows-synthesized equivalents.
 #[cfg(any(windows, test))]
 fn owned_format_or_synthesis(known: &[u32], format: u32) -> bool {
     known.contains(&format)
@@ -102,3 +112,9 @@ mod windows;
 
 #[cfg(windows)]
 pub(in crate::background::replacement) use windows::{paste, supports_paste, ClipboardTransaction};
+
+/// Finish memory-only recovery before the engine returns to its host.
+#[cfg(windows)]
+pub(super) fn shutdown() {
+    windows::shutdown();
+}

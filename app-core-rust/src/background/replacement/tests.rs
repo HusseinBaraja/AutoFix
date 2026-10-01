@@ -30,6 +30,21 @@ const STAMP: InputStamp = InputStamp {
 };
 
 #[test]
+fn correction_and_undo_refuse_changed_policy_attributes_without_input_movement() {
+    let authorized = target();
+    assert!(native::same_authorized_target(&authorized, &authorized));
+    let mut changed = authorized.clone();
+    changed.window_title = "Private document".into();
+    assert!(!native::same_authorized_target(&authorized, &changed));
+    changed = authorized.clone();
+    changed.process_name = "other.exe".into();
+    assert!(!native::same_authorized_target(&authorized, &changed));
+    changed = authorized.clone();
+    changed.is_password_or_protected = true;
+    assert!(!native::same_authorized_target(&authorized, &changed));
+}
+
+#[test]
 fn disabling_clipboard_skips_its_preparation_and_uses_fallback() {
     let target = target();
     let plan = ReplacementPlan {
@@ -399,7 +414,84 @@ fn native_edit_replacement_smoke() {
         stdout,
         previous,
     };
-    thread::sleep(std::time::Duration::from_millis(150));
+    // Foreground activation is asynchronous and may be denied without attaching
+    // this test's input queue to its own editor thread. Never accept another app.
+    let focus_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        unsafe {
+            use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+            let current_thread = GetCurrentThreadId();
+            let mut message: MSG = std::mem::zeroed();
+            PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_NOREMOVE);
+            let foreground_thread =
+                GetWindowThreadProcessId(GetForegroundWindow(), std::ptr::null_mut());
+            let foreground_attached = foreground_thread != current_thread
+                && AttachThreadInput(current_thread, foreground_thread, 1) != 0;
+            let attached = AttachThreadInput(current_thread, thread_id, 1) != 0;
+            SetForegroundWindow(GetAncestor(edit as _, GA_ROOT));
+            windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus(edit as _);
+            PostMessageW(GetAncestor(edit as _, GA_ROOT), WM_APP + 1, 0, 0);
+            if attached {
+                AttachThreadInput(current_thread, thread_id, 0);
+            }
+            if foreground_attached {
+                AttachThreadInput(current_thread, foreground_thread, 0);
+            }
+        }
+        if matches!(super::super::target::detect_focused_target(),
+            super::super::target::TargetDetection::Available(target) if target.process_id == _editor.child.id())
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < focus_deadline,
+            "test editor could not acquire foreground focus"
+        );
+        thread::sleep(std::time::Duration::from_millis(25));
+    }
+    // Both correction and undo use this boundary. A title-only change must
+    // refuse every native method while the selection and typed span stay intact.
+    let super::super::target::TargetDetection::Available(authorized) =
+        super::super::target::detect_focused_target()
+    else {
+        panic!("test editor is not available")
+    };
+    let stale = ReplacementPlan {
+        target: &authorized,
+        original: "teh",
+        replacement: "the",
+        following: "",
+        stamp: InputStamp {
+            position: super::super::input_listener::current_position_generation(),
+            sequence: super::super::input_listener::current_input_sequence(),
+        },
+    };
+    unsafe {
+        let title = wide("Private document");
+        assert_ne!(
+            SendMessageW(
+                GetAncestor(edit as _, GA_ROOT),
+                WM_SETTEXT,
+                0,
+                title.as_ptr() as isize
+            ),
+            0
+        );
+    }
+    for method in [ReplacementMethod::Clipboard, ReplacementMethod::SendInput] {
+        let refused = run_strategies(&stale, &mut [&mut native::NativeStrategy(method)], true);
+        assert!(!refused.success && !refused.may_have_changed);
+        assert!(refused.range.is_none());
+    }
+    unsafe {
+        let title = wide("AutoFix replacement test");
+        SendMessageW(
+            GetAncestor(edit as _, GA_ROOT),
+            WM_SETTEXT,
+            0,
+            title.as_ptr() as isize,
+        );
+    }
     for (method, original, replacement, following) in [
         (ReplacementMethod::Clipboard, "teh", "the", ""),
         (ReplacementMethod::SendInput, "teh", "the", ""),
@@ -411,7 +503,11 @@ fn native_edit_replacement_smoke() {
         let initial = format!("old {original}{following} AFTER");
         let initial_caret = format!("old {original}{following}").encode_utf16().count();
         unsafe {
-            SetWindowTextW(edit as _, wide(&initial).as_ptr());
+            let text = wide(&initial);
+            assert_ne!(
+                SendMessageW(edit as _, WM_SETTEXT, 0, text.as_ptr() as isize),
+                0
+            );
             SendMessageW(edit as _, EM_SETSEL, initial_caret, initial_caret as isize);
         }
         let super::super::target::TargetDetection::Available(target) =

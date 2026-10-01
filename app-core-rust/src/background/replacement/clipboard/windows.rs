@@ -30,7 +30,7 @@ const BITMAP: u32 = 2;
 const METAFILE: u32 = 3;
 const PALETTE: u32 = 9;
 const ENH_METAFILE: u32 = 14;
-
+/// Compare independent format snapshots to detect a newer external clipboard copy.
 fn same_published_data(format: u32, expected: HANDLE, actual: HANDLE) -> bool {
     if actual.is_null() {
         return false;
@@ -69,11 +69,13 @@ fn same_published_data(format: u32, expected: HANDLE, actual: HANDLE) -> bool {
     }
 }
 
+/// Fingerprint native graphics objects independently of thread-local clipboard handles.
 fn native_object_bytes(format: u32, handle: HANDLE) -> Option<Vec<u8>> {
     use windows_sys::Win32::Graphics::Gdi::{
         GetBitmapBits, GetEnhMetaFileBits, GetMetaFileBitsEx, GetObjectW, GetPaletteEntries,
         BITMAP as NativeBitmap, PALETTEENTRY,
     };
+    /// Allocate native object bytes fallibly before accessing the copied object.
     fn buffer(length: usize) -> Option<Vec<u8>> {
         let mut bytes = Vec::new();
         bytes.try_reserve_exact(length).ok()?;
@@ -177,7 +179,7 @@ fn native_object_bytes(format: u32, handle: HANDLE) -> Option<Vec<u8>> {
 }
 
 static RECOVERY_PENDING: AtomicBool = AtomicBool::new(false);
-
+/// Create a message-only clipboard owner on the calling thread.
 fn owner_window() -> HWND {
     unsafe {
         CreateWindowExW(
@@ -209,84 +211,32 @@ struct Recovery {
 // Windows permits their use and release from the recovery thread.
 unsafe impl Send for Recovery {}
 
-fn recovery_sender() -> Result<&'static mpsc::Sender<Recovery>, String> {
-    static WORKER: OnceLock<Result<mpsc::Sender<Recovery>, String>> = OnceLock::new();
-    WORKER
-        .get_or_init(|| {
-            let (sender, receiver) = mpsc::channel::<Recovery>();
-            let (ready, started) = mpsc::sync_channel(1);
-            thread::Builder::new()
-                .name("clipboard-recovery".into())
-                .spawn(move || {
-                    let mut owner = owner_window();
-                    let available = !owner.is_null();
-                    let _ = ready.send(available);
-                    if !available {
-                        return;
-                    }
-                    for recovery in receiver {
-                        let mut transaction = ClipboardTransaction {
-                            owner,
-                            saved: recovery.saved,
-                            restore_copy: None,
-                            temporary: Vec::new(),
-                            sequence: recovery.sequence,
-                            owned: recovery.owned,
-                            clipboard_owner: recovery.clipboard_owner,
-                            temporary_snapshot: recovery.temporary_snapshot,
-                            restoring: recovery.restoring,
-                            changed: true,
-                            recovery_owner: true,
-                        };
-                        // Retain the snapshot until restored or superseded by a user's copy.
-                        while transaction.changed {
-                            match transaction.restore() {
-                                Ok(()) => break,
-                                Err(reason) => {
-                                    tracing::debug!(reason, "clipboard recovery attempt deferred");
-                                }
-                            }
-                            thread::sleep(Duration::from_millis(25));
-                        }
-                        // An idle receiver does not pump WM_DESTROYCLIPBOARD. Release
-                        // ownership now so the user's next copy cannot wait on this thread.
-                        drop(transaction);
-                        unsafe {
-                            DestroyWindow(owner);
-                        }
-                        owner = owner_window();
-                        if owner.is_null() {
-                            tracing::warn!(
-                                "clipboard recovery window unavailable; clipboard method disabled"
-                            );
-                            break;
-                        }
-                        RECOVERY_PENDING.store(false, Ordering::Release);
-                    }
-                    unsafe {
-                        DestroyWindow(owner);
-                    }
-                })
-                .map_err(|_| "clipboard recovery worker unavailable".to_owned())?;
-            if started.recv().unwrap_or(false) {
-                Ok(sender)
-            } else {
-                Err("clipboard recovery window unavailable".into())
-            }
-        })
-        .as_ref()
-        .map_err(Clone::clone)
+mod recovery;
+use recovery::recovery_sender;
+/// Drain and stop the recovery worker before the engine exits.
+pub(super) fn shutdown() {
+    recovery::shutdown();
 }
 
+/// Encode a NUL-terminated Windows string without borrowing temporary data.
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
 }
 
 struct ClipboardLock;
 impl ClipboardLock {
+    /// Acquire the clipboard for a bounded period without modifying any formats.
     fn open(owner: HWND) -> Result<Self, String> {
+        Self::open_with_messages(owner, false)
+    }
+
+    /// Recovery must answer sent owner messages while another thread holds the lock.
+    fn open_with_messages(owner: HWND, pump: bool) -> Result<Self, String> {
         let deadline = Instant::now() + Duration::from_millis(250);
         loop {
+            if pump {
+                recovery::pump_messages();
+            }
             if unsafe { OpenClipboard(owner) } != 0 {
                 return Ok(Self);
             }
@@ -298,6 +248,7 @@ impl ClipboardLock {
     }
 }
 impl Drop for ClipboardLock {
+    /// Release owned native resources on scope exit without touching a newer copy.
     fn drop(&mut self) {
         unsafe {
             CloseClipboard();
@@ -310,6 +261,7 @@ struct SavedFormat {
     handle: HANDLE,
 }
 impl SavedFormat {
+    /// Copy readable formats into independent owned handles; refuse owner-managed data.
     fn duplicate(format: u32, source: HANDLE) -> Result<Self, String> {
         // Private/GDI-owner and owner-display data cannot be restored by a new owner.
         if source.is_null() || format == 0x80 || (0x200..=0x3ff).contains(&format) {
@@ -333,6 +285,8 @@ impl SavedFormat {
         }
         Ok(Self { format, handle })
     }
+
+    /// Allocate movable clipboard memory and copy all bytes before publication.
     fn bytes(format: u32, bytes: &[u8]) -> Result<Self, String> {
         let handle = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes.len()) };
         if handle.is_null() {
@@ -349,6 +303,8 @@ impl SavedFormat {
         }
         Ok(value)
     }
+
+    /// Transfer ownership to Windows only after SetClipboardData succeeds.
     fn publish(&mut self) -> Result<(), String> {
         if unsafe { SetClipboardData(self.format, self.handle) }.is_null() {
             return Err(format!(
@@ -361,6 +317,7 @@ impl SavedFormat {
     }
 }
 impl Drop for SavedFormat {
+    /// Release owned native resources on scope exit without touching a newer copy.
     fn drop(&mut self) {
         if self.handle.is_null() {
             return;
@@ -407,6 +364,7 @@ pub(in crate::background::replacement) struct PreparationFailure {
     pub(in crate::background::replacement) clipboard_uncertain: bool,
 }
 impl From<String> for PreparationFailure {
+    /// Convert a pre-write failure without claiming any clipboard mutation.
     fn from(reason: String) -> Self {
         Self {
             reason,
@@ -415,13 +373,15 @@ impl From<String> for PreparationFailure {
     }
 }
 impl From<&str> for PreparationFailure {
+    /// Convert a pre-write failure without claiming any clipboard mutation.
     fn from(reason: &str) -> Self {
         reason.to_owned().into()
     }
 }
 impl ClipboardTransaction {
+    /// Snapshot every format and preallocate temporary and restoration data before any write.
     pub(in crate::background::replacement) fn prepare(text: &str) -> Result<Self, String> {
-        if RECOVERY_PENDING.load(Ordering::Acquire) {
+        if RECOVERY_PENDING.load(Ordering::Acquire) || super::super::shutting_down() {
             return Err("clipboard recovery is pending; use fallback".into());
         }
         // Prove recovery is available before any clipboard write.
@@ -496,7 +456,12 @@ impl ClipboardTransaction {
         drop(lock);
         Ok(transaction)
     }
+
+    /// Require an unchanged sequence and publish privacy markers before temporary text.
     pub(in crate::background::replacement) fn install(&mut self) -> Result<(), PreparationFailure> {
+        if super::super::shutting_down() {
+            return Err("clipboard replacement is shutting down".into());
+        }
         let _lock = ClipboardLock::open(self.owner)?;
         if unsafe { GetClipboardSequenceNumber() } != self.sequence {
             return Err("clipboard changed before paste; newer clipboard retained".into());
@@ -530,6 +495,8 @@ impl ClipboardTransaction {
         self.sequence = unsafe { GetClipboardSequenceNumber() };
         Ok(())
     }
+
+    /// Restore all originals while locked and retain snapshots on partial publication failure.
     fn restore_locked(&mut self) -> Result<(), String> {
         let owned = std::cell::RefCell::new(std::mem::take(&mut self.owned));
         let cleared = std::cell::Cell::new(false);
@@ -563,6 +530,8 @@ impl ClipboardTransaction {
         }
         restored
     }
+
+    /// Verify owner, independent published bytes and formats before overwriting anything.
     fn owns_current_locked(&self) -> bool {
         if unsafe { GetClipboardOwner() } != self.clipboard_owner {
             return false;
@@ -599,11 +568,13 @@ impl ClipboardTransaction {
             }
         }
     }
+
+    /// Restore only our own clipboard state; preserve a newer external copy.
     pub(in crate::background::replacement) fn restore(&mut self) -> Result<(), String> {
         if !self.changed {
             return Ok(());
         }
-        let _lock = ClipboardLock::open(self.owner)?;
+        let _lock = ClipboardLock::open_with_messages(self.owner, self.recovery_owner)?;
         if !self.owns_current_locked() {
             self.changed = false;
             return Err("clipboard changed externally; newer clipboard retained".into());
@@ -612,6 +583,7 @@ impl ClipboardTransaction {
     }
 }
 impl Drop for ClipboardTransaction {
+    /// Release owned native resources on scope exit without touching a newer copy.
     fn drop(&mut self) {
         if self.recovery_owner {
             return;
@@ -637,11 +609,11 @@ impl Drop for ClipboardTransaction {
                     temporary_snapshot: std::mem::take(&mut self.temporary_snapshot),
                     restoring: self.restoring,
                 };
-                // The worker started before mutation and lives for the process lifetime.
+                // The worker starts before mutation and is drained on graceful exit.
                 if recovery_sender()
                     .and_then(|sender| {
                         sender
-                            .send(recovery)
+                            .send(Some(recovery))
                             .map_err(|_| "clipboard recovery worker stopped".into())
                     })
                     .is_err()
@@ -670,6 +642,8 @@ pub(in crate::background::replacement) fn supports_paste(window: isize) -> bool 
         "edit" | "richedit20w" | "richedit50w" | "richedit20a" | "richedit"
     )
 }
+
+/// Use bounded synchronous WM_PASTE; timeout means target mutation is uncertain.
 pub(in crate::background::replacement) fn paste(window: isize) -> Result<(), String> {
     let mut result = 0;
     if unsafe {

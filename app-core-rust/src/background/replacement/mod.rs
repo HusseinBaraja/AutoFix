@@ -12,6 +12,25 @@ use super::{
     triggers::CorrectionRequest,
 };
 use crate::correction::{ConfidenceBehavior, ConfidenceTier, CorrectionOutput, EngineStatus};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// Stop new native selections and mutations before waiting for input processing.
+pub(super) fn begin_shutdown() {
+    SHUTTING_DOWN.store(true, Ordering::Release);
+}
+
+/// Native boundary checks also cover a processor delayed by a provider call.
+fn shutting_down() -> bool {
+    SHUTTING_DOWN.load(Ordering::Acquire)
+}
+
+/// Join recovery after the input processor has dropped its clipboard transaction.
+pub(super) fn finish_shutdown() {
+    #[cfg(windows)]
+    clipboard::shutdown();
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ReplacementMethod {
@@ -64,6 +83,7 @@ struct ReplacementPlan<'a> {
 }
 
 impl ReplacementPlan<'_> {
+    /// Count Unicode scalars backwards from the live caret, excluding newer typed text.
     fn range(&self) -> ReplacedRange {
         let end_back = self.following.chars().count();
         ReplacedRange {
@@ -80,21 +100,27 @@ enum Attempt {
 }
 
 trait ReplacementStrategy {
+    /// Identify the strategy so clipboard preferences can skip preparation entirely.
     fn method(&self) -> ReplacementMethod;
+    /// Return Unavailable only before target selection or mutation can have changed.
     fn replace(&mut self, plan: &ReplacementPlan<'_>) -> Attempt;
 }
 
 /// Reserved layers have an explicit capability refusal, never pretend success.
 struct DeferredStrategy(ReplacementMethod);
 impl ReplacementStrategy for DeferredStrategy {
+    /// Identify the strategy so clipboard preferences can skip preparation entirely.
     fn method(&self) -> ReplacementMethod {
         self.0
     }
+
+    /// Return Unavailable only before target selection or mutation can have changed.
     fn replace(&mut self, _: &ReplacementPlan<'_>) -> Attempt {
         Attempt::Unavailable(format!("{:?} replacement is not implemented", self.0))
     }
 }
 
+/// Try methods in safety order and stop on every completed or uncertain attempt.
 fn run_strategies(
     plan: &ReplacementPlan<'_>,
     strategies: &mut [&mut dyn ReplacementStrategy],
@@ -191,6 +217,7 @@ impl ReplacementEngine {
         )
     }
 
+    /// Apply the same strategy ordering and clipboard preference to correction and undo.
     fn execute(plan: &ReplacementPlan<'_>, clipboard_enabled: bool) -> ReplacementResult {
         run_strategies(
             plan,

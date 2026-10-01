@@ -337,6 +337,104 @@ fn native_clipboard_preservation_smoke() {
     assert!(actual.starts_with(&newer), "newer copy was overwritten");
     assert!(unsafe { EmptyClipboard() } != 0); // Return the test station to its original empty state.
     drop(lock);
+
+    // A permanently invalid publication must terminate, scrub temporary text,
+    // and release ownership rather than republish forever.
+    let mut permanent = ClipboardTransaction::prepare("temporary failure text").unwrap();
+    permanent
+        .install()
+        .unwrap_or_else(|failure| panic!("{}", failure.reason));
+    permanent
+        .saved
+        .push(SavedFormat::bytes(0, b"invalid format").unwrap());
+    permanent.restore_copy = None;
+    permanent.recovery_owner = true;
+    let began = Instant::now();
+    recovery::recover(&mut permanent, Duration::from_millis(100));
+    assert!(began.elapsed() < Duration::from_secs(1));
+    assert!(
+        permanent.changed,
+        "invalid publication must remain a failure"
+    );
+    let lock = ClipboardLock::open(seed_owner).unwrap();
+    assert!(unsafe { GetClipboardData(UNICODE_TEXT) }.is_null());
+    drop(lock);
+    unsafe { DestroyWindow(permanent.owner) };
+    drop(permanent);
+
+    // EmptyClipboard sends WM_DESTROYCLIPBOARD to the owner synchronously.
+    // The recovery thread must service it even when the caller holds the lock.
+    let mut copied = ClipboardTransaction::prepare("temporary copy text").unwrap();
+    copied
+        .install()
+        .unwrap_or_else(|failure| panic!("{}", failure.reason));
+    copied.recovery_owner = true;
+    let (ready, started) = mpsc::channel();
+    let (done, finished) = mpsc::channel();
+    let copier = thread::spawn(move || {
+        let owner = owner_window();
+        let lock = ClipboardLock::open(owner).unwrap();
+        ready.send(()).unwrap();
+        assert!(unsafe { EmptyClipboard() } != 0);
+        let text = wide("concurrent new copy")
+            .into_iter()
+            .flat_map(u16::to_ne_bytes)
+            .collect::<Vec<_>>();
+        SavedFormat::bytes(UNICODE_TEXT, &text)
+            .unwrap()
+            .publish()
+            .unwrap();
+        drop(lock);
+        unsafe { DestroyWindow(owner) };
+        done.send(()).unwrap();
+    });
+    started.recv_timeout(Duration::from_secs(1)).unwrap();
+    recovery::recover(&mut copied, Duration::from_millis(500));
+    unsafe { DestroyWindow(copied.owner) };
+    finished
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Copy blocked on clipboard owner");
+    copier.join().unwrap();
+    assert!(!copied.changed, "newer copy must end recovery");
+    drop(copied);
+
+    // Graceful shutdown waits for queued restoration after a lock is released.
+    let mut exiting = ClipboardTransaction::prepare("temporary exit text").unwrap();
+    exiting
+        .install()
+        .unwrap_or_else(|failure| panic!("{}", failure.reason));
+    let (ready, started) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let holder = thread::spawn(move || {
+        let lock = ClipboardLock::open(ptr::null_mut()).unwrap();
+        ready.send(()).unwrap();
+        released.recv().unwrap();
+        thread::sleep(Duration::from_millis(100));
+        drop(lock);
+    });
+    started.recv().unwrap();
+    drop(exiting);
+    assert!(RECOVERY_PENDING.load(Ordering::Acquire));
+    release.send(()).unwrap();
+    shutdown();
+    holder.join().unwrap();
+    assert!(!RECOVERY_PENDING.load(Ordering::Acquire));
+    assert!(
+        recovery_sender().is_err(),
+        "shutdown must not restart recovery"
+    );
+    let lock = ClipboardLock::open(seed_owner).unwrap();
+    let bytes = unsafe { fingerprint(UNICODE_TEXT, GetClipboardData(UNICODE_TEXT)) };
+    let expected = wide("concurrent new copy")
+        .into_iter()
+        .flat_map(u16::to_ne_bytes)
+        .collect::<Vec<_>>();
+    assert!(
+        bytes.starts_with(&expected),
+        "shutdown lost the saved clipboard"
+    );
+    assert!(unsafe { EmptyClipboard() } != 0);
+    drop(lock);
 }
 
 #[test]
