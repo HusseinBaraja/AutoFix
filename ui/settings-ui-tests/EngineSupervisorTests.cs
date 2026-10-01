@@ -168,7 +168,7 @@ public sealed class EngineSupervisorTests
 
         public void RaiseExitedAgain() => Exited?.Invoke(this, EventArgs.Empty);
 
-        public void Kill() => Exit(0);
+        public void Stop() => Exit(0);
         public void Dispose() { }
     }
 }

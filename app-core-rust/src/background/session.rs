@@ -44,6 +44,14 @@ pub(crate) struct CorrectionUndo {
     replacement: String,
     informative_start: usize,
     caret_anchor: u64,
+    complete_range_retained: bool,
+}
+
+/// Only a recorded, fully retained app correction may make informative text editable.
+pub(super) struct CorrectionUndoTarget {
+    pub(super) corrected: String,
+    pub(super) original: String,
+    pub(super) following: String,
 }
 
 pub(crate) struct Session {
@@ -562,6 +570,7 @@ impl Session {
             .filter(|start| self.informative_context.get(*start..) == Some(replacement.as_str()))
         {
             self.correction_undo_history.push(CorrectionUndo {
+                complete_range_retained: replacement == correction.replacement,
                 original: correction.original,
                 replacement,
                 informative_start,
@@ -571,10 +580,27 @@ impl Session {
         true
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "called after target undo succeeds")
-    )]
+    pub(super) fn undo_target(&self) -> Option<CorrectionUndoTarget> {
+        let last = self.correction_undo_history.last()?;
+        let end = last.informative_start.checked_add(last.replacement.len())?;
+        if self.position_uncertain()
+            || !last.complete_range_retained
+            || last.caret_anchor != self.versions.caret_anchor
+            || self.informative_context.get(last.informative_start..end)? != last.replacement
+        {
+            return None;
+        }
+        Some(CorrectionUndoTarget {
+            corrected: last.replacement.clone(),
+            original: last.original.clone(),
+            following: format!(
+                "{}{}",
+                self.informative_context.get(end..)?,
+                self.executable_context()
+            ),
+        })
+    }
+
     /// Restore a recorded original in session context while preserving newer typed text.
     pub(crate) fn undo_last_correction(&mut self, limits: &ContextConfig) -> bool {
         let Some(last) = self.correction_undo_history.last().cloned() else {

@@ -10,6 +10,38 @@ use super::{
     AppConfig, ValidateConfig,
 };
 
+#[test]
+fn clipboard_preference_round_trips_and_legacy_configs_keep_default() {
+    let mut config = AppConfig::default();
+    assert!(config.replacement.clipboard_enabled);
+    config.replacement.clipboard_enabled = false;
+    let encoded = config_to_toml(&config).unwrap();
+    assert!(
+        !super::toml_io::parse_config(&encoded)
+            .unwrap()
+            .replacement
+            .clipboard_enabled
+    );
+    let legacy = encoded
+        .lines()
+        .filter(|line| !line.starts_with("clipboard_enabled"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        super::toml_io::parse_config(&legacy)
+            .unwrap()
+            .replacement
+            .clipboard_enabled
+    );
+    let legacy = legacy.replace("[replacement]\n", "");
+    assert!(
+        super::toml_io::parse_config(&legacy)
+            .unwrap()
+            .replacement
+            .clipboard_enabled
+    );
+}
+
 /// Product defaults preserve conservative context, language, grammar, and confidence settings.
 #[test]
 fn default_config_has_requested_values() {

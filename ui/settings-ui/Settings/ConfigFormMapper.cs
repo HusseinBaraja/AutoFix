@@ -36,6 +36,7 @@ public static class ConfigFormMapper
         config.Triggers.Characters = List(values, "triggers.characters");
         ApplyContext(config, values);
         ApplyCorrection(config, values);
+        config.Replacement.ClipboardEnabled = Toggle(values, "replacement.clipboard_enabled");
         ApplyApi(config, values);
         ApplyFeedback(config, values);
         ApplyLogging(config, values);

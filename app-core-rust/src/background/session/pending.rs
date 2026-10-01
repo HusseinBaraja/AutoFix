@@ -131,6 +131,7 @@ impl Session {
                 .collect();
             let start = self.informative_context.len() - retained.len();
             self.correction_undo_history.push(CorrectionUndo {
+                complete_range_retained: retained == corrected,
                 original: segment.original,
                 replacement: retained,
                 informative_start: start,

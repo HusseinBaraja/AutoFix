@@ -37,8 +37,8 @@ language; it can disable correction or correct per token with the API engine.
 Structured tokens, names, explicit protected terms, and words in other scripts
 remain protected. The local rule engine supports English only; API engines can
 receive other language tags. The async pipeline invokes the selected engine with
-these policies. Native replacement remains unavailable, so changed results do
-not yet edit target application text.
+these policies. Validated changed results can now use the native replacement
+strategies described below.
 In grammar mode it applies only enabled categories. Conservative local rules
 cover capitalization, sentence-ending punctuation on manual correction, extra
 punctuation, repeated words, subject-verb agreement, a/an articles, a few
@@ -76,7 +76,7 @@ the timeout notice when it completes.
 `ApiCorrectionEngine::notice_for` distinguishes manual timeout and failure
 feedback from silent automatic handling. The local ML engine remains
 a placeholder. Live triggers invoke these engines on the correction worker.
-The native replacement path remains a placeholder.
+The native replacement path verifies the session-owned pre-caret range.
 Engine selection is explicit per request; neither local nor API routing depends
 on task difficulty, and both correction modes are accepted by every engine.
 
@@ -94,7 +94,7 @@ requires user acceptance. Suppressed outputs preserve the original executable
 text and discard edit details. Local results prioritize silent edits over
 suggested edits when both occur in one request. The pipeline snapshots confidence
 policy and rejects suggestions, suppressed edits, and low-confidence results at
-completion. Target replacement remains a placeholder.
+completion before allowing target replacement.
 
 The keyboard session tracker is implemented. It keeps up to 4,096 characters
 typed during the current engine run in memory and exposes only the known text
@@ -140,8 +140,7 @@ Manual-only rules can still use the opt-in arbitrary-selection shortcut path.
 The correction pipeline invokes the selected engine and validates completions.
 Successful unchanged caret-range results commit the original executable segment into
 informative context. Changed caret-range results require confirmation from
-the replacement owner before session completion or undo recording; the native
-placeholder currently refuses confirmation. If the provider cannot
+the replacement owner before session completion or undo recording. If the provider cannot
 read before the caret, informative context is empty and typing continues.
 Protected fields and
 unavailable targets are never read. Paste and
@@ -176,8 +175,8 @@ the final-fix security gate for the old executable text. Final fix remains
 unavailable because the old caret cannot be safely targeted after movement. Pending
 corrections are invalidated on movement. Runtime ticks delete sessions when
 their owning process exits. All session state disappears on engine exit or
-termination and is never written to disk. The replacement engine remains a
-placeholder; session completion methods do not themselves change target text.
+termination and is never written to disk. Session completion methods do not
+themselves change target text; the replacement engine must confirm mutation first.
 
 The correction pipeline uses one worker, a FIFO of requests, and one completion
 slot with backpressure so results cannot overwrite each other. Each session has
@@ -233,8 +232,8 @@ focused control identity and a fresh read-only TextPattern capture. The entire
 known session region must match exactly at the live caret, including text typed
 after a frozen segment. Missing captures or mismatches discard the result; no
 fuzzy search or replacement is attempted. Selected-text results are discarded
-because their replacement range cannot be proven before the caret. Native
-replacement remains unavailable.
+because their replacement range cannot be proven before the caret, even when
+arbitrary selected-text correction is enabled.
 Failed, suppressed, or refused frozen results release their slot and retire the
 original text without applying engine output. Results are
 consumed once. Only completed silent corrections above low confidence reach the
@@ -242,8 +241,104 @@ replacement boundary. Failed and suppressed manual edits do not commit executabl
 context. Tests cover delayed engines, frozen queues and overflow policies,
 manual override, stale and reordered results, queued input,
 secure targets, failed replacement, selection boundaries, and commit/undo after
-confirmed replacement. Native mutation, clipboard recovery, and real target undo
-still require the replacement feature.
+confirmed replacement.
+
+The replacement feature lives in `src/background/replacement`. Its strategy
+interface tries direct text APIs, UI Automation replacement, clipboard paste,
+then SendInput. Direct APIs/TSF and UI Automation mutation currently report
+unavailable and can be implemented progressively. UI Automation TextPattern
+must first prove a collapsed caret, the exact executable span and any newer
+typed text between that span and the caret. Only that span is selected; text
+after the original caret remains untouched. Missing or unreliable providers
+refuse replacement rather than guessing a keystroke distance.
+
+Clipboard replacement uses synchronous `WM_PASTE` on recognized native Edit
+and RichEdit controls. It snapshots every enumerated clipboard format, including
+registered binary formats, bitmaps, palettes and metafiles, before changing the
+clipboard. Owner-managed or unreadable formats refuse this strategy before any
+clipboard write. It preallocates a complete restoration set, proves the target
+selection while the clipboard stays untouched, then installs temporary Unicode
+text immediately before synchronous paste. Privacy markers are installed before
+text to disable clipboard history and cloud upload. Restoration runs immediately
+after paste (including paste failure), before target verification, and on scope
+exit. Success requires both verified replacement and complete restoration.
+Ownership and independent copies of published data distinguish Windows-synthesized formats from
+an external clipboard change. A user's newer copy is retained and the attempt
+fails rather than overwriting it.
+
+`replacement.clipboard_enabled` defaults to true. The settings UI exposes
+**Correction > Use clipboard for correction**; disabling it skips clipboard
+preparation for both correction and app-level undo. Restoration failures emit
+metadata-only warnings and skip clipboard replacement for that process name
+(case-insensitive) until the engine exits. A failed restore removes temporary
+text when the clipboard lock is available, keeps the full saved snapshot in
+memory, and retries recovery on a dedicated worker until restored or superseded
+by a new copy, with at most eight active attempts over two seconds. The worker pumps
+clipboard-owner messages while retrying and waiting for the clipboard lock.
+Exhaustion releases ownership but retains originals in memory and quarantines
+clipboard replacement across all apps. Read-only probes recognize a newer copy
+or resume one restoration when a previously busy lock clears. Partial restorations
+are not emptied and republished on each probe. The gate clears only after full
+restoration or an external copy. Other clipboard attempts use fallback while
+recovery is pending or quarantined. The tray sends a
+process-scoped graceful stop signal and waits for the engine to drain recovery
+before closing its process job. Shutdown makes one final attempt for quarantined
+data and reports incomplete cleanup separately from a clean exit. A permanently
+locked clipboard, failed final restoration, forced termination, or a crash can
+leave clipboard cleanup incomplete; metadata-only warnings report that outcome. Clipboard contents
+are never persisted for crash recovery.
+
+SendInput fallback inserts UTF-16 Unicode key pairs into the same proved
+selection; an empty replacement deletes the selection with Backspace. It does
+not use or change the clipboard. The entire batch is validated and allocated
+before selection. It runs only after all safer available methods refuse, or the
+clipboard method is disabled. Only standard Unicode Edit controls with known
+insert semantics are supported. Read-only, password, numeric, case-transforming,
+ANSI, custom and RichEdit controls refuse this fallback before selection.
+It refuses all control characters and held shortcut
+modifiers (after a bounded release wait). Immediately before mutation it rechecks
+the exact selected text, input generations, field security, modifiers and native
+keyboard focus. Partial input, failed paste, or failed
+verification stops the strategy chain and invalidates the tracked session.
+If a partial batch ends on a keydown, only its matching keyup is attempted;
+deletion and typing are never retried.
+Verification reacquires a fresh UI Automation provider after mutation and restores
+the caret beyond newer typed text only after checking that text exactly.
+Range proof accepts scalar or UTF-16 provider units only when the text matches
+exactly at its fixed anchor; it never searches for similar text. App rules are
+reread under a SQLite writer reservation held through replacement and app undo.
+Missing or busy policy storage skips mutation. Final native checks require all
+authorized target attributes, including process name and window title, to remain
+unchanged before mutation; title changes refuse correction and undo even without
+caret movement. After mutation, verification and caret restoration permit an
+editor's modified-title marker while still requiring every other identity and
+safety attribute and the input generations to match.
+Provider error messages are
+discarded so failure logs cannot contain document text.
+
+Every replacement returns success/failure, the attempted method (or none for
+pre-strategy rejection), the exact range when proved, and a failure reason.
+Failure/skip metadata is logged at warning level under default logging, including
+the attempted method and whether the tracked selection may have changed.
+Range offsets count Unicode characters backwards from the original caret,
+with `start_back >= end_back >= 0`; they are not document byte or UTF-16 offsets.
+App-level undo uses only a recorded app correction that remains fully retained
+in informative context. It verifies the live anchor and restores that recorded
+span, preserving newer executable text. Memory truncation, movement, unknown
+selection geometry and secure fields block native undo.
+
+Focused tests cover strategy ordering, the clipboard disable preference,
+fail-closed authorization, mutation failures, Unicode ranges, rich/binary format
+restoration, restoration failures and retry, Windows-synthesized formats,
+per-app fallback preference, clipboard handle copying and app-owned undo spans.
+The opt-in `native_clipboard_preservation_smoke` runs in a child with a separate
+noninteractive Windows window station and seeds rich text, HTML, binary data
+and a bitmap. It verifies actual native paste, restoration, recovery from a
+locked clipboard, and retention of a newer copy without touching the desktop
+clipboard. It refuses a visible station or unrelated existing clipboard data.
+The opt-in `native_edit_replacement_smoke` test owns a separate native editor;
+it checks clipboard/SendInput and preservation of the document suffix on an
+interactive Windows desktop. It safely refuses unsupported clipboard formats.
 
 Feature code should be organized by product behavior, not technical layer. Keep modules small, private by default, and colocate tests with the behavior they verify.
 

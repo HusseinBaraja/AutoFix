@@ -1,4 +1,4 @@
-//! Serialize outbound authorization with SQLite policy writes from IPC and the UI.
+//! Serialize outbound and replacement authorization with app-policy writes.
 
 use std::{path::Path, time::Duration};
 
@@ -14,7 +14,7 @@ impl AppPolicyGuard {
     /// Reserve the writer slot before reading, even in WAL mode. Never create or migrate.
     pub(crate) fn acquire(path: &Path) -> Result<Self> {
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-        // Contention denies this send immediately; do not extend its API deadline.
+        // Contention denies the operation immediately; never wait on policy writers.
         connection.busy_timeout(Duration::ZERO)?;
         connection.execute_batch("BEGIN IMMEDIATE")?;
         Ok(Self { connection })
@@ -30,7 +30,7 @@ impl Drop for AppPolicyGuard {
     /// Closing the connection rolls back the read-only transaction and releases writers.
     fn drop(&mut self) {
         if let Err(error) = self.connection.execute_batch("ROLLBACK") {
-            tracing::warn!(%error, "failed to release outbound policy transaction");
+            tracing::warn!(%error, "failed to release app policy transaction");
         }
     }
 }

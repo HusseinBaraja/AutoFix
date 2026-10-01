@@ -8,6 +8,7 @@ mod message_loop;
 mod paths;
 mod pipeline;
 mod process_group;
+mod replacement;
 mod security;
 mod session;
 mod shortcuts;
@@ -38,11 +39,12 @@ use crate::{
 
 use self::{
     admin::reject_elevated_process,
-    components::{NamedPipeIpcServer, ReplacementEngine},
+    components::NamedPipeIpcServer,
     input_listener::{InputEvent, InputListener},
     paths::RuntimePaths,
     pipeline::{CorrectionPipeline, InputStamp},
     process_group::SiblingDisappearanceMonitor,
+    replacement::ReplacementEngine,
     security::{SecurityDecision, SecurityGate, TriggerKind},
     session::{MovementResolution, SessionManager},
     shortcuts::{GlobalShortcutListener, ShortcutAction},
@@ -62,14 +64,14 @@ struct RuntimeComponents {
     global_shortcut: GlobalShortcutListener,
     input_listener: InputListener,
     input_worker: InputWorker,
-    replacement_engine: ReplacementEngine,
     process_group_monitor: SiblingDisappearanceMonitor,
+    shutdown_signal: process_group::ShutdownSignal,
     shutdown_requested: Arc<AtomicBool>,
 }
 
 struct InputWorker {
     queue: Arc<(Mutex<VecDeque<InputWork>>, Condvar)>,
-    done: mpsc::Receiver<()>,
+    done: mpsc::Receiver<bool>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -135,6 +137,7 @@ pub(crate) enum BackgroundError {
     Database(rusqlite::Error),
     InputHook(u32),
     InputWorker(std::io::Error),
+    ShutdownSignal(u32),
 }
 
 impl fmt::Display for BackgroundError {
@@ -150,6 +153,10 @@ impl fmt::Display for BackgroundError {
                 formatter,
                 "failed to install input listener: Windows error {code}"
             ),
+            Self::ShutdownSignal(code) => write!(
+                formatter,
+                "failed to create engine stop signal: Windows error {code}"
+            ),
             Self::InputWorker(source) => {
                 write!(formatter, "failed to start input worker: {source}")
             }
@@ -164,7 +171,7 @@ impl Error for BackgroundError {
             Self::Config(source) => Some(source),
             Self::Database(source) => Some(source),
             Self::InputWorker(source) => Some(source),
-            Self::ElevatedProcess | Self::InputHook(_) => None,
+            Self::ElevatedProcess | Self::InputHook(_) | Self::ShutdownSignal(_) => None,
         }
     }
 }
@@ -192,9 +199,13 @@ impl BackgroundRuntime {
         Ok(Self { components })
     }
 
+    /// Report unresolved cleanup separately from a fully drained graceful exit.
     fn shutdown(self) {
-        self.components.shutdown();
-        tracing::info!("AutoFix background process exited cleanly");
+        if self.components.shutdown() {
+            tracing::info!("AutoFix background process exited cleanly");
+        } else {
+            tracing::warn!("AutoFix background process exited with incomplete cleanup");
+        }
     }
 
     fn run_until_exit(&mut self) {
@@ -210,6 +221,8 @@ impl RuntimeComponents {
         database: Database,
     ) -> Result<Self, BackgroundError> {
         let input_listener = InputListener::initialize().map_err(BackgroundError::InputHook)?;
+        let shutdown_signal =
+            process_group::ShutdownSignal::new().map_err(BackgroundError::ShutdownSignal)?;
         let input_worker = InputWorker::start(config.clone(), database)?;
         Ok(Self {
             config_path: paths.config_path().to_path_buf(),
@@ -223,18 +236,19 @@ impl RuntimeComponents {
             global_shortcut: GlobalShortcutListener::initialize(config),
             input_listener,
             input_worker,
-            replacement_engine: ReplacementEngine::initialize(),
             process_group_monitor: SiblingDisappearanceMonitor::new(),
+            shutdown_signal,
             shutdown_requested,
         })
     }
 
-    fn shutdown(self) {
-        self.input_worker.shutdown();
-        self.replacement_engine.shutdown();
+    /// Stop input mutation first and preserve the cleanup outcome through component teardown.
+    fn shutdown(self) -> bool {
+        let clean = self.input_worker.shutdown();
         drop(self.input_listener);
         self.global_shortcut.shutdown();
         self.ipc_server.shutdown();
+        clean
     }
 
     fn run_until_exit(&mut self) {
@@ -262,7 +276,7 @@ impl RuntimeComponents {
                 }
             }
 
-            self.shutdown_requested.load(Ordering::Relaxed)
+            self.shutdown_requested.load(Ordering::Relaxed) || self.shutdown_signal.requested()
         });
     }
 
@@ -356,7 +370,7 @@ impl InputWorker {
                     }
                     processor.finish_correction();
                 }
-                let _ = done_sender.send(());
+                let _ = done_sender.send(replacement::finish_shutdown());
             })
             .map_err(BackgroundError::InputWorker)?;
         Ok(Self {
@@ -392,7 +406,9 @@ impl InputWorker {
         ready.notify_one();
     }
 
-    fn shutdown(mut self) {
+    /// Wait for processor and clipboard cleanup without treating a timeout as success.
+    fn shutdown(mut self) -> bool {
+        replacement::begin_shutdown();
         let (lock, ready) = &*self.queue;
         {
             let mut pending = lock.lock().unwrap();
@@ -400,12 +416,14 @@ impl InputWorker {
             pending.push_back(InputWork::Shutdown);
             ready.notify_one();
         }
-        if self.done.recv_timeout(Duration::from_millis(500)).is_ok() {
+        if let Ok(clean) = self.done.recv_timeout(Duration::from_secs(4)) {
             if let Some(thread) = self.thread.take() {
                 let _ = thread.join();
             }
+            clean
         } else {
             tracing::warn!("input processor still waiting on UI Automation during shutdown");
+            false
         }
     }
 }
@@ -428,6 +446,8 @@ impl InputProcessor {
         }
         let config = &self.config;
         let database = &self.database;
+        let replacement_stamp = Self::input_stamp();
+        let mut replacement_uncertain = false;
         self.pipeline.finish(
             &mut self.session_manager,
             &config.context,
@@ -439,8 +459,35 @@ impl InputProcessor {
             |target, known_chars| {
                 context_capture::read_before_caret(target, &config.context, known_chars)
             },
-            ReplacementEngine::replace,
+            |target, request, output| {
+                let Some(_policy_guard) =
+                    SecurityGate::authorize_replacement(request.trigger, config, database, target)
+                else {
+                    tracing::warn!(
+                        success = false,
+                        method = "none",
+                        reason = "replacement policy unavailable or denied",
+                        "replacement skipped"
+                    );
+                    return false;
+                };
+                let result = ReplacementEngine::replace(
+                    target,
+                    request,
+                    output,
+                    replacement_stamp,
+                    config.replacement.clipboard_enabled,
+                );
+                replacement_uncertain = !result.success && result.may_have_changed;
+                result.log_outcome(false);
+                result.success
+            },
         );
+        if replacement_uncertain {
+            self.pipeline.cancel();
+            self.session_manager
+                .deactivate(MovementSignal::UnknownPosition);
+        }
         if self.pipeline.take_timeout_notice() {
             timeout_notice::show();
         }
@@ -707,13 +754,78 @@ impl InputProcessor {
                 }
             }
             Some(ShortcutAction::Undo) => {
-                if self.security_allows(TriggerKind::Undo, &self.database) {
-                    tracing::info!("undo pipeline placeholder triggered by shortcut");
-                } else {
-                    tracing::info!("undo shortcut ignored because context is blocked");
-                }
+                self.undo_correction();
             }
             None => {}
+        }
+    }
+
+    fn undo_correction(&mut self) {
+        let stamp = Self::input_stamp();
+        if stamp.sequence != self.processed_input_sequence {
+            return;
+        }
+        let SecurityDecision::Allowed { target } =
+            SecurityGate::check(TriggerKind::Undo, &self.config, &self.database)
+        else {
+            return;
+        };
+        if !self.session_manager.active_matches(&target) {
+            return;
+        }
+        let Some(session) = self.session_manager.active() else {
+            return;
+        };
+        let Some(undo) = session.undo_target() else {
+            return;
+        };
+        let known = format!(
+            "{}{}",
+            session.informative_context(),
+            session.executable_context()
+        );
+        let Some(live) = context_capture::read_before_caret(
+            &target,
+            &self.config.context,
+            known.chars().count(),
+        ) else {
+            return;
+        };
+        if Self::input_stamp() != stamp || !live.ends_with(&known) {
+            return;
+        }
+        let Some(_policy_guard) = SecurityGate::authorize_replacement(
+            TriggerKind::Undo,
+            &self.config,
+            &self.database,
+            &target,
+        ) else {
+            tracing::warn!(
+                success = false,
+                method = "none",
+                reason = "replacement policy unavailable or denied",
+                "app correction undo skipped"
+            );
+            return;
+        };
+        self.pipeline.cancel();
+        if let Some(session) = self.session_manager.active_mut() {
+            session.restore_pending();
+        }
+        let result = ReplacementEngine::undo(
+            &target,
+            &undo,
+            stamp,
+            self.config.replacement.clipboard_enabled,
+        );
+        result.log_outcome(true);
+        if result.success {
+            if let Some(session) = self.session_manager.active_mut() {
+                session.undo_last_correction(&self.config.context);
+            }
+        } else if result.may_have_changed {
+            self.session_manager
+                .deactivate(MovementSignal::UnknownPosition);
         }
     }
 

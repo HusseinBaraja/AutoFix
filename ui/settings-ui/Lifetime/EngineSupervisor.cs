@@ -73,7 +73,7 @@ public sealed class EngineSupervisor : IDisposable
             }
         }
 
-        running?.Kill();
+        running?.Stop();
     }
 
     private void StartNewEngine()

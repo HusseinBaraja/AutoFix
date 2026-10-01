@@ -14,6 +14,8 @@ pub(crate) struct AppConfig {
     pub(crate) triggers: TriggersConfig,
     pub(crate) context: ContextConfig,
     pub(crate) correction: CorrectionConfig,
+    #[serde(default)]
+    pub(crate) replacement: ReplacementConfig,
     pub(crate) api: ApiConfig,
     pub(crate) feedback: FeedbackConfig,
     pub(crate) logging: LoggingConfig,
@@ -165,6 +167,20 @@ pub(crate) struct CorrectionConfig {
 
 fn default_true() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ReplacementConfig {
+    #[serde(default = "default_true")]
+    pub(crate) clipboard_enabled: bool,
+}
+
+impl Default for ReplacementConfig {
+    fn default() -> Self {
+        Self {
+            clipboard_enabled: true,
+        }
+    }
 }
 
 impl Default for CorrectionConfig {

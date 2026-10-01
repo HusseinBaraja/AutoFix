@@ -1,5 +1,8 @@
 use std::path::{Path, PathBuf};
 
+mod shutdown_signal;
+pub(super) use shutdown_signal::ShutdownSignal;
+
 const ALLOWED_PROCESS_NAMES: [&str; 1] = ["Autofix.exe"];
 
 pub(crate) struct SiblingDisappearanceMonitor {

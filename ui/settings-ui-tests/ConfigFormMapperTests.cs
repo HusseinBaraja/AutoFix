@@ -7,6 +7,24 @@ namespace AutoFix.SettingsUi.Tests;
 public sealed class ConfigFormMapperTests
 {
     [TestMethod]
+    public void ClipboardPreferenceSurvivesFormAndStorageRoundTrip()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var sections = SettingsSkeleton.CreateSections();
+        Assert.IsTrue(Card(sections, "replacement.clipboard_enabled").IsEnabled);
+        Card(sections, "replacement.clipboard_enabled").IsEnabled = false;
+        var config = ConfigFormMapper.BuildConfig(sections);
+        Assert.IsFalse(config.Replacement.ClipboardEnabled);
+        fixture.Storage.Save(config);
+        var loaded = fixture.Storage.Load(fixture.Path);
+        Assert.IsFalse(loaded.Replacement.ClipboardEnabled);
+        Assert.IsFalse(Card(SettingsSkeleton.CreateSections(loaded), "replacement.clipboard_enabled").IsEnabled);
+        var legacy = File.ReadAllLines(fixture.Path).Where(line => !line.StartsWith("clipboard_enabled", StringComparison.Ordinal));
+        File.WriteAllLines(fixture.Path, legacy);
+        Assert.IsTrue(fixture.Storage.Load(fixture.Path).Replacement.ClipboardEnabled);
+    }
+
+    [TestMethod]
     public void PendingQueueChoicesMapAndRejectInvalidCapacityOrPolicy()
     {
         var sections = SettingsSkeleton.CreateSections();

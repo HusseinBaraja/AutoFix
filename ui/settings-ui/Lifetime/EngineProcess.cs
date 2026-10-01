@@ -9,7 +9,8 @@ public interface IEngineProcess : IDisposable
     int Id { get; }
     int? ExitCode { get; }
     bool HasExited { get; }
-    void Kill();
+    /// <summary>Request graceful cleanup and use bounded termination as a last resort.</summary>
+    void Stop();
 }
 
 public interface IEngineProcessLauncher
@@ -58,15 +59,59 @@ public sealed class EngineProcessLauncher : IEngineProcessLauncher
         public int? ExitCode => process.HasExited ? process.ExitCode : null;
         public bool HasExited => process.HasExited;
 
-        public void Kill()
+        /// <summary>Signal this engine and await native cleanup before forced termination.</summary>
+        public void Stop()
         {
-            if (!process.HasExited)
-            {
-                process.Kill();
-            }
+            GracefulEngineStop.Run(
+                () => process.HasExited,
+                () => GracefulEngineStop.TrySignal(process.Id),
+                timeout => process.WaitForExit(timeout),
+                () => process.Kill());
         }
 
         public void Dispose() => process.Dispose();
+    }
+}
+
+internal static class GracefulEngineStop
+{
+    // Rust allows four seconds for input processing and bounded clipboard recovery.
+    internal const int TimeoutMilliseconds = 6000;
+
+    /// <summary>Wait for cleanup before the shell closes its kill-on-close process job.</summary>
+    internal static void Run(Func<bool> hasExited, Func<bool> signal, Func<int, bool> waitForExit, Action kill)
+    {
+        var deadline = Stopwatch.StartNew();
+        while (!hasExited() && deadline.ElapsedMilliseconds < TimeoutMilliseconds)
+        {
+            if (signal())
+            {
+                if (waitForExit(Math.Max(0, TimeoutMilliseconds - (int)deadline.ElapsedMilliseconds)))
+                {
+                    return;
+                }
+                break;
+            }
+            Thread.Sleep(10); // Startup may not have created the process-scoped event yet.
+        }
+        if (!hasExited())
+        {
+            Trace.TraceWarning("Engine graceful stop timed out; clipboard cleanup may be incomplete.");
+            kill();
+        }
+    }
+
+    /// <summary>Signal this engine PID in the current Windows session.</summary>
+    internal static bool TrySignal(int processId)
+    {
+        if (!EventWaitHandle.TryOpenExisting($@"Local\AutoFix.EngineStop.{processId}", out var signal))
+        {
+            return false;
+        }
+        using (signal)
+        {
+            return signal.Set();
+        }
     }
 }
 
