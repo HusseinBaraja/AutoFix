@@ -64,10 +64,15 @@ try {{
             .unwrap();
         let started = Instant::now();
         while child.try_wait().unwrap().is_none() {
-            if started.elapsed() > Duration::from_secs(6) {
+            // Allow cold PowerShell/.NET startup on busy CI hosts; the connect and
+            // response deadlines inside the client remain two seconds each.
+            if started.elapsed() > Duration::from_secs(30) {
                 child.kill().unwrap();
-                let _ = child.wait();
-                panic!(".NET IPC client did not finish in {read_mode} mode");
+                let output = child.wait_with_output().unwrap();
+                panic!(
+                    ".NET IPC client did not finish in {read_mode} mode: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
             thread::sleep(Duration::from_millis(10));
         }

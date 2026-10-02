@@ -276,6 +276,9 @@ fn queued_api_job_is_denied_after_rule_revocation_and_releases_its_slot() {
                 Err(error) => panic!("{error}"),
             }
         };
+        // Windows sockets accepted from a nonblocking listener can inherit that mode.
+        // Wait for the complete HTTP request before signalling the queued-job test.
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
