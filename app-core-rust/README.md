@@ -135,7 +135,12 @@ enable read-only previews with `feedback.show_medium_confidence_suggestions`
 results can show a bounded preview of executable text; previews never include
 informative context, mutate text, commit sessions or record undo. New typing,
 movement, cancellation and secure targets suppress them. Suggestion acceptance
-remains planned. `src/background/feedback/suggestion` defines the `SuggestionUi`
+remains planned.
+The preview carries its validated input generations and full target identity to
+the notice worker. Display rechecks that origin before showing and while visible;
+it never captures a new origin for old text. Reset, settings changes and pipeline
+cancellation revoke dispatched previews, even when input generations stay unchanged.
+`src/background/feedback/suggestion` defines the `SuggestionUi`
 presentation interface for a future near-caret UI. The existing preview adapter
 advertises availability only when enabled on a supported platform. Display never
 authorizes replacement or acceptance. Outputs include

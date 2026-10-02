@@ -12,15 +12,21 @@ public sealed class ShellTray : IDisposable
     private readonly Action exitShell;
     private bool disposed;
     private readonly Forms.Timer statusTimer;
-    private readonly BackgroundIpcClient ipc = new();
+    private readonly Func<Task<IpcResult<AppStatusResponse>>> getStatus;
     private readonly Dictionary<string, Icon> icons = new();
     private bool polling;
     private bool trayStateEnabled = true;
 
     public ShellTray(Action showShell, Action exitShell)
+        : this(showShell, exitShell, new BackgroundIpcClient().GetStatusAsync)
+    {
+    }
+
+    internal ShellTray(Action showShell, Action exitShell, Func<Task<IpcResult<AppStatusResponse>>> getStatus)
     {
         this.showShell = showShell;
         this.exitShell = exitShell;
+        this.getStatus = getStatus;
         notifyIcon = new Forms.NotifyIcon
         {
             Text = "AutoFix",
@@ -58,16 +64,17 @@ public sealed class ShellTray : IDisposable
         SetState(status?.TrayState ?? "error");
     }
 
-    private async Task RefreshStateAsync()
+    /// <summary>Contain non-fatal polling failures before they reach the async timer callback.</summary>
+    internal async Task RefreshStateAsync()
     {
         if (disposed || polling) return;
         polling = true;
         try
         {
-            var result = await ipc.GetStatusAsync();
+            var result = await getStatus();
             UpdateStatus(result.Value);
         }
-        catch (Exception error) when (error is System.IO.IOException or TimeoutException or OperationCanceledException or System.Text.Json.JsonException)
+        catch (Exception error) when (error is not (OutOfMemoryException or StackOverflowException or AccessViolationException))
         {
             SetState("error");
         }

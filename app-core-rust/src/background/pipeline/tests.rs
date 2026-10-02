@@ -1414,15 +1414,23 @@ fn medium_previews_are_manual_opt_in_and_never_mutate_or_commit() {
                 true
             ));
             assert_eq!(calls.get(), 0);
+            let preview = pipeline.take_suggestion();
+            if let Some(preview) = &preview {
+                assert_eq!(preview.stamp, STAMP);
+                assert_eq!(preview.target, target());
+                assert!(!preview.cancelled.load(Ordering::Acquire));
+                pipeline.cancel();
+                assert!(preview.cancelled.load(Ordering::Acquire));
+            }
             assert_eq!(
-                pipeline.take_suggestion(),
+                preview.map(|preview| preview.text),
                 if enabled && !automatic && cfg!(windows) {
                     Some("AutoFix suggestion: the".into())
                 } else {
                     None
                 }
             );
-            assert_eq!(pipeline.take_suggestion(), None);
+            assert!(pipeline.take_suggestion().is_none());
             assert_eq!(manager.active().unwrap().editable_context(), "teh");
             assert!(manager.active().unwrap().informative_context().is_empty());
             assert!(manager.active().unwrap().undo_target().is_none());
@@ -1525,7 +1533,7 @@ fn medium_local_results_skip_preview_or_apply_without_losing_typed_text() {
                 silent
             );
             assert_eq!(calls.get(), usize::from(silent));
-            assert_eq!(pipeline.take_suggestion(), None);
+            assert!(pipeline.take_suggestion().is_none());
             let session = manager.active().unwrap();
             assert_eq!(session.undo_target().is_some(), silent);
             assert_eq!(
@@ -1585,7 +1593,7 @@ fn unsafe_or_stale_suggestions_cannot_surface_a_preview() {
             },
             |_, _, _| -> bool { panic!("suggestion must never mutate") }
         ));
-        assert_eq!(pipeline.take_suggestion(), None);
+        assert!(pipeline.take_suggestion().is_none());
     }
 }
 

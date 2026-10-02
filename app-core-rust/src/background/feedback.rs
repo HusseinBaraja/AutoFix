@@ -5,10 +5,13 @@ mod notice;
 pub(crate) mod suggestion;
 use crate::settings::FeedbackConfig;
 use std::{
-    sync::atomic::{AtomicU8, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicU8, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
-use suggestion::{PreviewSuggestionUi, SuggestionUi};
+use suggestion::{Preview, PreviewSuggestionUi, SuggestionUi};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Event {
@@ -79,11 +82,12 @@ pub(super) struct Feedback {
     blocked: bool,
     error_until: Option<Instant>,
     last_notice: Option<Instant>,
+    notice_cancelled: Arc<AtomicBool>,
 }
 
 impl Feedback {
     /// Opt-in, read-only preview. Text stays in the short-lived notice worker only.
-    pub(super) fn suggestion(&mut self, preview: String, config: &FeedbackConfig) {
+    pub(super) fn suggestion(&mut self, preview: Preview, config: &FeedbackConfig) {
         let now = Instant::now();
         let ui = PreviewSuggestionUi::new(config);
         if ui.is_available()
@@ -92,10 +96,12 @@ impl Feedback {
                 .is_none_or(|last| now.duration_since(last) >= Duration::from_millis(2500))
         {
             self.last_notice = Some(now);
-            ui.show_preview(preview);
+            ui.show_preview(preview, Arc::clone(&self.notice_cancelled));
         }
     }
     pub(super) fn reset(&mut self) {
+        self.notice_cancelled.store(true, Ordering::Release);
+        self.notice_cancelled = Arc::new(AtomicBool::new(false));
         self.blocked = false;
         self.error_until = None;
     }
@@ -115,7 +121,11 @@ impl Feedback {
                 .is_none_or(|last| now.duration_since(last) >= Duration::from_millis(2500))
             {
                 self.last_notice = Some(now);
-                notice::show(text, config.show_near_caret_overlay);
+                notice::show(
+                    text,
+                    config.show_near_caret_overlay,
+                    notice::Origin::current(Arc::clone(&self.notice_cancelled)),
+                );
             }
         }
     }

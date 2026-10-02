@@ -13,7 +13,7 @@ use std::{
 };
 
 use super::{
-    feedback::suggestion::{PreviewSuggestionUi, SuggestionUi},
+    feedback::suggestion::{Preview, PreviewSuggestionUi, SuggestionUi},
     feedback::Event,
     replacement::ReplacementConfirmation,
     security::TriggerKind,
@@ -110,7 +110,8 @@ pub(super) struct CorrectionPipeline {
     next_id: u64,
     timeout_notice: bool,
     feedback_event: Option<(Event, bool)>,
-    suggestion_preview: Option<String>,
+    suggestion_preview: Option<Preview>,
+    preview_cancelled: Arc<AtomicBool>,
 }
 
 impl CorrectionPipeline {
@@ -178,6 +179,7 @@ impl CorrectionPipeline {
             timeout_notice: false,
             feedback_event: None,
             suggestion_preview: None,
+            preview_cancelled: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -282,6 +284,8 @@ impl CorrectionPipeline {
 
     /// Cancel all admitted work and clear queued jobs, completions, and timeout feedback.
     pub(super) fn cancel(&mut self) {
+        self.preview_cancelled.store(true, Ordering::Release);
+        self.preview_cancelled = Arc::new(AtomicBool::new(false));
         self.timeout_notice = false;
         self.feedback_event = None;
         self.suggestion_preview = None;
@@ -373,7 +377,7 @@ impl CorrectionPipeline {
         self.feedback_event.take()
     }
 
-    pub(super) fn take_suggestion(&mut self) -> Option<String> {
+    pub(super) fn take_suggestion(&mut self) -> Option<Preview> {
         self.suggestion_preview.take()
     }
 
@@ -553,9 +557,14 @@ impl CorrectionPipeline {
                 // A preview never authorizes replacement or commits executable context.
                 self.feedback_event = None;
                 if manual && output.confidence == ConfidenceTier::Medium {
-                    self.suggestion_preview = Some(super::feedback::suggestion_preview(
-                        &output.corrected_executable_text,
-                    ));
+                    self.suggestion_preview = Some(Preview {
+                        text: super::feedback::suggestion_preview(
+                            &output.corrected_executable_text,
+                        ),
+                        stamp: validation_stamp,
+                        target,
+                        cancelled: Arc::clone(&self.preview_cancelled),
+                    });
                 }
                 return false;
             }

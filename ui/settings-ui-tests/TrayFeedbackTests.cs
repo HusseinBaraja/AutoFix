@@ -8,6 +8,86 @@ namespace AutoFix.SettingsUi.Tests;
 public sealed class TrayFeedbackTests
 {
     [TestMethod]
+    public void PollingContainsNonFatalFailuresAndRecoversOnNextPoll()
+    {
+        RunOnSta(() =>
+        {
+            foreach (var error in new Exception[]
+            {
+                new InvalidDataException("IPC response was empty."),
+                new IOException(), new TimeoutException(), new OperationCanceledException(),
+                new JsonException(), new InvalidOperationException(), new UnauthorizedAccessException(),
+            })
+            {
+                var calls = 0;
+                using var tray = new ShellTray(() => { }, () => { }, () =>
+                    ++calls == 1
+                        ? Task.FromException<IpcResult<AppStatusResponse>>(error)
+                        : Task.FromResult(IpcResult<AppStatusResponse>.Ok(new(true, "typos_only", "local", "active"))));
+                tray.RefreshStateAsync().GetAwaiter().GetResult();
+                Assert.AreEqual("AutoFix — error", tray.StatusText, error.GetType().Name);
+                Assert.IsTrue(tray.IsVisible);
+                tray.RefreshStateAsync().GetAwaiter().GetResult();
+                Assert.AreEqual("AutoFix — active", tray.StatusText);
+                Assert.AreEqual(2, calls, "Failed polling must release the polling guard.");
+            }
+        });
+    }
+
+    [TestMethod]
+    public void PollingPreservesDisabledStateAndStopsAfterDisposal()
+    {
+        RunOnSta(() =>
+        {
+            var calls = 0;
+            using var tray = new ShellTray(() => { }, () => { }, () =>
+            {
+                calls++;
+                throw new InvalidDataException("IPC response was empty.");
+            });
+            tray.UpdateStatus(new(true, "typos_only", "local", "active", false));
+            tray.RefreshStateAsync().GetAwaiter().GetResult();
+            Assert.AreEqual("AutoFix — idle", tray.StatusText);
+            Assert.IsTrue(tray.IsVisible);
+            tray.Dispose();
+            tray.RefreshStateAsync().GetAwaiter().GetResult();
+            Assert.AreEqual(1, calls);
+        });
+    }
+
+    [TestMethod]
+    public void PollingDoesNotSwallowFatalFailures()
+    {
+        RunOnSta(() =>
+        {
+            foreach (var error in new Exception[] { new OutOfMemoryException(), new StackOverflowException(), new AccessViolationException() })
+            {
+                using var tray = new ShellTray(() => { }, () => { }, () => Task.FromException<IpcResult<AppStatusResponse>>(error));
+                try
+                {
+                    tray.RefreshStateAsync().GetAwaiter().GetResult();
+                    Assert.Fail("Fatal polling failures must propagate.");
+                }
+                catch (Exception caught) when (ReferenceEquals(caught, error)) { }
+            }
+        });
+    }
+
+    private static void RunOnSta(Action action)
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try { action(); }
+            catch (Exception error) { failure = error; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(10)), "Tray verification timed out.");
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    [TestMethod]
     public void TrayRemainsAvailableInEveryStateAndDisposesCleanly()
     {
         Exception? failure = null;
