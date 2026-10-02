@@ -98,7 +98,7 @@ unlisted changes, invalid offsets, and changed protected terms. API typo edits
 must match the local engine's known spelling replacements.
 Automatic timeouts silently skip correction and release frozen queue capacity.
 Valid manual API timeouts show a small, disabled, no-activate notice near the
-bottom-right work area for 2.5 seconds. `feedback.show_timeout_notice` defaults
+bottom-right work area of the current monitor for 2.5 seconds. `feedback.show_timeout_notice` defaults
 to true and can disable it. Repeated notices coalesce; cancelled, stale, and
 secure-target results cannot show a notice. Opt-in local fallback follows the
 same confidence and completion checks as normal local correction and suppresses
@@ -106,6 +106,19 @@ the timeout notice when it completes.
 `ApiCorrectionEngine::notice_for` distinguishes manual timeout and failure
 feedback from silent automatic handling. The local ML engine remains
 a placeholder. Live triggers invoke these engines on the correction worker.
+`src/background/feedback` owns runtime feedback policy and coalesced notices.
+The default shows only generic manual failure/blocked-action notices and enabled
+manual API timeout notices. Automatic success and skips stay silent; applied
+notifications and skipped reasons are opt-in. Messages never include engine
+failure strings. Input and focus generations cancel stale notices before display
+and dismiss visible notices on new typing or movement. Near-caret placement is
+opt-in and uses `GetGUIThreadInfo`/`ClientToScreen`; missing native caret support
+falls back to the current monitor's work-area corner.
+The IPC status carries only `tray_state`: idle, active (retained executable typing),
+correcting (admitted work), blocked (a denied target/action), or error (brief engine
+failure state). Disabling tray state publishes idle; it never removes the shell's
+tray icon. Manual app-policy refusals show a generic blocked notice when enabled;
+hard secure-field/desktop refusals never show notices.
 The native replacement path verifies the session-owned pre-caret range.
 Engine selection is explicit per request; neither local nor API routing depends
 on task difficulty, and both correction modes are accepted by every engine.
@@ -116,9 +129,13 @@ manual shortcut with an available suggestion UI; word-count, character, and
 final-fix triggers do nothing. Setting `correction.medium_confidence_behavior`
 to `silent` enables medium corrections for every trigger. Low confidence is
 always blocked, including requests that bypass config validation.
-`CorrectionInput.suggestion_ui_available` defaults to false; v1 has no suggestion
-UI. `feedback.show_medium_confidence_suggestions` can suppress manual suggestions
-when building the runtime policy, but never enables silent apply. Outputs include
+`CorrectionInput.suggestion_ui_available` defaults to false. Runtime feedback can
+enable read-only previews with `feedback.show_medium_confidence_suggestions`
+(off by default), but never enables silent apply. Only validated manual medium
+results can show a bounded preview of executable text; previews never include
+informative context, mutate text, commit sessions or record undo. New typing,
+movement, cancellation and secure targets suppress them. Suggestion acceptance
+remains planned. Outputs include
 an explicit `behavior`: only `silent` authorizes replacement; `suggestion`
 requires user acceptance. Suppressed outputs preserve the original executable
 text and discard edit details. Local results prioritize silent edits over

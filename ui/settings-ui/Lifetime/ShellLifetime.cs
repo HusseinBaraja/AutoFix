@@ -58,7 +58,12 @@ public sealed class ShellLifetime : IDisposable
         {
             tray = new ShellTray(ShowShell, () => Shutdown(ShutdownReason.UserExit));
             singleInstance.StartListening();
-            engineSupervisor.Start();
+            try { engineSupervisor.Start(); }
+            catch (Exception error) when (error is System.IO.IOException or InvalidOperationException or Win32Exception)
+            {
+                Debug.WriteLine(error);
+                tray.SetState("error");
+            }
             shellWindow.Show();
         }
         catch (Exception error)
@@ -114,7 +119,8 @@ public sealed class ShellLifetime : IDisposable
             return;
         }
 
-        application.Dispatcher.Invoke(() => Shutdown(ShutdownReason.ShellClosing));
+        // Keep settings and Exit available even when the engine cannot restart.
+        application.Dispatcher.Invoke(() => tray?.SetState("error"));
     }
 
     public void Dispose()

@@ -33,8 +33,41 @@ fn reports_basic_app_status() {
             assert!(status.running);
             assert_eq!(status.correction_mode, CorrectionMode::TyposOnly.into());
             assert_eq!(status.engine, CorrectionEngine::Local.into());
+            assert!(["idle", "active", "correcting", "blocked", "error"]
+                .contains(&status.tray_state.as_str()));
         }
         other => panic!("unexpected response: {other:?}"),
+    }
+}
+
+#[test]
+fn feedback_options_can_be_updated_through_ipc() {
+    let fixture = IpcFixture::start();
+    for (path, value) in [
+        ("feedback.show_near_caret_overlay", true),
+        ("feedback.show_correction_applied_notification", true),
+        ("feedback.show_skipped_reason", true),
+        ("feedback.show_medium_confidence_suggestions", true),
+        ("feedback.show_blocked_app_notice", false),
+        ("feedback.show_timeout_notice", false),
+        ("feedback.tray_state_enabled", false),
+    ] {
+        let response = send_request(
+            &fixture.pipe_path,
+            &IpcRequest::UpdateSetting(UpdateSettingRequest {
+                path: path.into(),
+                value: json!(value),
+            }),
+        )
+        .unwrap();
+        assert!(matches!(response, IpcResponse::SettingUpdated(_)));
+        let config =
+            serde_json::to_value(crate::settings::load_config(&fixture.config_path).unwrap())
+                .unwrap();
+        assert_eq!(
+            config["feedback"][path.strip_prefix("feedback.").unwrap()],
+            json!(value)
+        );
     }
 }
 

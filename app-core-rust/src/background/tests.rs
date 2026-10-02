@@ -19,6 +19,7 @@ fn undo_learning_requires_committed_bookkeeping_and_stable_input() {
         config.learning.mode = crate::settings::LearningMode::Automatic;
         config.learning.rule = crate::settings::LearningRule::Dictionary;
         let mut processor = super::InputProcessor {
+            feedback: super::feedback::Feedback::default(),
             learner: crate::dictionary::Learner::default(),
             pipeline: super::CorrectionPipeline::new().unwrap(),
             processed_input_sequence: 12,
@@ -88,6 +89,7 @@ fn frozen_dispatch_survives_typing_but_manual_and_moved_requests_are_rejected() 
             for during_gate in [false, true] {
                 let config = AppConfig::default();
                 let mut processor = super::InputProcessor {
+                    feedback: super::feedback::Feedback::default(),
                     learner: crate::dictionary::Learner::default(),
                     pipeline: super::CorrectionPipeline::new().unwrap(),
                     processed_input_sequence: 12,
@@ -154,6 +156,7 @@ fn failed_frozen_dispatch_preserves_older_work_and_releases_newer_reservations()
     let mut config = AppConfig::default();
     config.context.pending_queue_size = 3;
     let mut processor = super::InputProcessor {
+        feedback: super::feedback::Feedback::default(),
         learner: crate::dictionary::Learner::default(),
         pipeline: super::CorrectionPipeline::new().unwrap(),
         processed_input_sequence: 12,
@@ -303,6 +306,7 @@ fn queued_typing_before_or_during_capture_never_enters_informative_context() {
 fn delayed_key_from_previous_focus_cannot_enter_session() {
     let config = AppConfig::default();
     let mut processor = super::InputProcessor {
+        feedback: super::feedback::Feedback::default(),
         learner: crate::dictionary::Learner::default(),
         pipeline: super::CorrectionPipeline::new().unwrap(),
         processed_input_sequence: super::input_listener::current_input_sequence(),
@@ -339,6 +343,7 @@ fn delayed_key_from_previous_focus_cannot_enter_session() {
 fn later_character_trigger_keeps_full_editable_snapshot() {
     let config = AppConfig::default();
     let mut processor = super::InputProcessor {
+        feedback: super::feedback::Feedback::default(),
         learner: crate::dictionary::Learner::default(),
         pipeline: super::CorrectionPipeline::new().unwrap(),
         processed_input_sequence: super::input_listener::current_input_sequence(),
@@ -396,6 +401,7 @@ fn automatic_triggers_in_one_batch_obey_capacity_and_overflow_policy() {
         let mut config = AppConfig::default();
         config.context.pending_queue_full_behavior = policy;
         let mut processor = super::InputProcessor {
+            feedback: super::feedback::Feedback::default(),
             learner: crate::dictionary::Learner::default(),
             pipeline: super::CorrectionPipeline::new().unwrap(),
             processed_input_sequence: super::input_listener::current_input_sequence(),

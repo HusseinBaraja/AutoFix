@@ -251,6 +251,11 @@ fn pending_queue_settings_round_trip_and_legacy_configs_get_safe_defaults() {
 fn confidence_preferences_round_trip_and_feedback_only_disables_suggestions() {
     let mut config = AppConfig::default();
     let defaults = crate::correction::ConfidenceBehaviorSettings::default();
+    assert_eq!(
+        config.confidence_behavior().medium,
+        ConfidenceBehavior::DoNothing
+    );
+    config.feedback.show_medium_confidence_suggestions = true;
     assert_eq!(config.confidence_behavior(), defaults);
     config.feedback.show_medium_confidence_suggestions = false;
     assert_eq!(
@@ -272,6 +277,39 @@ fn confidence_preferences_round_trip_and_feedback_only_disables_suggestions() {
     assert_eq!(
         loaded.confidence_behavior().low,
         ConfidenceBehavior::DoNothing
+    );
+}
+
+#[test]
+fn feedback_defaults_legacy_load_and_options_round_trip() {
+    let mut config = AppConfig::default();
+    assert!(config.feedback.tray_state_enabled);
+    assert!(!config.feedback.show_correction_applied_notification);
+    assert!(!config.feedback.show_skipped_reason);
+    assert!(!config.feedback.show_medium_confidence_suggestions);
+    assert!(config.feedback.show_blocked_app_notice);
+    assert!(config.feedback.show_timeout_notice);
+    assert!(!config.feedback.show_near_caret_overlay);
+    let legacy = config_to_toml(&config)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.starts_with("show_near_caret_overlay"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(super::toml_io::parse_config(&legacy).unwrap(), config);
+    config.feedback.tray_state_enabled = false;
+    config.feedback.show_correction_applied_notification = true;
+    config.feedback.show_skipped_reason = true;
+    config.feedback.show_medium_confidence_suggestions = true;
+    config.feedback.show_blocked_app_notice = false;
+    config.feedback.show_timeout_notice = false;
+    config.feedback.show_near_caret_overlay = true;
+    let encoded = config_to_toml(&config).unwrap();
+    assert_eq!(super::toml_io::parse_config(&encoded).unwrap(), config);
+    let minimal = encoded.replace(&toml::to_string_pretty(&config.feedback).unwrap(), "");
+    assert_eq!(
+        super::toml_io::parse_config(&minimal).unwrap().feedback,
+        super::model::FeedbackConfig::default()
     );
 }
 

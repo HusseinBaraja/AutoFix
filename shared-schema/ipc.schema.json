@@ -16,6 +16,21 @@
       "type": "string",
       "enum": ["local", "api"]
     },
+    "trayState": {
+      "type": "string",
+      "enum": ["idle", "active", "correcting", "blocked", "error"]
+    },
+    "appStatus": {
+      "type": "object",
+      "required": ["running", "correction_mode", "engine", "tray_state", "tray_state_enabled"],
+      "properties": {
+        "running": { "type": "boolean" },
+        "correction_mode": { "$ref": "#/$defs/correctionMode" },
+        "engine": { "$ref": "#/$defs/correctionEngine" },
+        "tray_state": { "$ref": "#/$defs/trayState" },
+        "tray_state_enabled": { "type": "boolean" }
+      }
+    },
     "request": {
       "type": "object",
       "required": ["type"],
@@ -79,7 +94,11 @@
           ]
         },
         "payload": { "type": "object" }
-      }
+      },
+      "allOf": [{
+        "if": { "properties": { "type": { "enum": ["app_status", "config_reloaded"] } } },
+        "then": { "properties": { "payload": { "$ref": "#/$defs/appStatus" } } }
+      }]
     }
   }
 }

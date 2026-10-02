@@ -1068,6 +1068,7 @@ fn input_processor_defers_frozen_completion_until_hook_input_is_drained() {
     submit_frozen(&mut pipeline, &mut manager, &config);
     wait_completion(&pipeline);
     let mut processor = crate::background::InputProcessor {
+        feedback: crate::background::feedback::Feedback::default(),
         learner: crate::dictionary::Learner::default(),
         pipeline,
         processed_input_sequence: crate::background::input_listener::current_input_sequence()
@@ -1301,6 +1302,8 @@ fn valid_result_replaces_once_then_records_commit_and_undo() {
         true
     ));
     assert_eq!(calls.get(), 1);
+    assert_eq!(pipeline.take_feedback(), Some((Event::Applied, true)));
+    assert_eq!(pipeline.take_feedback(), None);
     assert_eq!(manager.active().unwrap().informative_context(), "the");
     assert_eq!(manager.active().unwrap().editable_context(), "");
     assert!(!finish(
@@ -1316,6 +1319,164 @@ fn valid_result_replaces_once_then_records_commit_and_undo() {
         .unwrap()
         .undo_last_correction(&config.context));
     assert_eq!(manager.active().unwrap().informative_context(), "teh");
+}
+
+#[test]
+fn manual_failure_feedback_is_validated_and_contains_no_provider_text() {
+    for unsafe_target in [false, true] {
+        let config = AppConfig::default();
+        let mut manager = manager(&config, "teh");
+        let mut pipeline = CorrectionPipeline::start(|job| {
+            CorrectionOutput::failed(
+                job.input.executable_context.clone(),
+                crate::correction::EngineFailure {
+                    kind: crate::correction::EngineFailureKind::Internal,
+                    message: "secret provider document text".into(),
+                    retryable: false,
+                },
+                0,
+            )
+        })
+        .unwrap();
+        submit(&mut pipeline, &manager, &config);
+        wait_completion(&pipeline);
+        assert!(!pipeline.finish(
+            &mut manager,
+            &config.context,
+            || STAMP,
+            |_| {
+                let mut target = target();
+                target.is_password_or_protected = unsafe_target;
+                Some(target)
+            },
+            |_, _| panic!("failure must not read document text"),
+            |_, _, _| -> bool { panic!("failure must not mutate") }
+        ));
+        assert_eq!(
+            pipeline.take_feedback(),
+            if unsafe_target {
+                None
+            } else {
+                Some((Event::Error, true))
+            }
+        );
+        assert_eq!(manager.active().unwrap().editable_context(), "teh");
+    }
+}
+
+#[test]
+fn medium_previews_are_manual_opt_in_and_never_mutate_or_commit() {
+    for enabled in [false, true] {
+        for automatic in [false, true] {
+            let mut config = AppConfig::default();
+            config.feedback.show_medium_confidence_suggestions = enabled;
+            let mut manager = manager(&config, "teh");
+            let mut pipeline = CorrectionPipeline::start(|job| {
+                let behavior = job.input.confidence_behavior.behavior_for(
+                    ConfidenceTier::Medium,
+                    job.input.trigger_type,
+                    job.input.suggestion_ui_available,
+                );
+                if behavior == ConfidenceBehavior::Suggestion {
+                    CorrectionOutput {
+                        corrected_executable_text: "the".into(),
+                        changes_needed: true,
+                        confidence: ConfidenceTier::Medium,
+                        behavior,
+                        changes: None,
+                        no_change_reason: None,
+                        engine_latency_ms: 0,
+                        status: EngineStatus::Completed,
+                    }
+                } else {
+                    CorrectionOutput::unchanged(
+                        job.input.executable_context.clone(),
+                        ConfidenceTier::Medium,
+                        NoChangeReason::ConfidenceBelowConfiguredBehavior,
+                        0,
+                    )
+                }
+            })
+            .unwrap();
+            if automatic {
+                submit_frozen(&mut pipeline, &mut manager, &config);
+            } else {
+                submit(&mut pipeline, &manager, &config);
+            }
+            wait_completion(&pipeline);
+            let calls = Cell::new(0);
+            assert!(!finish(
+                &mut pipeline,
+                &mut manager,
+                &config,
+                STAMP,
+                &calls,
+                true
+            ));
+            assert_eq!(calls.get(), 0);
+            assert_eq!(
+                pipeline.take_suggestion(),
+                if enabled && !automatic {
+                    Some("AutoFix suggestion: the".into())
+                } else {
+                    None
+                }
+            );
+            assert_eq!(pipeline.take_suggestion(), None);
+            assert_eq!(manager.active().unwrap().editable_context(), "teh");
+            assert!(manager.active().unwrap().informative_context().is_empty());
+            assert!(manager.active().unwrap().undo_target().is_none());
+        }
+    }
+}
+
+#[test]
+fn unsafe_or_stale_suggestions_cannot_surface_a_preview() {
+    for failure in 0..5 {
+        let mut config = AppConfig::default();
+        config.feedback.show_medium_confidence_suggestions = true;
+        let mut manager = manager(&config, "teh");
+        let mut pipeline = CorrectionPipeline::new().unwrap();
+        submit(&mut pipeline, &manager, &config);
+        wait_completion(&pipeline);
+        {
+            let mut state = pipeline.mailbox.0.lock().unwrap();
+            let output = &mut state.completion.as_mut().unwrap().output;
+            output.confidence = ConfidenceTier::Medium;
+            output.behavior = ConfidenceBehavior::Suggestion;
+        }
+        if failure == 0 {
+            pipeline.cancel();
+        }
+        if failure == 1 {
+            manager.input(TypedInput::Text(" new".into()));
+        }
+        let stamp = Cell::new(STAMP);
+        assert!(!pipeline.finish(
+            &mut manager,
+            &config.context,
+            || stamp.get(),
+            |_| {
+                let mut t = target();
+                t.is_password_or_protected = failure == 2;
+                Some(t)
+            },
+            |_, _| {
+                if failure == 3 {
+                    return None;
+                }
+                if failure == 4 {
+                    stamp.set(InputStamp {
+                        sequence: STAMP.sequence + 1,
+                        ..STAMP
+                    });
+                }
+                Some("teh".into())
+            },
+            |_, _, _| -> bool { panic!("suggestion must never mutate") }
+        ));
+        assert_eq!(pipeline.take_suggestion(), None);
+    }
 }
 
 /// Invalidated snapshots cannot cross context, caret, or session boundaries.

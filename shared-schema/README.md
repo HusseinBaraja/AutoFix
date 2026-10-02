@@ -60,6 +60,20 @@ Both attempts share the trigger's
 total timeout budget. `feedback.show_timeout_notice` defaults to true and applies
 only to a valid manual API timeout; automatic timeouts always stay silent.
 
+Feedback defaults to tray states and small manual error/blocked/timeout notices.
+`show_correction_applied_notification`, `show_skipped_reason`,
+`show_medium_confidence_suggestions` and `show_near_caret_overlay` default false;
+`tray_state_enabled`, `show_blocked_app_notice` and `show_timeout_notice` default
+true. Missing feedback fields use these defaults; explicit saved values survive.
+Medium suggestions are read-only previews of validated executable text, never
+authorization to mutate. Near-caret placement does not enable any notice.
+`app_status` and `config_reloaded` include a text-free `tray_state` with one of
+`idle`, `active`, `correcting`, `blocked`, or `error`. Disabling state publishes
+idle while keeping the tray accessible.
+The status also carries `tray_state_enabled` so the shell can preserve that
+preference when the engine becomes unavailable. Hard secure-field/desktop refusals,
+cancelled and stale results cannot display a notice or suggestion preview.
+
 Unavailable application rules deny authorization for typed capture and every
 correction trigger, including API execution. An empty successfully read rule
 list is distinct from a failed read.
