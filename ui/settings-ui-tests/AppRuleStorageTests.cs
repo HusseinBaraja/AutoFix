@@ -22,12 +22,16 @@ public sealed class AppRuleStorageTests
             CharacterTriggerAllowed = false,
             LocalEngineAllowed = false,
             ApiEngineAllowed = false,
+            SafetyMode = "code_editor",
+            ProseContextAllowed = true,
         };
 
         storage.Upsert(rule);
         var listed = storage.List();
 
         Assert.IsTrue(listed.Any(item => item.ProcessName == "word.exe" && item.WindowTitlePattern == "*admin*"));
+        Assert.AreEqual("code_editor", listed[0].SafetyMode);
+        Assert.IsTrue(listed[0].ProseContextAllowed);
         Assert.IsTrue(storage.Delete("word.exe", "*admin*"));
     }
 
@@ -41,6 +45,8 @@ public sealed class AppRuleStorageTests
 
         Assert.IsTrue(rules.Any(rule => rule.ProcessName == "cmd.exe" && !rule.ManualShortcutAllowed));
         Assert.IsTrue(rules.Any(rule => rule.ProcessName == "code.exe" && !rule.WordCountTriggerAllowed));
+        Assert.IsTrue(rules.Any(rule => rule.ProcessName == "code.exe" && !rule.ManualShortcutAllowed && !rule.ProseContextAllowed && rule.SafetyMode == "code_editor"));
+        Assert.IsTrue(rules.Any(rule => rule.ProcessName == "cmd.exe" && !rule.WordCountTriggerAllowed && !rule.CharacterTriggerAllowed && rule.SafetyMode == "terminal"));
         Assert.IsTrue(rules.Any(rule => rule.ProcessName == "Bitwarden.exe" && rule.ListBehavior == "blocklist"));
     }
 
@@ -115,6 +121,14 @@ public sealed class AppRuleStorageTests
         Assert.AreEqual(1, listed.Count);
         Assert.AreEqual("", listed[0].WindowTitlePattern);
         Assert.AreEqual("blocklist", listed[0].ListBehavior);
+        Assert.AreEqual("auto", listed[0].SafetyMode);
+        Assert.IsFalse(listed[0].ProseContextAllowed);
+        Assert.IsFalse(listed[0].ManualShortcutAllowed);
+        // Repeat migration and save; existing trigger choices remain intact.
+        listed[0].SafetyMode = "code_editor";
+        listed[0].ProseContextAllowed = true;
+        storage.Upsert(listed[0]);
+        Assert.IsTrue(storage.List().Single().ProseContextAllowed);
     }
 
     [TestMethod]
@@ -130,6 +144,8 @@ public sealed class AppRuleStorageTests
             CharacterTriggerAllowed = false,
             LocalEngineAllowed = true,
             ApiEngineAllowed = false,
+            SafetyMode = "code_editor",
+            ProseContextAllowed = true,
         };
 
         var dto = AppRuleStorage.ToDto(rule);
@@ -137,5 +153,29 @@ public sealed class AppRuleStorageTests
         Assert.AreEqual("code.exe", dto.ProcessName);
         Assert.AreEqual("*repo*", dto.WindowTitlePattern);
         Assert.IsFalse(dto.ApiEngineAllowed);
+        var mapped = AppRuleStorage.FromDto(dto);
+        Assert.AreEqual("code_editor", mapped.SafetyMode);
+        Assert.IsTrue(mapped.ProseContextAllowed);
+        Assert.IsTrue(mapped.Clone().ProseContextAllowed);
+        var json = System.Text.Json.JsonSerializer.Serialize(dto);
+        StringAssert.Contains(json, "\"safety_mode\":\"code_editor\"");
+        StringAssert.Contains(json, "\"prose_context_allowed\":true");
+    }
+
+    [TestMethod]
+    public void NewRulesAndLegacyDtosKeepSafetyOptInsDisabled()
+    {
+        var rule = new AppRuleItem();
+        Assert.IsFalse(rule.ManualShortcutAllowed);
+        Assert.IsFalse(rule.WordCountTriggerAllowed);
+        Assert.IsFalse(rule.CharacterTriggerAllowed);
+        Assert.IsFalse(rule.ProseContextAllowed);
+        var dto = System.Text.Json.JsonSerializer.Deserialize<AutoFix.SettingsUi.Ipc.AppRuleDto>(
+            """{"process_name":"code.exe","list_behavior":"allowlist","manual_shortcut_allowed":true,"word_count_trigger_allowed":false,"character_trigger_allowed":false,"local_engine_allowed":true,"api_engine_allowed":true}""")!;
+        Assert.AreEqual("auto", dto.SafetyMode);
+        Assert.IsFalse(dto.ProseContextAllowed);
+        rule.SafetyMode = "unsafe";
+        rule.ProcessName = "custom.exe";
+        Assert.ThrowsException<ArgumentException>(() => AppRuleStorage.Validate(rule));
     }
 }

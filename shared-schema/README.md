@@ -128,3 +128,8 @@ clipboard paste and SendInput replacement are implemented for supported controls
 direct text APIs and UI Automation mutation remain planned. Focused native tests
 verify correction, recorded app-level undo, clipboard preservation and recovery,
 and preservation of newer typing, caret position, and text after the caret.
+
+App-rule safety fields (SQLite schema v5 and IPC): `safety_mode` is `auto`,
+`terminal` or `code_editor`; `prose_context_allowed` defaults to false. Legacy
+IPC requests default to auto/off. Both runtimes add missing columns idempotently
+and preserve existing trigger and engine preferences.

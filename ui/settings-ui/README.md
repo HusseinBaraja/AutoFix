@@ -2,6 +2,15 @@
 
 WPF settings application for AutoFix.
 
+**App Rules** offers **Safety** (`auto`, `terminal`, `code_editor`) and
+**Editor prose**. New rules and terminal/editor defaults disable all triggers.
+Enable Manual and, for editors, Editor prose to admit selected prose. Known app
+detection remains active under auto. Heuristics reject commands, flags, paths,
+URLs, code, identifiers and uncertain text. Automatic editor line comments also
+need Words/Chars permission; terminal automatic requests skip. Migration preserves
+existing choices and defaults Editor prose to off. Native selected-text replacement
+still requires proof of the live caret end.
+
 **Shortcuts** configures correction and app-level undo hotkeys (undo defaults to
 Ctrl+Alt+Z), plus undo history capacity (default 10, range 1–1000). Capacity saves
 as `context.undo_history_size`; legacy settings keep the default. History itself

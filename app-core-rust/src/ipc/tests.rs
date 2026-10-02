@@ -361,6 +361,8 @@ fn lists_upserts_and_deletes_app_rules() {
         character_trigger_allowed: false,
         local_engine_allowed: false,
         api_engine_allowed: false,
+        safety_mode: "auto".into(),
+        prose_context_allowed: false,
     };
 
     let upserted =

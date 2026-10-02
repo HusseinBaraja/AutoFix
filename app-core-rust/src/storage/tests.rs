@@ -85,6 +85,8 @@ fn stores_and_lists_app_rules() {
         character_trigger_allowed: true,
         local_engine_allowed: true,
         api_engine_allowed: false,
+        safety_mode: "auto".into(),
+        prose_context_allowed: false,
     };
 
     database.app_rules().upsert(&rule).unwrap();
@@ -104,6 +106,8 @@ fn upserts_process_only_app_rules_into_one_row() {
         character_trigger_allowed: false,
         local_engine_allowed: true,
         api_engine_allowed: true,
+        safety_mode: "auto".into(),
+        prose_context_allowed: false,
     };
     database.app_rules().upsert(&rule).unwrap();
 
@@ -188,12 +192,35 @@ fn seeds_default_app_rules() {
         && !rule.word_count_trigger_allowed
         && !rule.character_trigger_allowed));
     assert!(rules.iter().any(|rule| rule.process_name == "code.exe"
-        && rule.manual_shortcut_allowed
+        && !rule.manual_shortcut_allowed
         && !rule.word_count_trigger_allowed
         && !rule.character_trigger_allowed));
     assert!(rules
         .iter()
         .any(|rule| rule.process_name == "Bitwarden.exe" && rule.list_behavior == "blocklist"));
+}
+
+#[test]
+fn safety_migration_preserves_existing_permissions_and_defaults_prose_to_off() {
+    let connection = Connection::open_in_memory().unwrap();
+    migrations::migrate(&connection).unwrap();
+    connection.execute_batch("UPDATE app_rules SET manual_shortcut_allowed=1, character_trigger_allowed=1 WHERE process_name='code.exe'; ALTER TABLE app_rules DROP COLUMN safety_mode; ALTER TABLE app_rules DROP COLUMN prose_context_allowed; DELETE FROM schema_migrations WHERE version=5;").unwrap();
+    migrations::migrate(&connection).unwrap();
+    migrations::migrate(&connection).unwrap();
+    let repository = super::repositories::AppRuleRepository::new(&connection);
+    let mut rule = repository
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|rule| rule.process_name == "code.exe")
+        .unwrap();
+    assert!(rule.manual_shortcut_allowed && rule.character_trigger_allowed);
+    assert_eq!(rule.safety_mode, "auto");
+    assert!(!rule.prose_context_allowed);
+    rule.safety_mode = "code_editor".into();
+    rule.prose_context_allowed = true;
+    repository.upsert(&rule).unwrap();
+    assert!(repository.list().unwrap().contains(&rule));
 }
 
 #[test]
@@ -208,6 +235,8 @@ fn deletes_app_rules_by_process_and_title_pattern() {
         character_trigger_allowed: false,
         local_engine_allowed: false,
         api_engine_allowed: false,
+        safety_mode: "auto".into(),
+        prose_context_allowed: false,
     };
     database.app_rules().upsert(&rule).unwrap();
 

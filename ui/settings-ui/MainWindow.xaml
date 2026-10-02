@@ -329,6 +329,7 @@
                             Margin="0,0,0,10"
                             Visibility="{Binding SelectedSection.HasAppRules, Converter={StaticResource BoolToVisibility}}">
                         <DockPanel LastChildFill="True">
+                            <TextBlock DockPanel.Dock="Top" Text="Safety auto detects known terminals and editors. Manual correction requires selected prose; editors also require Editor prose. Commands, code and uncertain text are skipped." TextWrapping="Wrap" Margin="0,0,0,10" />
                             <StackPanel DockPanel.Dock="Top"
                                         Orientation="Horizontal"
                                         HorizontalAlignment="Right"
@@ -361,6 +362,18 @@
                                             </x:Array>
                                         </DataGridComboBoxColumn.ItemsSource>
                                     </DataGridComboBoxColumn>
+                                    <DataGridComboBoxColumn Header="Safety"
+                                                            SelectedValueBinding="{Binding SafetyMode, UpdateSourceTrigger=PropertyChanged}"
+                                                            Width="110">
+                                        <DataGridComboBoxColumn.ItemsSource>
+                                            <x:Array Type="{x:Type sys:String}">
+                                                <sys:String>auto</sys:String>
+                                                <sys:String>terminal</sys:String>
+                                                <sys:String>code_editor</sys:String>
+                                            </x:Array>
+                                        </DataGridComboBoxColumn.ItemsSource>
+                                    </DataGridComboBoxColumn>
+                                    <DataGridCheckBoxColumn Header="Editor prose" Binding="{Binding ProseContextAllowed, UpdateSourceTrigger=PropertyChanged}" Width="100" />
                                     <DataGridCheckBoxColumn Header="Local" Binding="{Binding LocalEngineAllowed, UpdateSourceTrigger=PropertyChanged}" Width="70" />
                                     <DataGridCheckBoxColumn Header="API" Binding="{Binding ApiEngineAllowed, UpdateSourceTrigger=PropertyChanged}" Width="70" />
                                     <DataGridCheckBoxColumn Header="Manual" Binding="{Binding ManualShortcutAllowed, UpdateSourceTrigger=PropertyChanged}" Width="80" />

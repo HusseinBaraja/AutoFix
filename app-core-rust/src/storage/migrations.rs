@@ -1,6 +1,6 @@
 use rusqlite::{Connection, Result};
 
-pub(super) const CURRENT_SCHEMA_VERSION: i64 = 4;
+pub(super) const CURRENT_SCHEMA_VERSION: i64 = 5;
 
 pub(super) struct DefaultAppRule {
     pub(super) process_name: &'static str,
@@ -11,6 +11,8 @@ pub(super) struct DefaultAppRule {
     pub(super) character_trigger_allowed: bool,
     pub(super) local_engine_allowed: bool,
     pub(super) api_engine_allowed: bool,
+    pub(super) safety_mode: &'static str,
+    pub(super) prose_context_allowed: bool,
 }
 
 pub(super) const DEFAULT_APP_RULES: &[DefaultAppRule] = &[
@@ -70,6 +72,8 @@ const fn terminal_rule(process_name: &'static str) -> DefaultAppRule {
         character_trigger_allowed: false,
         local_engine_allowed: true,
         api_engine_allowed: true,
+        safety_mode: "terminal",
+        prose_context_allowed: false,
     }
 }
 
@@ -78,11 +82,13 @@ const fn editor_rule(process_name: &'static str) -> DefaultAppRule {
         process_name,
         window_title_pattern: None,
         list_behavior: "allowlist",
-        manual_shortcut_allowed: true,
+        manual_shortcut_allowed: false,
         word_count_trigger_allowed: false,
         character_trigger_allowed: false,
         local_engine_allowed: true,
         api_engine_allowed: true,
+        safety_mode: "code_editor",
+        prose_context_allowed: false,
     }
 }
 
@@ -96,6 +102,8 @@ const fn block_all_rule(process_name: &'static str) -> DefaultAppRule {
         character_trigger_allowed: false,
         local_engine_allowed: false,
         api_engine_allowed: false,
+        safety_mode: "auto",
+        prose_context_allowed: false,
     }
 }
 
@@ -119,6 +127,7 @@ pub(super) fn migrate(connection: &Connection) -> Result<()> {
         migrate_to_v2(connection)?;
         connection.execute("insert into schema_migrations (version) values (2)", [])?;
     }
+    migrate_app_safety(connection)?;
     if version < 3 {
         seed_default_app_rules(connection)?;
         connection.execute("insert into schema_migrations (version) values (3)", [])?;
@@ -128,6 +137,9 @@ pub(super) fn migrate(connection: &Connection) -> Result<()> {
         connection.execute("insert into schema_migrations (version) values (4)", [])?;
     }
 
+    if version < 5 {
+        connection.execute("insert into schema_migrations (version) values (5)", [])?;
+    }
     Ok(())
 }
 
@@ -137,8 +149,8 @@ pub(super) fn seed_default_app_rules(connection: &Connection) -> Result<()> {
         insert or ignore into app_rules (
             process_name, window_title_pattern, list_behavior, manual_shortcut_allowed,
             word_count_trigger_allowed, character_trigger_allowed, local_engine_allowed,
-            api_engine_allowed
-        ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            api_engine_allowed, safety_mode, prose_context_allowed
+        ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
         ",
     )?;
 
@@ -152,6 +164,8 @@ pub(super) fn seed_default_app_rules(connection: &Connection) -> Result<()> {
             rule.character_trigger_allowed,
             rule.local_engine_allowed,
             rule.api_engine_allowed,
+            rule.safety_mode,
+            rule.prose_context_allowed,
         ))?;
     }
 
@@ -305,4 +319,21 @@ fn migrate_to_v4(connection: &Connection) -> Result<()> {
         where window_title_pattern is null;
         ",
     )
+}
+
+fn migrate_app_safety(connection: &Connection) -> Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(app_rules)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>>>()?;
+    if !columns.iter().any(|column| column == "safety_mode") {
+        connection.execute_batch("ALTER TABLE app_rules ADD COLUMN safety_mode TEXT NOT NULL DEFAULT 'auto' CHECK (safety_mode IN ('auto', 'terminal', 'code_editor'));")?;
+    }
+    if !columns
+        .iter()
+        .any(|column| column == "prose_context_allowed")
+    {
+        connection.execute_batch("ALTER TABLE app_rules ADD COLUMN prose_context_allowed INTEGER NOT NULL DEFAULT 0 CHECK (prose_context_allowed IN (0, 1));")?;
+    }
+    Ok(())
 }

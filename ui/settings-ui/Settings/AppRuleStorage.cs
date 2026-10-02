@@ -26,7 +26,7 @@ public sealed class AppRuleStorage
             """
             select process_name, window_title_pattern, list_behavior, manual_shortcut_allowed,
                    word_count_trigger_allowed, character_trigger_allowed, local_engine_allowed,
-                   api_engine_allowed
+                   api_engine_allowed, safety_mode, prose_context_allowed
             from app_rules
             order by process_name, window_title_pattern
             """;
@@ -45,6 +45,8 @@ public sealed class AppRuleStorage
                 CharacterTriggerAllowed = reader.GetBoolean(5),
                 LocalEngineAllowed = reader.GetBoolean(6),
                 ApiEngineAllowed = reader.GetBoolean(7),
+                SafetyMode = reader.GetString(8),
+                ProseContextAllowed = reader.GetBoolean(9),
             });
         }
 
@@ -61,8 +63,8 @@ public sealed class AppRuleStorage
             insert into app_rules (
                 process_name, window_title_pattern, list_behavior, manual_shortcut_allowed,
                 word_count_trigger_allowed, character_trigger_allowed, local_engine_allowed,
-                api_engine_allowed
-            ) values ($process_name, $window_title_pattern, $list_behavior, $manual, $word_count, $character, $local, $api)
+                api_engine_allowed, safety_mode, prose_context_allowed
+            ) values ($process_name, $window_title_pattern, $list_behavior, $manual, $word_count, $character, $local, $api, $safety, $prose)
             on conflict(process_name, window_title_pattern) do update set
                 list_behavior = excluded.list_behavior,
                 manual_shortcut_allowed = excluded.manual_shortcut_allowed,
@@ -70,6 +72,8 @@ public sealed class AppRuleStorage
                 character_trigger_allowed = excluded.character_trigger_allowed,
                 local_engine_allowed = excluded.local_engine_allowed,
                 api_engine_allowed = excluded.api_engine_allowed,
+                safety_mode = excluded.safety_mode,
+                prose_context_allowed = excluded.prose_context_allowed,
                 updated_at = current_timestamp
             """;
         BindRule(command, rule);
@@ -111,8 +115,8 @@ public sealed class AppRuleStorage
                 insert into app_rules (
                     process_name, window_title_pattern, list_behavior, manual_shortcut_allowed,
                     word_count_trigger_allowed, character_trigger_allowed, local_engine_allowed,
-                    api_engine_allowed
-                ) values ($process_name, $window_title_pattern, $list_behavior, $manual, $word_count, $character, $local, $api)
+                    api_engine_allowed, safety_mode, prose_context_allowed
+                ) values ($process_name, $window_title_pattern, $list_behavior, $manual, $word_count, $character, $local, $api, $safety, $prose)
                 """;
             BindRule(insert, rule);
             insert.ExecuteNonQuery();
@@ -130,7 +134,9 @@ public sealed class AppRuleStorage
         rule.WordCountTriggerAllowed,
         rule.CharacterTriggerAllowed,
         rule.LocalEngineAllowed,
-        rule.ApiEngineAllowed);
+        rule.ApiEngineAllowed,
+        rule.SafetyMode,
+        rule.ProseContextAllowed);
 
     public static AppRuleItem FromDto(AppRuleDto rule) => new()
     {
@@ -142,6 +148,8 @@ public sealed class AppRuleStorage
         CharacterTriggerAllowed = rule.CharacterTriggerAllowed,
         LocalEngineAllowed = rule.LocalEngineAllowed,
         ApiEngineAllowed = rule.ApiEngineAllowed,
+        SafetyMode = rule.SafetyMode,
+        ProseContextAllowed = rule.ProseContextAllowed,
     };
 
     public static void Validate(AppRuleItem rule)
@@ -149,6 +157,11 @@ public sealed class AppRuleStorage
         if (string.IsNullOrWhiteSpace(rule.ProcessName))
         {
             throw new ArgumentException("process_name must not be empty");
+        }
+
+        if (rule.SafetyMode is not ("auto" or "terminal" or "code_editor"))
+        {
+            throw new ArgumentException("safety_mode must be auto, terminal or code_editor");
         }
 
         if (rule.ListBehavior is not ("allowlist" or "blocklist"))
@@ -186,6 +199,7 @@ public sealed class AppRuleStorage
             );
             """;
         command.ExecuteNonQuery();
+        MigrateSafetyColumns(connection);
         NormalizeProcessOnlyRules(connection);
         return connection;
     }
@@ -200,6 +214,30 @@ public sealed class AppRuleStorage
         command.Parameters.AddWithValue("$character", rule.CharacterTriggerAllowed);
         command.Parameters.AddWithValue("$local", rule.LocalEngineAllowed);
         command.Parameters.AddWithValue("$api", rule.ApiEngineAllowed);
+        command.Parameters.AddWithValue("$safety", rule.SafetyMode);
+        command.Parameters.AddWithValue("$prose", rule.ProseContextAllowed);
+    }
+
+    private static void MigrateSafetyColumns(SqliteConnection connection)
+    {
+        using var info = connection.CreateCommand();
+        info.CommandText = "pragma table_info(app_rules)";
+        var columns = new HashSet<string>();
+        using (var reader = info.ExecuteReader())
+        {
+            while (reader.Read()) columns.Add(reader.GetString(1));
+        }
+        using var migration = connection.CreateCommand();
+        if (!columns.Contains("safety_mode"))
+        {
+            migration.CommandText = "alter table app_rules add column safety_mode text not null default 'auto' check (safety_mode in ('auto', 'terminal', 'code_editor'))";
+            migration.ExecuteNonQuery();
+        }
+        if (!columns.Contains("prose_context_allowed"))
+        {
+            migration.CommandText = "alter table app_rules add column prose_context_allowed integer not null default 0 check (prose_context_allowed in (0, 1))";
+            migration.ExecuteNonQuery();
+        }
     }
 
     private static string EmptyWhenBlank(string? value) =>
@@ -294,17 +332,19 @@ public sealed class AppRuleStorage
         CharacterTriggerAllowed = false,
         LocalEngineAllowed = true,
         ApiEngineAllowed = true,
+        SafetyMode = "terminal",
     };
 
     private static AppRuleItem Editor(string processName) => new()
     {
         ProcessName = processName,
         ListBehavior = "allowlist",
-        ManualShortcutAllowed = true,
+        ManualShortcutAllowed = false,
         WordCountTriggerAllowed = false,
         CharacterTriggerAllowed = false,
         LocalEngineAllowed = true,
         ApiEngineAllowed = true,
+        SafetyMode = "code_editor",
     };
 
     private static AppRuleItem Block(string processName) => new()

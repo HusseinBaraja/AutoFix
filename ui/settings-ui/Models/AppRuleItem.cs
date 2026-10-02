@@ -7,11 +7,13 @@ public sealed class AppRuleItem : ObservableObject
     private string processName = "";
     private string windowTitlePattern = "";
     private string listBehavior = "allowlist";
-    private bool manualShortcutAllowed = true;
-    private bool wordCountTriggerAllowed = true;
-    private bool characterTriggerAllowed = true;
+    private bool manualShortcutAllowed;
+    private bool wordCountTriggerAllowed;
+    private bool characterTriggerAllowed;
     private bool localEngineAllowed = true;
     private bool apiEngineAllowed = true;
+    private string safetyMode = "auto";
+    private bool proseContextAllowed;
 
     public string ProcessName
     {
@@ -61,6 +63,18 @@ public sealed class AppRuleItem : ObservableObject
         set => SetProperty(ref apiEngineAllowed, value);
     }
 
+    public string SafetyMode
+    {
+        get => safetyMode;
+        set => SetProperty(ref safetyMode, value);
+    }
+
+    public bool ProseContextAllowed
+    {
+        get => proseContextAllowed;
+        set => SetProperty(ref proseContextAllowed, value);
+    }
+
     public AppRuleItem Clone() => new()
     {
         ProcessName = ProcessName,
@@ -71,5 +85,7 @@ public sealed class AppRuleItem : ObservableObject
         CharacterTriggerAllowed = CharacterTriggerAllowed,
         LocalEngineAllowed = LocalEngineAllowed,
         ApiEngineAllowed = ApiEngineAllowed,
+        SafetyMode = SafetyMode,
+        ProseContextAllowed = ProseContextAllowed,
     };
 }

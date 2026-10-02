@@ -20,8 +20,8 @@ impl<'a> AppRuleRepository<'a> {
             insert into app_rules (
                 process_name, window_title_pattern, list_behavior, manual_shortcut_allowed,
                 word_count_trigger_allowed, character_trigger_allowed, local_engine_allowed,
-                api_engine_allowed
-            ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                api_engine_allowed, safety_mode, prose_context_allowed
+            ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             on conflict(process_name, window_title_pattern) do update set
                 list_behavior = excluded.list_behavior,
                 manual_shortcut_allowed = excluded.manual_shortcut_allowed,
@@ -29,6 +29,8 @@ impl<'a> AppRuleRepository<'a> {
                 character_trigger_allowed = excluded.character_trigger_allowed,
                 local_engine_allowed = excluded.local_engine_allowed,
                 api_engine_allowed = excluded.api_engine_allowed,
+                safety_mode = excluded.safety_mode,
+                prose_context_allowed = excluded.prose_context_allowed,
                 updated_at = current_timestamp
             ",
             params![
@@ -39,7 +41,9 @@ impl<'a> AppRuleRepository<'a> {
                 rule.word_count_trigger_allowed,
                 rule.character_trigger_allowed,
                 rule.local_engine_allowed,
-                rule.api_engine_allowed
+                rule.api_engine_allowed,
+                rule.safety_mode,
+                rule.prose_context_allowed
             ],
         )?;
         Ok(())
@@ -50,7 +54,7 @@ impl<'a> AppRuleRepository<'a> {
             "
             select process_name, window_title_pattern, list_behavior, manual_shortcut_allowed,
                    word_count_trigger_allowed, character_trigger_allowed, local_engine_allowed,
-                   api_engine_allowed
+                   api_engine_allowed, safety_mode, prose_context_allowed
             from app_rules
             order by process_name, window_title_pattern
             ",
@@ -65,6 +69,8 @@ impl<'a> AppRuleRepository<'a> {
                 character_trigger_allowed: row.get(5)?,
                 local_engine_allowed: row.get(6)?,
                 api_engine_allowed: row.get(7)?,
+                safety_mode: row.get(8)?,
+                prose_context_allowed: row.get(9)?,
             })
         })?;
         rows.collect()

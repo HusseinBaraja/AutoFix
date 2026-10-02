@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use super::{check_detection, SecurityDecision, TriggerKind};
+use super::{check_detection, request_allowed, SecurityDecision};
 use crate::{
     background::target::{FocusedTarget, TargetDetection},
     correction::SendAuthorization,
@@ -21,7 +21,7 @@ pub(in crate::background) fn api_send_authorization(
     path: Option<PathBuf>,
     mut config: AppConfig,
     target: FocusedTarget,
-    trigger: TriggerKind,
+    request: crate::background::triggers::CorrectionRequest,
     cancelled: Arc<AtomicBool>,
 ) -> SendAuthorization {
     config.correction.engine = CorrectionEngine::Api;
@@ -33,13 +33,14 @@ pub(in crate::background) fn api_send_authorization(
         let rules = guard.rules().ok()?;
         if !matches!(
             check_detection(
-                trigger,
+                request.trigger,
                 &config,
                 &rules,
                 TargetDetection::Available(target.clone())
             ),
             SecurityDecision::Allowed { .. }
-        ) || cancelled.load(Ordering::Acquire)
+        ) || !request_allowed(&rules, &target, &request)
+            || cancelled.load(Ordering::Acquire)
         {
             return None;
         }
@@ -50,6 +51,10 @@ pub(in crate::background) fn api_send_authorization(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::background::{
+        context_capture::SelectionCapture, security::TriggerKind, session::ContextVersions,
+        triggers,
+    };
     use crate::storage::{AppRule, Database};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -80,6 +85,8 @@ mod tests {
             character_trigger_allowed: true,
             local_engine_allowed: true,
             api_engine_allowed: true,
+            safety_mode: "auto".into(),
+            prose_context_allowed: false,
         }
     }
 
@@ -105,11 +112,21 @@ mod tests {
         }
 
         fn authorize(&self, trigger: TriggerKind, cancelled: Arc<AtomicBool>) -> SendAuthorization {
+            let mut request = triggers::manual(
+                1,
+                "",
+                "This is teh sentence.",
+                ContextVersions::default(),
+                &SelectionCapture::NoSelection,
+                &AppConfig::default(),
+            )
+            .unwrap();
+            request.trigger = trigger;
             api_send_authorization(
                 Some(self.path.clone()),
                 AppConfig::default(),
                 target(),
-                trigger,
+                request,
                 cancelled,
             )
         }
@@ -122,6 +139,76 @@ mod tests {
             drop(database);
             std::fs::remove_file(&self.path).unwrap();
         }
+    }
+
+    #[test]
+    fn prose_revocation_and_code_like_content_deny_outbound_requests() {
+        let fixture = Fixture::new();
+        let mut target = target();
+        target.process_name = "code.exe".into();
+        let mut rule = allow_rule();
+        rule.process_name = "code.exe".into();
+        rule.prose_context_allowed = true;
+        fixture.database.app_rules().upsert(&rule).unwrap();
+        let mut request = triggers::manual(
+            1,
+            "",
+            "This is teh sentence.",
+            ContextVersions::default(),
+            &SelectionCapture::NoSelection,
+            &AppConfig::default(),
+        )
+        .unwrap();
+        request.selected_text = true;
+        assert!(
+            super::super::SecurityGate::authorize_correction_replacement(
+                &request,
+                &AppConfig::default(),
+                &fixture.database,
+                &target
+            )
+            .is_some()
+        );
+        let authorize = api_send_authorization(
+            Some(fixture.path.clone()),
+            AppConfig::default(),
+            target.clone(),
+            request.clone(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(authorize().is_some());
+        rule.prose_context_allowed = false;
+        fixture.database.app_rules().upsert(&rule).unwrap();
+        assert!(authorize().is_none());
+        assert!(
+            super::super::SecurityGate::authorize_correction_replacement(
+                &request,
+                &AppConfig::default(),
+                &fixture.database,
+                &target
+            )
+            .is_none()
+        );
+        rule.prose_context_allowed = true;
+        fixture.database.app_rules().upsert(&rule).unwrap();
+        request.executable_context = "This is user_name.".into();
+        assert!(
+            super::super::SecurityGate::authorize_correction_replacement(
+                &request,
+                &AppConfig::default(),
+                &fixture.database,
+                &target
+            )
+            .is_none()
+        );
+        let authorize = api_send_authorization(
+            Some(fixture.path.clone()),
+            AppConfig::default(),
+            target,
+            request,
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(authorize().is_none());
     }
 
     /// Permission is read at every send, including changes to trigger and title rules.
@@ -210,7 +297,15 @@ mod tests {
             Some(missing.clone()),
             AppConfig::default(),
             target(),
-            TriggerKind::ManualShortcut,
+            triggers::manual(
+                1,
+                "",
+                "This is teh sentence.",
+                ContextVersions::default(),
+                &SelectionCapture::NoSelection,
+                &AppConfig::default(),
+            )
+            .unwrap(),
             cancelled,
         );
         assert!(authorize().is_none());

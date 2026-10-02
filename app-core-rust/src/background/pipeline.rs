@@ -193,6 +193,30 @@ impl CorrectionPipeline {
         config: &AppConfig,
         dictionary: Vec<String>,
     ) -> bool {
+        // Check executable text before either local execution or API transmission.
+        if let Some(path) = self.database_path.as_deref() {
+            let allowed =
+                crate::storage::AppPolicyGuard::read_rules_nowait(path).is_ok_and(|rules| {
+                    matches!(
+                        super::security::check_detection(
+                            request.trigger,
+                            config,
+                            &rules,
+                            super::target::TargetDetection::Available(target.clone())
+                        ),
+                        super::security::SecurityDecision::Allowed { .. }
+                    ) && super::security::request_allowed(&rules, &target, &request)
+                });
+            if !allowed {
+                self.feedback_event = Some((
+                    Event::Blocked,
+                    request.trigger == TriggerKind::ManualShortcut,
+                ));
+                return false;
+            }
+        } else if !super::security::request_allowed(&[], &target, &request) {
+            return false;
+        }
         if request.pending_segment_id.is_none() {
             self.cancel();
         }
@@ -203,7 +227,7 @@ impl CorrectionPipeline {
             self.database_path.clone(),
             config.clone(),
             target.clone(),
-            request.trigger,
+            request.clone(),
             Arc::clone(&cancelled),
         );
         let input = CorrectionInput {

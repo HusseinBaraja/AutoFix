@@ -8,6 +8,8 @@ pub(crate) struct AppRule {
     pub(crate) character_trigger_allowed: bool,
     pub(crate) local_engine_allowed: bool,
     pub(crate) api_engine_allowed: bool,
+    pub(crate) safety_mode: String,
+    pub(crate) prose_context_allowed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
