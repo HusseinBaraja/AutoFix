@@ -9,12 +9,19 @@ namespace AutoFix.SettingsUi.Ipc;
 public sealed class BackgroundIpcClient : IBackgroundIpcClient
 {
     private const string PipeName = @"Local\AutoFix.Background.Ipc";
+    private readonly string pipeName;
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromMilliseconds(400);
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromMilliseconds(400);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
+
+    /// <summary>Connect to the local engine endpoint with owner verification and bounded waits.</summary>
+    public BackgroundIpcClient() : this(PipeName) { }
+
+    /// <summary>Use an isolated endpoint for transport tests without contacting the running engine.</summary>
+    internal BackgroundIpcClient(string pipeName) => this.pipeName = pipeName;
 
     public async Task<IpcResult<AppStatusResponse>> GetStatusAsync()
     {
@@ -122,13 +129,14 @@ public sealed class BackgroundIpcClient : IBackgroundIpcClient
         }
     }
 
-    private static async Task<IpcEnvelope> SendAsync(IpcEnvelope request)
+    /// <summary>Exchange one request with a local server owned by the current Windows user.</summary>
+    private async Task<IpcEnvelope> SendAsync(IpcEnvelope request)
     {
         await using var pipe = new NamedPipeClientStream(
             ".",
-            PipeName,
+            pipeName,
             PipeDirection.InOut,
-            PipeOptions.Asynchronous);
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
 
         using var connectTimeout = new CancellationTokenSource(ConnectTimeout);
         await pipe.ConnectAsync(connectTimeout.Token).ConfigureAwait(false);

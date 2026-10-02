@@ -74,6 +74,21 @@ The status also carries `tray_state_enabled` so the shell can preserve that
 preference when the engine becomes unavailable. Hard secure-field/desktop refusals,
 cancelled and stale results cannot display a notice or suggestion preview.
 
+The Windows IPC pipe rejects remote clients and uses a protected ACL granting
+access only to its owner. The .NET client verifies that the server has the same
+Windows owner and elevation context before sending a request. Processes running
+as that account share the configuration trust boundary; IPC does not authenticate
+individual executables. Anonymous local clients cannot connect, including for
+read-only access.
+
+Each connected client has a one-second pipe-I/O deadline covering request reads,
+response writes and response consumption. Expiry cancels only that pipe's I/O so
+an idle or nonreading client cannot monopolize status polling. Responses drain
+before disconnect because Windows discards unread pipe bytes on disconnect.
+Both byte-stream clients reading to EOF and message-mode clients are supported.
+The .NET client retains its separate 400 ms connect and request deadlines; legacy
+status payloads without tray fields default to idle with state display enabled.
+
 Unavailable application rules deny authorization for typed capture and every
 correction trigger, including API execution. An empty successfully read rule
 list is distinct from a failed read.
