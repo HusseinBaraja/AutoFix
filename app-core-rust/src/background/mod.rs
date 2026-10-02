@@ -373,6 +373,7 @@ impl InputWorker {
                     }
                     processor.finish_correction();
                 }
+                processor.learner.finish();
                 let _ = done_sender.send(replacement::finish_shutdown());
             })
             .map_err(BackgroundError::InputWorker)?;
@@ -443,7 +444,7 @@ impl InputProcessor {
     /// Defer completion until hook input is drained, then validate the live target and caret.
     fn finish_correction(&mut self) {
         self.learner
-            .poll(&self.config.learning, &self.database.dictionary());
+            .poll(&self.config.learning, self.database.path());
         // Frozen ranges may survive processed typing, but never guess what keys
         // still queued in the hooks did to the target.
         if Self::input_stamp().sequence != self.processed_input_sequence {
@@ -872,11 +873,8 @@ impl InputProcessor {
                 undo.language,
                 target.process_name.clone(),
             ) {
-                self.learner.rejected(
-                    rejection,
-                    &self.config.learning,
-                    &self.database.dictionary(),
-                );
+                self.learner
+                    .rejected(rejection, &self.config.learning, self.database.path());
             }
         }
     }

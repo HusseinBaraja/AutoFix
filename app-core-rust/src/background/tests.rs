@@ -12,6 +12,9 @@ use super::{admin, load_or_create_config, BackgroundError, BackgroundRuntime};
 #[test]
 fn undo_learning_requires_committed_bookkeeping_and_stable_input() {
     for failure in 0..4 {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("learning.sqlite");
         let mut config = AppConfig::default();
         config.learning.mode = crate::settings::LearningMode::Automatic;
         config.learning.rule = crate::settings::LearningRule::Dictionary;
@@ -21,7 +24,7 @@ fn undo_learning_requires_committed_bookkeeping_and_stable_input() {
             processed_input_sequence: 12,
             session_manager: super::SessionManager::new(config.context.clone()),
             config,
-            database: crate::storage::Database::open_memory().unwrap(),
+            database: crate::storage::Database::open(&path).unwrap(),
         };
         let target = dispatch_target();
         processor.session_manager.focus(&target);
@@ -49,6 +52,7 @@ fn undo_learning_requires_committed_bookkeeping_and_stable_input() {
             _ => {}
         }
         processor.complete_undo(undo, &target, stamp, current);
+        processor.learner.finish();
         let policy = processor
             .database
             .dictionary()
@@ -70,6 +74,9 @@ fn undo_learning_requires_committed_bookkeeping_and_stable_input() {
             assert!(processor.session_manager.active().is_none());
             assert!(policy.terms.is_empty());
         }
+        drop(processor);
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(root).unwrap();
     }
 }
 

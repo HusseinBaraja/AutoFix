@@ -13,7 +13,10 @@ Keep schemas explicit, versioned, and documented. Avoid storing executable runti
 `[learning]` is optional in TOML. `mode` accepts `off` (default), `ask`, or
 `automatic`; `rule` accepts `pair` (default) or `dictionary`; `per_app` defaults
 to false. Rust and WPF use the same defaults and reject unknown choices.
-Learning changes only future exclusions after successful app-level undo.
+Learning changes only future exclusions after successful app-level undo. Accepted
+consent and automatic learning queue saves on a bounded background writer with
+its own connection. Settings changes revoke pending consent; save failures warn
+without captured text and never block input processing.
 Exclusions remain active independently of these settings.
 
 The WPF editor and Rust engine share `custom_dictionary_entries` and
@@ -67,12 +70,13 @@ from the fresh policy read until the send returns, so IPC and settings UI rule
 writes serialize with transmission. A revocation is effective when its write
 commits; previously transmitted data cannot be recalled. Missing, unreadable,
 or busy policy storage denies sending immediately. Denied frozen work releases
-its slot and retires its original text through failed completion.
+its slot and restores its original text and dependent newer segments to active
+executable context through failed completion.
 
-The live replacement consumer is still a placeholder. Before enabling it, the
-mutation owner must enforce `silent` or explicit acceptance of a suggestion and
-recheck process, focused target, security gate, caret, and context/executable
-versions immediately before manual replacement. Frozen automatic replacements
+The native replacement consumer enforces `silent` results; suggestion acceptance
+remains planned. The mutation owner must recheck process, focused target,
+security gate, caret, and context/executable versions immediately before manual
+replacement. Frozen automatic replacements
 validate their session, segment identity, original typed range, caret anchor,
 and known following text instead of requiring unchanged active context versions.
 They wait for queued hook input and recheck generations after live security calls.
@@ -88,5 +92,7 @@ out-of-order results, a target becoming secure, and interrupted replacement with
 rollback and clipboard/undo recovery. The async pipeline now tests stale and
 reordered result rejection, typing/focus changes, security revalidation, and
 session completion only after a replacement callback confirms success. Native
-replacement remains unavailable; these tests cannot establish target mutation,
-rollback, clipboard recovery, or target undo until the native consumer exists.
+clipboard paste and SendInput replacement are implemented for supported controls;
+direct text APIs and UI Automation mutation remain planned. Focused native tests
+verify correction, recorded app-level undo, clipboard preservation and recovery,
+and preservation of newer typing, caret position, and text after the caret.

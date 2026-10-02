@@ -38,9 +38,13 @@ language. It never captures document text or native Ctrl+Z. The smallest changed
 word/phrase is learned; multiple separated changes form one phrase. Ask mode uses
 a separate, coalesced native Yes/No prompt, defaults to No, and stores no text
 until consent. Input processing remains available while the prompt is open.
-Changing learning settings cancels pending consent. Automatic mode writes the
-selected dictionary or pair exclusion after successful undo. Disabling learning
-does not disable existing rules. Suggestion rejection remains unavailable with
+Changing learning settings cancels pending consent. Accepted consent and automatic
+learning submit the selected dictionary or pair exclusion to a dedicated worker
+with its own SQLite connection and a 16-entry queue. Input processing never waits
+for a save. The worker waits at most 100 ms for SQLite writer contention; a full
+queue or unavailable storage skips the save and emits a warning without text.
+The worker never creates or migrates storage, and shutdown drains authorized saves.
+Disabling learning does not disable existing rules. Suggestion rejection remains unavailable with
 the planned suggestion UI; failed or refused undo never learns.
 `LocalRuleEngine`, `LocalMlEngine`, `OpenAiCompatibleApiEngine`, and
 `CustomApiEngine` implement the same interface. `LocalRuleEngine` provides fast,
