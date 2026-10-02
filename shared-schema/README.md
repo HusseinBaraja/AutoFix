@@ -75,15 +75,18 @@ preference when the engine becomes unavailable. Hard secure-field/desktop refusa
 cancelled and stale results cannot display a notice or suggestion preview.
 
 The Windows IPC pipe rejects remote clients and uses a protected ACL granting
-access only to its owner. The .NET client verifies that the server has the same
-Windows owner and elevation context before sending a request. Processes running
+access only to its owner. The .NET client compares the server's owner SID with
+the current Windows identity's owner SID before sending a request. This check
+does not separately query the server's elevation level. Processes running
 as that account share the configuration trust boundary; IPC does not authenticate
 individual executables. Anonymous local clients cannot connect, including for
 read-only access.
 
-Each connected client has a one-second pipe-I/O deadline covering request reads,
-response writes and response consumption. Expiry cancels only that pipe's I/O so
-an idle or nonreading client cannot monopolize status polling. Responses drain
+After one second, a watchdog requests cancellation of that client's pipe I/O,
+covering request reads, response writes and response consumption. Cancellation
+targets only that pipe and is best-effort; one second is the cancellation
+threshold, not a guaranteed completion bound. Native tests verify endpoint
+recovery with idle and nonreading clients held open. Responses drain
 before disconnect because Windows discards unread pipe bytes on disconnect.
 Both byte-stream clients reading to EOF and message-mode clients are supported.
 The .NET client retains its separate 400 ms connect and request deadlines; legacy

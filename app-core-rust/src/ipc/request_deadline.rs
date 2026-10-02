@@ -1,4 +1,4 @@
-//! Bound a connected client's pipe I/O, including waiting for response consumption.
+//! Request cancellation of stalled client pipe I/O, including response consumption.
 
 use std::{
     sync::{
