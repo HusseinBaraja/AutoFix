@@ -233,10 +233,11 @@ impl CorrectionPipeline {
             suggestion_ui_available: false,
         };
         let exclusions = match self.database_path.as_deref() {
-            Some(path) => match crate::storage::Database::open(path).and_then(|db| {
-                db.dictionary()
-                    .policy(&target.process_name, &request.language_info)
-            }) {
+            Some(path) => match crate::dictionary::Repository::policy_nowait(
+                path,
+                &target.process_name,
+                &request.language_info,
+            ) {
                 Ok(policy) => policy,
                 Err(_) => {
                     tracing::warn!("correction skipped: exclusions unavailable");

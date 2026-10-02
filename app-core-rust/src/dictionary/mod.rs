@@ -6,7 +6,8 @@ mod tests;
 use crate::correction::{CorrectionChange, CorrectionOutput, LanguageInfo, NoChangeReason};
 use crate::settings::{LearningConfig, LearningRule};
 pub(crate) use learning::{Learner, Rejection};
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, OpenFlags, Result};
+use std::{path::Path, time::Duration};
 
 #[derive(Default)]
 pub(crate) struct Policy {
@@ -19,6 +20,17 @@ pub(crate) struct Repository<'a> {
 }
 
 impl<'a> Repository<'a> {
+    /// Snapshot fresh exclusions without creating storage, migrating, writing, or waiting on locks.
+    pub(crate) fn policy_nowait(path: &Path, app: &str, language: &LanguageInfo) -> Result<Policy> {
+        let mut connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        connection.busy_timeout(Duration::ZERO)?;
+        // Both tables belong to one read snapshot, even if a settings writer commits between reads.
+        let transaction = connection.transaction()?;
+        let policy = Repository::new(&transaction).policy(app, language)?;
+        transaction.commit()?;
+        Ok(policy)
+    }
+
     /// Borrow the engine's exclusion database without creating a separate storage owner.
     pub(crate) fn new(connection: &'a Connection) -> Self {
         Self { connection }

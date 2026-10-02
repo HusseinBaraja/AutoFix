@@ -5,6 +5,126 @@ use crate::{
     storage::Database,
 };
 
+/// Generate an isolated file path for exclusion snapshot tests.
+fn policy_test_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "autofix-policy-read-{}-{}.sqlite",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ))
+}
+
+/// Failed policy reads cannot create a database or initialize an incompatible schema.
+#[test]
+fn policy_snapshot_never_creates_or_migrates_storage() {
+    let path = policy_test_path();
+    assert!(Repository::policy_nowait(&path, "app.exe", &language(Some("en"))).is_err());
+    assert!(!path.exists());
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "create table sentinel (value text); insert into sentinel values ('unchanged')",
+        )
+        .unwrap();
+    assert!(Repository::policy_nowait(&path, "app.exe", &language(Some("en"))).is_err());
+    let tables: usize = connection
+        .query_row(
+            "select count(*) from sqlite_master where type = 'table'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(tables, 1);
+    let value: String = connection
+        .query_row("select value from sentinel", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(value, "unchanged");
+    drop(connection);
+    std::fs::remove_file(path).unwrap();
+}
+
+/// API-send writer reservations permit committed exclusion reads in rollback and WAL mode.
+#[test]
+fn policy_snapshot_reads_during_send_and_sees_later_dictionary_edits() {
+    for journal in ["delete", "wal"] {
+        let path = policy_test_path();
+        let db = Database::open(&path).unwrap();
+        db.dictionary()
+            .connection
+            .execute_batch(&format!("PRAGMA journal_mode={journal}"))
+            .unwrap();
+        let config = LearningConfig {
+            mode: LearningMode::Automatic,
+            rule: LearningRule::Dictionary,
+            per_app: true,
+        };
+        let mut rejection = Rejection {
+            original: "teh".into(),
+            corrected: "the".into(),
+            language: Some("en".into()),
+            app: "app.exe".into(),
+        };
+        db.dictionary().remember(&rejection, &config).unwrap();
+        let pair_config = LearningConfig {
+            rule: LearningRule::Pair,
+            ..config.clone()
+        };
+        db.dictionary().remember(&rejection, &pair_config).unwrap();
+        let guard = crate::storage::AppPolicyGuard::acquire(&path).unwrap();
+        let started = std::time::Instant::now();
+        let policy = Repository::policy_nowait(&path, "APP.EXE", &language(Some("en-US"))).unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_millis(250));
+        assert_eq!(policy.terms, ["teh"]);
+        assert_eq!(policy.pairs, [("teh".into(), "the".into())]);
+        drop(guard);
+        rejection.original = "wierd".into();
+        rejection.corrected = "weird".into();
+        db.dictionary().remember(&rejection, &config).unwrap();
+        db.dictionary().remember(&rejection, &pair_config).unwrap();
+        let mut updated =
+            Repository::policy_nowait(&path, "app.exe", &language(Some("en"))).unwrap();
+        updated.terms.sort();
+        assert_eq!(updated.terms, ["teh", "wierd"]);
+        assert_eq!(updated.pairs.len(), 2);
+        assert!(
+            Repository::policy_nowait(&path, "other.exe", &language(Some("en")))
+                .unwrap()
+                .terms
+                .is_empty()
+        );
+        drop(db);
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+/// An exclusive rollback-mode lock fails immediately instead of waiting for SQLite's default timeout.
+#[test]
+fn policy_snapshot_refuses_unreadable_storage_without_waiting() {
+    let path = policy_test_path();
+    let db = Database::open(&path).unwrap();
+    let writer = Connection::open(&path).unwrap();
+    writer
+        .execute_batch("PRAGMA journal_mode=delete; BEGIN EXCLUSIVE")
+        .unwrap();
+    let started = std::time::Instant::now();
+    let error = Repository::policy_nowait(&path, "app.exe", &language(Some("en")))
+        .err()
+        .unwrap();
+    assert_eq!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy)
+    );
+    assert!(started.elapsed() < std::time::Duration::from_millis(250));
+    writer.execute_batch("ROLLBACK").unwrap();
+    assert!(Repository::policy_nowait(&path, "app.exe", &language(Some("en"))).is_ok());
+    drop(writer);
+    drop(db);
+    std::fs::remove_file(path).unwrap();
+}
+
 /// Build a known or unknown language snapshot for exclusion scope tests.
 fn language(tag: Option<&str>) -> LanguageInfo {
     LanguageInfo {

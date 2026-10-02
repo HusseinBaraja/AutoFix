@@ -27,7 +27,10 @@ as `en` apply to variants such as `en-US`. Regional tags match the resolved tag.
 Unknown or mixed language conservatively protects all entries for the app.
 Both engine routes enforce whole-term boundaries, including phrases, and filter
 blocked pairs while preserving unrelated edits. Exclusions are snapshotted for
-execution. Broad edits that cross a pair's boundary are refused when unchanged
+execution through a fresh read-only connection with a zero busy timeout and one
+read transaction for both exclusion tables. Submission never creates or migrates
+storage; unreadable or incompatible exclusions refuse the request. Broad edits
+that cross a pair's boundary are refused when unchanged
 context cannot prove a different replacement. Exclusions are reread
 under the replacement writer reservation; a newly
 blocked edit refuses the in-flight replacement.

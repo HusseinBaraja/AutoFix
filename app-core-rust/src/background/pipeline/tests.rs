@@ -12,6 +12,137 @@ const STAMP: InputStamp = InputStamp {
     sequence: 12,
 };
 
+/// Unavailable exclusion storage refuses submission without dispatching work or changing session text.
+#[test]
+fn unavailable_exclusions_refuse_submission_without_storage_side_effects() {
+    for failure in ["missing", "schema", "locked"] {
+        let path = std::env::temp_dir().join(format!(
+            "autofix-submit-policy-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let config = AppConfig::default();
+        let manager = manager(&config, "teh");
+        let mut connection = None;
+        let mut database = None;
+        if failure != "missing" {
+            let writer = rusqlite::Connection::open(&path).unwrap();
+            if failure == "schema" {
+                writer
+                    .execute_batch("create table sentinel (value text)")
+                    .unwrap();
+            } else {
+                database = Some(crate::storage::Database::open(&path).unwrap());
+                writer
+                    .execute_batch("PRAGMA journal_mode=delete; BEGIN EXCLUSIVE")
+                    .unwrap();
+            }
+            connection = Some(writer);
+        }
+        let mut pipeline =
+            CorrectionPipeline::start(|_| panic!("unavailable exclusions must not reach engine"))
+                .unwrap();
+        pipeline.database_path = Some(path.clone());
+        let started = Instant::now();
+        assert!(!pipeline.submit(
+            request(&manager, &config),
+            manager.active().unwrap(),
+            target(),
+            STAMP,
+            &config,
+            vec![]
+        ));
+        assert!(started.elapsed() < Duration::from_millis(250));
+        assert!(pipeline.active.is_empty());
+        assert!(pipeline.mailbox.0.lock().unwrap().jobs.is_empty());
+        assert_eq!(manager.active().unwrap().editable_context(), "teh");
+        if failure == "schema" {
+            let tables: usize = connection
+                .as_ref()
+                .unwrap()
+                .query_row(
+                    "select count(*) from sqlite_master where type = 'table'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(tables, 1);
+        }
+        drop(pipeline);
+        drop(connection);
+        drop(database);
+        if failure == "missing" {
+            assert!(!path.exists());
+        } else {
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+}
+
+/// Submission reads compatible exclusion tables without invoking migrations, even during an API send.
+#[test]
+fn submit_uses_exclusion_snapshot_without_migration_writes() {
+    for journal in ["delete", "wal"] {
+        let path = std::env::temp_dir().join(format!(
+            "autofix-submit-no-migrate-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let database = crate::storage::Database::open(&path).unwrap();
+        let writer = rusqlite::Connection::open(&path).unwrap();
+        writer
+            .execute_batch(&format!(
+                "PRAGMA journal_mode={journal}; drop table schema_migrations;
+            insert into custom_dictionary_entries(language_code,entry) values ('en','teh');"
+            ))
+            .unwrap();
+        let config = AppConfig::default();
+        let manager = manager(&config, "teh");
+        let mut pipeline = CorrectionPipeline::start(|job| {
+            assert_eq!(job.exclusions.terms, ["teh"]);
+            CorrectionOutput::unchanged(
+                job.input.executable_context.clone(),
+                ConfidenceTier::High,
+                NoChangeReason::NoCorrectionNeeded,
+                0,
+            )
+        })
+        .unwrap();
+        pipeline.database_path = Some(path.clone());
+        let guard = crate::storage::AppPolicyGuard::acquire(&path).unwrap();
+        let started = Instant::now();
+        assert!(pipeline.submit(
+            request(&manager, &config),
+            manager.active().unwrap(),
+            target(),
+            STAMP,
+            &config,
+            vec![]
+        ));
+        assert!(started.elapsed() < Duration::from_millis(250));
+        wait_completion(&pipeline);
+        let migration_tables: usize = writer
+            .query_row(
+                "select count(*) from sqlite_master where name = 'schema_migrations'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(migration_tables, 0);
+        drop(guard);
+        drop(pipeline);
+        drop(writer);
+        drop(database);
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
 /// Persisted pairs filter worker edits without losing the original correction language.
 #[test]
 fn persisted_pair_filters_worker_edits_and_learns_original_language() {
