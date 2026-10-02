@@ -152,6 +152,7 @@ public sealed partial class MainWindowViewModel
         }
 
         SubscribeToSettings();
+        LoadDictionary();
         SelectedSection = Sections.FirstOrDefault();
         SectionView.Refresh();
         ConfigFormMapper.ClearValidation(Sections);

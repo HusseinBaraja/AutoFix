@@ -7,7 +7,8 @@ mod validation;
 
 pub(crate) use crate::correction::CorrectionMode;
 pub(crate) use model::{
-    AppConfig, ContextConfig, CorrectionEngine, PendingQueueFullBehavior, RunMode,
+    AppConfig, ContextConfig, CorrectionEngine, LearningConfig, LearningMode, LearningRule,
+    PendingQueueFullBehavior, RunMode,
 };
 pub(crate) use shortcuts::{Shortcut, ShortcutKey};
 pub(crate) use toml_io::{load_config, save_config, ConfigIoError};

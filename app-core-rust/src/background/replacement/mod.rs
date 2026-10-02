@@ -66,6 +66,36 @@ pub(super) struct ReplacementResult {
     pub(super) may_have_changed: bool,
 }
 
+/// Verified mutation metadata passed to the session's undo owner.
+#[derive(Default)]
+pub(super) struct ReplacementConfirmation {
+    pub(super) success: bool,
+    pub(super) method: Option<ReplacementMethod>,
+    pub(super) range: Option<ReplacedRange>,
+}
+
+impl From<ReplacementResult> for ReplacementConfirmation {
+    /// Pass the verified native receipt to session bookkeeping without document text.
+    fn from(result: ReplacementResult) -> Self {
+        Self {
+            success: result.success,
+            method: result.method,
+            range: result.range,
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<bool> for ReplacementConfirmation {
+    /// Supply a minimal success receipt for tests that replace through a fake native boundary.
+    fn from(success: bool) -> Self {
+        Self {
+            success,
+            ..Self::default()
+        }
+    }
+}
+
 impl ReplacementResult {
     /// Native failures remain visible with default logging. No target text is logged.
     pub(super) fn log_outcome(&self, undo: bool) {

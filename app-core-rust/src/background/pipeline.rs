@@ -13,6 +13,7 @@ use std::{
 };
 
 use super::{
+    replacement::ReplacementConfirmation,
     security::TriggerKind,
     session::{Session, SessionManager},
     target::{CorrectionEligibility, FocusedTarget},
@@ -49,6 +50,7 @@ struct Job {
     api: ApiEngineConfig,
     cancelled: Arc<AtomicBool>,
     authorization: SendAuthorization,
+    exclusions: crate::dictionary::Policy,
 }
 
 struct Completion {
@@ -149,7 +151,9 @@ impl CorrectionPipeline {
                     if job.cancelled.load(Ordering::Acquire) {
                         continue;
                     }
-                    let output = correct(&job);
+                    let output = job
+                        .exclusions
+                        .filter(&job.input.executable_context, correct(&job));
                     let (lock, ready) = &*worker_mailbox;
                     let mut state = lock.lock().unwrap();
                     // Transport may finish after cancellation; never publish that result.
@@ -178,7 +182,7 @@ impl CorrectionPipeline {
         stamp: InputStamp,
         config: &AppConfig,
         dictionary: Vec<String>,
-    ) {
+    ) -> bool {
         if request.pending_segment_id.is_none() {
             self.cancel();
         }
@@ -228,6 +232,20 @@ impl CorrectionPipeline {
             confidence_behavior: request.confidence_behavior.clone(),
             suggestion_ui_available: false,
         };
+        let exclusions = match self.database_path.as_deref() {
+            Some(path) => match crate::dictionary::Repository::policy_nowait(
+                path,
+                &target.process_name,
+                &request.language_info,
+            ) {
+                Ok(policy) => policy,
+                Err(_) => {
+                    tracing::warn!("correction skipped: exclusions unavailable");
+                    return false;
+                }
+            },
+            None => crate::dictionary::Policy::default(),
+        };
         self.active.push_back(ActiveRequest {
             id,
             request: request.clone(),
@@ -246,8 +264,10 @@ impl CorrectionPipeline {
             api: (&config.api).into(),
             cancelled,
             authorization,
+            exclusions,
         });
         ready.notify_all();
+        true
     }
 
     /// Cancel all admitted work and clear queued jobs, completions, and timeout feedback.
@@ -294,7 +314,18 @@ impl CorrectionPipeline {
     }
 
     /// Frozen work survives newer typing; manual snapshots remain strict.
-    pub(super) fn invalidate(&mut self, manager: &SessionManager, stamp: InputStamp) {
+    pub(super) fn invalidate(&mut self, manager: &mut SessionManager, stamp: InputStamp) {
+        // Losing worker ownership does not mean the typed segment was checked.
+        // Return it and its dependent suffix to the active context when present.
+        for active in &self.active {
+            if let Some(session) = manager.active_mut() {
+                if session.id() == active.request.session_id && !active.valid(session, stamp) {
+                    if let Some(id) = active.request.pending_segment_id {
+                        session.restore_pending_from(id);
+                    }
+                }
+            }
+        }
         self.active.retain(|active| {
             if manager
                 .active()
@@ -326,14 +357,14 @@ impl CorrectionPipeline {
     }
 
     /// Take once: duplicates and reordered completions cannot reach the mutation owner.
-    pub(super) fn finish(
+    pub(super) fn finish<R: Into<ReplacementConfirmation>>(
         &mut self,
         manager: &mut SessionManager,
         limits: &ContextConfig,
         current_stamp: impl Fn() -> InputStamp,
         check_target: impl FnOnce(TriggerKind) -> Option<FocusedTarget>,
         read_before_caret: impl FnOnce(&FocusedTarget, usize) -> Option<String>,
-        replace: impl FnOnce(&FocusedTarget, &CorrectionRequest, &CorrectionOutput) -> bool,
+        replace: impl FnOnce(&FocusedTarget, &CorrectionRequest, &CorrectionOutput) -> R,
     ) -> bool {
         self.timeout_notice = false;
         self.invalidate(manager, current_stamp());
@@ -355,8 +386,9 @@ impl CorrectionPipeline {
         let mut active = self.active.pop_front().unwrap();
         let validation_stamp = current_stamp();
         let segment_id = active.request.pending_segment_id;
-        // Every completion releases its slot, including errors, suppressed
-        // outputs and refused mutation. Frozen original text retires unchanged.
+        let mut native_changed = false;
+        // Every completion releases its slot. Only accepted results commit;
+        // failed or skipped work returns to executable context below.
         let applied = (|| {
             let output = completion.output;
             let notify_timeout = output.status == EngineStatus::TimedOut
@@ -393,6 +425,11 @@ impl CorrectionPipeline {
                 return false;
             }
             let original = &active.request.executable_context;
+            let no_change_reason = match output.no_change_reason {
+                Some(NoChangeReason::NoCorrectionNeeded) => Some("no_correction_needed"),
+                Some(NoChangeReason::AllCandidatesProtected) => Some("all_candidates_protected"),
+                _ => None,
+            };
             if output.changes_needed {
                 if target.focused_element_id.is_none()
                     || output.behavior != ConfidenceBehavior::Silent
@@ -401,14 +438,7 @@ impl CorrectionPipeline {
                 {
                     return false;
                 }
-            } else if output.corrected_executable_text != *original
-                || !matches!(
-                    output.no_change_reason,
-                    Some(
-                        NoChangeReason::NoCorrectionNeeded | NoChangeReason::AllCandidatesProtected
-                    )
-                )
-            {
+            } else if output.corrected_executable_text != *original || no_change_reason.is_none() {
                 return false;
             }
             if let Some(id) = segment_id {
@@ -445,28 +475,126 @@ impl CorrectionPipeline {
             {
                 return false;
             }
-            if output.changes_needed && !replace(&target, &active.request, &output) {
-                return false;
-            }
+            let confirmation = if output.changes_needed {
+                if !session.can_complete_correction(
+                    segment_id,
+                    original,
+                    &output.corrected_executable_text,
+                ) {
+                    return false;
+                }
+                let confirmation = replace(&target, &active.request, &output).into();
+                if !confirmation.success {
+                    return false;
+                }
+                native_changed = true;
+                if current_stamp() != validation_stamp {
+                    return false;
+                }
+                Some(confirmation)
+            } else {
+                None
+            };
             let session = manager.active_mut().unwrap();
-            if let Some(id) = segment_id {
-                session.complete_pending(id, Some(&output.corrected_executable_text), limits)
+            let changed = output.changes_needed;
+            let confidence = output.confidence;
+            let completed = if let Some(id) = segment_id {
+                session.complete_pending(id, &output.corrected_executable_text, limits)
             } else if output.changes_needed {
                 session.queue_correction(original.clone(), output.corrected_executable_text)
                     && session.apply_next_correction(limits)
             } else {
                 session.complete_without_changes(limits);
                 true
+            };
+            if completed && changed {
+                session.record_undo_metadata(
+                    active.request.language_info.primary_language.clone(),
+                    active.request.trigger,
+                    confidence,
+                    confirmation.unwrap(),
+                );
+            } else if completed {
+                self.log_no_change_commit(
+                    &active.request,
+                    &active.target,
+                    confidence,
+                    no_change_reason.unwrap(),
+                    output.engine_latency_ms,
+                );
             }
+            completed
         })();
         if !applied {
+            if native_changed {
+                // The document changed but session ownership was not committed.
+                // Never restore unchecked originals into a now-stale executable range.
+                self.cancel();
+                manager.deactivate(super::typing::MovementSignal::UnknownPosition);
+                tracing::warn!("replacement bookkeeping lost session ownership");
+                return false;
+            }
             if let (Some(id), Some(session)) = (segment_id, manager.active_mut()) {
                 if session.id() == active.request.session_id {
-                    session.complete_pending(id, None, limits);
+                    for cancelled in session.restore_pending_from(id) {
+                        self.cancel_segment(cancelled);
+                    }
                 }
             }
         }
         applied
+    }
+
+    /// Record accepted commits once without waiting on SQLite policy reservations.
+    /// Metadata contains no document text, even in full-debug mode.
+    fn log_no_change_commit(
+        &self,
+        request: &CorrectionRequest,
+        target: &FocusedTarget,
+        confidence: ConfidenceTier,
+        reason: &str,
+        latency_ms: u64,
+    ) {
+        tracing::info!(
+            session_id = request.session_id,
+            trigger = request.trigger.as_str(),
+            engine = ?request.engine,
+            confidence = ?confidence,
+            reason,
+            latency_ms,
+            replacement_method = "none",
+            "no-change context committed"
+        );
+        let Some(path) = self.database_path.as_deref() else {
+            return;
+        };
+        let metadata = crate::storage::CorrectionMetadata {
+            session_id: request.session_id.to_string(),
+            app_process_name: target.process_name.clone(),
+            trigger_type: request.trigger.as_str().into(),
+            confidence_tier: match confidence {
+                ConfidenceTier::High => "high",
+                ConfidenceTier::Medium => "medium",
+                ConfidenceTier::Low => "low",
+            }
+            .into(),
+            engine_used: match request.engine {
+                EngineKind::LocalRule => "local_rule",
+                EngineKind::LocalMl => "local_ml",
+                EngineKind::OpenAiCompatibleApi => "open_ai_compatible_api",
+                EngineKind::CustomApi => "custom_api",
+            }
+            .into(),
+            replacement_method: "none".into(),
+            result_reason: reason.into(),
+            latency_ms,
+        };
+        if crate::storage::Database::record_metadata_nowait(path, &metadata).is_err() {
+            tracing::warn!(
+                session_id = request.session_id,
+                "no-change metadata unavailable"
+            );
+        }
     }
 }
 

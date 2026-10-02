@@ -10,7 +10,7 @@ mod types;
 
 use std::path::Path;
 
-use rusqlite::{Connection, Result};
+use rusqlite::{Connection, OpenFlags, Result};
 
 pub(crate) use app_policy::AppPolicyGuard;
 use logs::{CorrectionMetadataRepository, DebugEventRepository};
@@ -19,14 +19,27 @@ use repositories::{
     LearnedRuleRepository,
 };
 pub(crate) use types::AppRule;
+pub(crate) use types::CorrectionMetadata;
 #[cfg(test)]
-use types::{CorrectionMetadata, CustomDictionaryEntry, LanguageOverride, LearnedCorrectionRule};
+use types::{CustomDictionaryEntry, LanguageOverride, LearnedCorrectionRule};
 
 pub(crate) struct Database {
     connection: Connection,
 }
 
 impl Database {
+    /// Record optional telemetry without migrations, file creation, or waiting for a writer.
+    /// Policy reservations take priority; busy or unavailable storage loses only metadata.
+    pub(crate) fn record_metadata_nowait(path: &Path, metadata: &CorrectionMetadata) -> Result<()> {
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        connection.busy_timeout(std::time::Duration::ZERO)?;
+        CorrectionMetadataRepository::new(&connection).record(metadata)
+    }
+
+    /// Access persistent exclusions independently of whether new learning is enabled.
+    pub(crate) fn dictionary(&self) -> crate::dictionary::Repository<'_> {
+        crate::dictionary::Repository::new(&self.connection)
+    }
     /// File identity for fresh policy reads on a separate transport connection.
     pub(crate) fn path(&self) -> Option<&Path> {
         self.connection

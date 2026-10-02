@@ -10,6 +10,79 @@ use super::{
     AppConfig, ValidateConfig,
 };
 
+/// Undo capacity round-trips through TOML and defaults to ten for legacy files.
+#[test]
+fn undo_capacity_round_trips_and_legacy_settings_keep_ten_entries() {
+    let mut config = AppConfig::default();
+    assert_eq!(config.context.undo_history_size, 10);
+    for size in [1, 10, 1000] {
+        config.context.undo_history_size = size;
+        let encoded = config_to_toml(&config).unwrap();
+        assert_eq!(
+            super::toml_io::parse_config(&encoded)
+                .unwrap()
+                .context
+                .undo_history_size,
+            size
+        );
+    }
+    let encoded = config_to_toml(&config).unwrap();
+    let legacy = encoded
+        .lines()
+        .filter(|line| !line.starts_with("undo_history_size"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        super::toml_io::parse_config(&legacy)
+            .unwrap()
+            .context
+            .undo_history_size,
+        10
+    );
+    for size in [0, 1001] {
+        config.context.undo_history_size = size;
+        assert_eq!(
+            config.validate().unwrap_err().field(),
+            "context.undo_history_size"
+        );
+    }
+}
+
+/// Learning stays off for legacy settings and explicit policy choices round-trip.
+#[test]
+fn learning_is_opt_in_and_round_trips_with_legacy_defaults() {
+    use super::{LearningMode, LearningRule};
+    let mut config = AppConfig::default();
+    assert_eq!(config.learning.mode, LearningMode::Off);
+    for mode in [
+        LearningMode::Off,
+        LearningMode::Ask,
+        LearningMode::Automatic,
+    ] {
+        for rule in [LearningRule::Dictionary, LearningRule::Pair] {
+            config.learning.mode = mode;
+            config.learning.rule = rule;
+            config.learning.per_app = true;
+            let encoded = config_to_toml(&config).unwrap();
+            assert_eq!(
+                super::toml_io::parse_config(&encoded).unwrap().learning,
+                config.learning
+            );
+        }
+    }
+    let mut document = toml::Value::try_from(&config).unwrap();
+    document.as_table_mut().unwrap().remove("learning");
+    let legacy = toml::to_string(&document).unwrap();
+    assert_eq!(
+        super::toml_io::parse_config(&legacy).unwrap().learning.mode,
+        LearningMode::Off
+    );
+    assert!(super::toml_io::parse_config(
+        &legacy.replace("[general]", "[learning]\nmode = 'invalid'\n[general]")
+    )
+    .is_err());
+}
+
 #[test]
 fn clipboard_preference_round_trips_and_legacy_configs_keep_default() {
     let mut config = AppConfig::default();

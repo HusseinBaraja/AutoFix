@@ -8,6 +8,78 @@ use crate::{background::paths::RuntimePaths, settings::AppConfig};
 
 use super::{admin, load_or_create_config, BackgroundError, BackgroundRuntime};
 
+/// Successful native undo learns only after a stable, successful session commit.
+#[test]
+fn undo_learning_requires_committed_bookkeeping_and_stable_input() {
+    for failure in 0..4 {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("learning.sqlite");
+        let mut config = AppConfig::default();
+        config.learning.mode = crate::settings::LearningMode::Automatic;
+        config.learning.rule = crate::settings::LearningRule::Dictionary;
+        let mut processor = super::InputProcessor {
+            learner: crate::dictionary::Learner::default(),
+            pipeline: super::CorrectionPipeline::new().unwrap(),
+            processed_input_sequence: 12,
+            session_manager: super::SessionManager::new(config.context.clone()),
+            config,
+            database: crate::storage::Database::open(&path).unwrap(),
+        };
+        let target = dispatch_target();
+        processor.session_manager.focus(&target);
+        processor
+            .session_manager
+            .input(super::typing::TypedInput::Text("teh".into()));
+        let session = processor.session_manager.active_mut().unwrap();
+        assert!(session.queue_correction("teh".into(), "the".into()));
+        assert!(session.apply_next_correction(&processor.config.context));
+        let undo = session.undo_target().unwrap();
+        processor
+            .session_manager
+            .input(super::typing::TypedInput::Text(" 尾".into()));
+        let stamp = super::InputStamp {
+            position: 7,
+            sequence: 12,
+        };
+        let mut current = stamp;
+        match failure {
+            1 => current.sequence += 1,
+            2 => current.position += 1,
+            3 => processor
+                .session_manager
+                .set_informative_context("different anchor".into()),
+            _ => {}
+        }
+        processor.complete_undo(undo, &target, stamp, current);
+        processor.learner.finish();
+        let policy = processor
+            .database
+            .dictionary()
+            .policy(
+                &target.process_name,
+                &crate::correction::LanguageInfo {
+                    primary_language: None,
+                    detected_languages: Vec::new(),
+                },
+            )
+            .unwrap();
+        if failure == 0 {
+            let session = processor.session_manager.active().unwrap();
+            assert_eq!(session.informative_context(), "teh");
+            assert_eq!(session.editable_context(), " 尾");
+            assert!(session.undo_target().is_none());
+            assert_eq!(policy.terms, ["teh"]);
+        } else {
+            assert!(processor.session_manager.active().is_none());
+            assert!(policy.terms.is_empty());
+        }
+        drop(processor);
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+}
+
 /// Exercise both dispatch checks when hook input arrives before or during the slow gate.
 #[test]
 fn frozen_dispatch_survives_typing_but_manual_and_moved_requests_are_rejected() {
@@ -16,6 +88,7 @@ fn frozen_dispatch_survives_typing_but_manual_and_moved_requests_are_rejected() 
             for during_gate in [false, true] {
                 let config = AppConfig::default();
                 let mut processor = super::InputProcessor {
+                    learner: crate::dictionary::Learner::default(),
                     pipeline: super::CorrectionPipeline::new().unwrap(),
                     processed_input_sequence: 12,
                     session_manager: super::SessionManager::new(config.context.clone()),
@@ -81,6 +154,7 @@ fn failed_frozen_dispatch_preserves_older_work_and_releases_newer_reservations()
     let mut config = AppConfig::default();
     config.context.pending_queue_size = 3;
     let mut processor = super::InputProcessor {
+        learner: crate::dictionary::Learner::default(),
         pipeline: super::CorrectionPipeline::new().unwrap(),
         processed_input_sequence: 12,
         session_manager: super::SessionManager::new(config.context.clone()),
@@ -151,7 +225,7 @@ fn finish_unchanged_dispatch(
             || stamp,
             |_| Some(target.clone()),
             |_, _| Some(live_text.into()),
-            |_, _, _| panic!("unchanged text must not be replaced"),
+            |_, _, _| -> bool { panic!("unchanged text must not be replaced") },
         ) {
             return;
         }
@@ -229,6 +303,7 @@ fn queued_typing_before_or_during_capture_never_enters_informative_context() {
 fn delayed_key_from_previous_focus_cannot_enter_session() {
     let config = AppConfig::default();
     let mut processor = super::InputProcessor {
+        learner: crate::dictionary::Learner::default(),
         pipeline: super::CorrectionPipeline::new().unwrap(),
         processed_input_sequence: super::input_listener::current_input_sequence(),
         session_manager: super::SessionManager::new(config.context.clone()),
@@ -264,6 +339,7 @@ fn delayed_key_from_previous_focus_cannot_enter_session() {
 fn later_character_trigger_keeps_full_editable_snapshot() {
     let config = AppConfig::default();
     let mut processor = super::InputProcessor {
+        learner: crate::dictionary::Learner::default(),
         pipeline: super::CorrectionPipeline::new().unwrap(),
         processed_input_sequence: super::input_listener::current_input_sequence(),
         session_manager: super::SessionManager::new(config.context.clone()),
@@ -320,6 +396,7 @@ fn automatic_triggers_in_one_batch_obey_capacity_and_overflow_policy() {
         let mut config = AppConfig::default();
         config.context.pending_queue_full_behavior = policy;
         let mut processor = super::InputProcessor {
+            learner: crate::dictionary::Learner::default(),
             pipeline: super::CorrectionPipeline::new().unwrap(),
             processed_input_sequence: super::input_listener::current_input_sequence(),
             session_manager: super::SessionManager::new(config.context.clone()),
@@ -363,8 +440,8 @@ fn automatic_triggers_in_one_batch_obey_capacity_and_overflow_policy() {
             }
             crate::settings::PendingQueueFullBehavior::CancelOldest => {
                 assert_eq!(valid.len(), 1);
-                assert_eq!(valid[0].request.executable_context, " next.");
-                assert_eq!(valid[0].request.informative_context, "first.");
+                assert_eq!(valid[0].request.executable_context, "first. next.");
+                assert_eq!(valid[0].request.informative_context, "");
                 assert_eq!(session.editable_context(), "");
             }
             crate::settings::PendingQueueFullBehavior::MergeNewest => {

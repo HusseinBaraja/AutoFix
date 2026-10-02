@@ -1,5 +1,6 @@
 mod background;
 pub mod correction;
+mod dictionary;
 mod ipc;
 mod settings;
 mod storage;

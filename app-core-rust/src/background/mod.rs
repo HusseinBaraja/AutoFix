@@ -90,6 +90,7 @@ enum InputWork {
 
 const INPUT_WORK_QUEUE_LIMIT: usize = 8;
 
+/// Accept read-only capture only while the hook input sequence remains unchanged.
 fn capture_if_current<T>(
     expected: u64,
     current: impl Fn() -> u64,
@@ -103,6 +104,7 @@ fn capture_if_current<T>(
 }
 
 struct InputProcessor {
+    learner: crate::dictionary::Learner,
     pipeline: CorrectionPipeline,
     processed_input_sequence: u64,
     config: AppConfig,
@@ -312,6 +314,7 @@ impl InputWorker {
             .name("autofix-input-processing".into())
             .spawn(move || {
                 let mut processor = InputProcessor {
+                    learner: crate::dictionary::Learner::default(),
                     pipeline,
                     processed_input_sequence: input_listener::current_input_sequence(),
                     session_manager: SessionManager::new(config.context.clone()),
@@ -370,6 +373,7 @@ impl InputWorker {
                     }
                     processor.finish_correction();
                 }
+                processor.learner.finish();
                 let _ = done_sender.send(replacement::finish_shutdown());
             })
             .map_err(BackgroundError::InputWorker)?;
@@ -439,6 +443,8 @@ impl InputProcessor {
 
     /// Defer completion until hook input is drained, then validate the live target and caret.
     fn finish_correction(&mut self) {
+        self.learner
+            .poll(&self.config.learning, self.database.path());
         // Frozen ranges may survive processed typing, but never guess what keys
         // still queued in the hooks did to the target.
         if Self::input_stamp().sequence != self.processed_input_sequence {
@@ -469,8 +475,19 @@ impl InputProcessor {
                         reason = "replacement policy unavailable or denied",
                         "replacement skipped"
                     );
-                    return false;
+                    return replacement::ReplacementConfirmation::default();
                 };
+                // Recheck live exclusions under the same writer reservation as mutation.
+                let Ok(policy) = database
+                    .dictionary()
+                    .policy(&target.process_name, &request.language_info)
+                else {
+                    tracing::warn!("replacement skipped: exclusions unavailable");
+                    return replacement::ReplacementConfirmation::default();
+                };
+                if policy.filter(&request.executable_context, output.clone()) != *output {
+                    return replacement::ReplacementConfirmation::default();
+                }
                 let result = ReplacementEngine::replace(
                     target,
                     request,
@@ -480,7 +497,7 @@ impl InputProcessor {
                 );
                 replacement_uncertain = !result.success && result.may_have_changed;
                 result.log_outcome(false);
-                result.success
+                result.into()
             },
         );
         if replacement_uncertain {
@@ -760,6 +777,8 @@ impl InputProcessor {
         }
     }
 
+    /// Restore a verified session correction, committing bookkeeping before optional learning.
+    /// Any uncertain native result or input race revokes the session's editable ownership.
     fn undo_correction(&mut self) {
         let stamp = Self::input_stamp();
         if stamp.sequence != self.processed_input_sequence {
@@ -819,13 +838,44 @@ impl InputProcessor {
             self.config.replacement.clipboard_enabled,
         );
         result.log_outcome(true);
+        drop(_policy_guard);
         if result.success {
-            if let Some(session) = self.session_manager.active_mut() {
-                session.undo_last_correction(&self.config.context);
-            }
+            self.complete_undo(undo, &target, stamp, Self::input_stamp());
         } else if result.may_have_changed {
             self.session_manager
                 .deactivate(MovementSignal::UnknownPosition);
+        }
+    }
+
+    /// Commit a successful native undo before learning; lost ownership drops the session.
+    fn complete_undo(
+        &mut self,
+        undo: session::CorrectionUndoTarget,
+        target: &target::FocusedTarget,
+        stamp: InputStamp,
+        current_stamp: InputStamp,
+    ) {
+        if current_stamp != stamp
+            || !self
+                .session_manager
+                .active_mut()
+                .is_some_and(|session| session.undo_last_correction(&self.config.context))
+        {
+            self.session_manager
+                .deactivate(MovementSignal::UnknownPosition);
+            tracing::warn!("undo bookkeeping lost session ownership");
+            return;
+        }
+        if self.config.learning.mode != crate::settings::LearningMode::Off {
+            if let Some(rejection) = crate::dictionary::Rejection::from_undo(
+                &undo.original,
+                &undo.corrected,
+                undo.language,
+                target.process_name.clone(),
+            ) {
+                self.learner
+                    .rejected(rejection, &self.config.learning, self.database.path());
+            }
         }
     }
 
@@ -860,15 +910,18 @@ impl InputProcessor {
                 ) {
                     // Freeze the entire current context, including earlier
                     // skipped boundaries. New keys belong to a fresh context.
-                    request.executable_context = editable_snapshot.clone();
                     let (segment, cancelled) = session.freeze_pending(&self.config.context);
-                    if let Some(id) = cancelled {
+                    for id in cancelled {
                         self.pipeline.cancel_segment(id);
                     }
                     if let Some(id) = segment {
+                        // Overflow can restore older unchecked text. Snapshot
+                        // the admitted range after reservation, not before it.
+                        (request.informative_context, request.executable_context) =
+                            session.pending_context(id).unwrap();
                         request.pending_segment_id = Some(id);
                         pending.push(PendingTrigger {
-                            editable_snapshot,
+                            editable_snapshot: request.executable_context.clone(),
                             request,
                         });
                     }
@@ -915,7 +968,7 @@ impl InputProcessor {
         check_target: impl FnOnce(TriggerKind, &AppConfig, &Database) -> SecurityDecision,
     ) -> bool {
         self.pipeline
-            .invalidate(&self.session_manager, current_stamp());
+            .invalidate(&mut self.session_manager, current_stamp());
         let frozen = request.pending_segment_id.is_some();
         if !self.config.correction.enabled || !stamp.permits(current_stamp(), frozen) {
             return false;
@@ -960,10 +1013,10 @@ impl InputProcessor {
                 request.confidence_behavior = self.config.confidence_behavior();
                 let dictionary = match self
                     .database
-                    .custom_dictionary()
-                    .entries_for_app(&target.process_name)
+                    .dictionary()
+                    .policy(&target.process_name, &request.language_info)
                 {
-                    Ok(entries) => entries,
+                    Ok(policy) => policy.terms,
                     Err(error) => {
                         tracing::warn!(%error, "correction skipped: dictionary unavailable");
                         return false;
@@ -985,8 +1038,16 @@ impl InputProcessor {
                     tracing::debug!(session_id = request.session_id, ?request.versions,
                         ?request.engine, ?request.mode, trigger = request.trigger.as_str(),
                         "correction queued");
-                    self.pipeline
-                        .submit(request, session, target, stamp, &self.config, dictionary);
+                    if !self.pipeline.submit(
+                        request,
+                        session,
+                        target,
+                        stamp,
+                        &self.config,
+                        dictionary,
+                    ) {
+                        return false;
+                    }
                     if manual {
                         self.pipeline.wait_manual();
                         self.finish_correction();

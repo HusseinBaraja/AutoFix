@@ -1,5 +1,5 @@
 //! Frozen automatic segments stay separate from the one active editable context.
-use super::{ContextConfig, CorrectionUndo, Session};
+use super::{ContextConfig, Session};
 use crate::settings::PendingQueueFullBehavior;
 
 pub(super) struct FrozenSegment {
@@ -29,27 +29,38 @@ impl Session {
         context
     }
 
-    /// Reserve capacity at the trigger, before later keys in the same batch.
-    /// Return the segment to submit and any worker request to cancel.
-    pub(crate) fn freeze_pending(&mut self, limits: &ContextConfig) -> (Option<u64>, Option<u64>) {
-        if self.position_uncertain() || self.editable_context().trim().is_empty() {
-            return (None, None);
+    /// Snapshot a reserved range and its read-only prefix after overflow handling.
+    pub(crate) fn pending_context(&self, id: u64) -> Option<(String, String)> {
+        let mut informative = self.informative_context.clone();
+        for segment in &self.frozen_segments {
+            if segment.id == id {
+                return Some((informative, segment.original.clone()));
+            }
+            informative.push_str(&segment.original);
         }
-        let mut cancelled = None;
+        None
+    }
+
+    /// Reserve capacity at the trigger, before later keys in the same batch.
+    /// Return the segment to submit and all dependent worker requests to cancel.
+    pub(crate) fn freeze_pending(&mut self, limits: &ContextConfig) -> (Option<u64>, Vec<u64>) {
+        if self.position_uncertain() || self.editable_context().trim().is_empty() {
+            return (None, Vec::new());
+        }
+        let mut cancelled = Vec::new();
         if self.frozen_segments.len() >= usize::from(limits.pending_queue_size.clamp(1, 16)) {
             match limits.pending_queue_full_behavior {
-                PendingQueueFullBehavior::SkipNew => return (None, None),
+                PendingQueueFullBehavior::SkipNew => return (None, Vec::new()),
                 PendingQueueFullBehavior::CancelOldest => {
                     let oldest = self.frozen_segments.front().unwrap().id;
-                    if !self.complete_pending(oldest, None, limits) {
-                        return (None, None);
-                    }
-                    cancelled = Some(oldest);
+                    // Unchecked text must stay executable. Restore the whole
+                    // suffix before freezing it again, preserving document order.
+                    cancelled = self.restore_pending_from(oldest);
                 }
                 PendingQueueFullBehavior::MergeNewest => {
                     let newest = self.frozen_segments.pop_back().unwrap();
                     self.correction_floor -= newest.original.chars().count();
-                    return (None, Some(newest.id));
+                    return (None, vec![newest.id]);
                 }
             }
         }
@@ -97,12 +108,12 @@ impl Session {
         None
     }
 
-    /// Consume in document order. None discards the result and retires original
-    /// text; a replacement is recorded only after native mutation succeeds.
+    /// Commit only checked text, in document order. The caller confirms native
+    /// mutation first for changed text; unchanged text needs accepted engine output.
     pub(crate) fn complete_pending(
         &mut self,
         id: u64,
-        replacement: Option<&str>,
+        corrected: &str,
         limits: &ContextConfig,
     ) -> bool {
         let Some(segment) = self.frozen_segments.front() else {
@@ -117,26 +128,16 @@ impl Session {
             return false;
         }
         self.correction_floor -= segment.original.chars().count();
-        let corrected = replacement.unwrap_or(&segment.original);
         self.append_informative(corrected, limits);
         self.versions.context = self.versions.context.wrapping_add(1);
         if corrected != segment.original {
-            let retained_chars = corrected
-                .chars()
-                .count()
-                .min(self.informative_context.chars().count());
-            let retained: String = corrected
-                .chars()
-                .skip(corrected.chars().count() - retained_chars)
-                .collect();
-            let start = self.informative_context.len() - retained.len();
-            self.correction_undo_history.push(CorrectionUndo {
-                complete_range_retained: retained == corrected,
-                original: segment.original,
-                replacement: retained,
-                informative_start: start,
-                caret_anchor: self.versions.caret_anchor,
-            });
+            let executable_range = 0..segment.original.chars().count();
+            self.record_undo(
+                segment.original,
+                corrected.to_owned(),
+                executable_range,
+                limits,
+            );
         }
         true
     }
@@ -150,7 +151,7 @@ impl Session {
         }
     }
 
-    /// Restore a failed dispatch and its newer reservations without disturbing older work.
+    /// Restore failed or skipped work and its newer reservations without disturbing older work.
     /// A suffix can return to editable text while preserving document order.
     pub(crate) fn restore_pending_from(&mut self, id: u64) -> Vec<u64> {
         let Some(index) = self
@@ -178,7 +179,7 @@ impl Session {
     ) {
         self.informative_context = context;
         self.shrink_informative(limits);
-        self.correction_undo_history.clear();
+        self.invalidate_undo_anchors();
         self.versions.context = self.versions.context.wrapping_add(1);
         self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
         for segment in &mut self.frozen_segments {
@@ -219,18 +220,18 @@ mod tests {
             session.pending_following_text(first).as_deref(),
             Some("é next 尾")
         );
-        assert!(!session.complete_pending(second, Some("bad"), &limits));
-        assert!(session.complete_pending(first, Some("the "), &limits));
+        assert!(!session.complete_pending(second, "bad", &limits));
+        assert!(session.complete_pending(first, "the ", &limits));
         assert_eq!(session.informative_context(), "the ");
         assert!(session.pending_matches(second, "é next "));
-        assert!(session.complete_pending(second, Some("É next "), &limits));
+        assert!(session.complete_pending(second, "É next ", &limits));
         assert_eq!(session.informative_context(), "the É next ");
         assert_eq!(session.editable_context(), "尾");
         assert!(session.undo_last_correction(&limits));
         assert!(session.undo_last_correction(&limits));
         assert_eq!(session.informative_context(), "teh é next ");
         assert_eq!(session.editable_context(), "尾");
-        assert!(!session.complete_pending(first, Some("duplicate"), &limits));
+        assert!(!session.complete_pending(first, "duplicate", &limits));
     }
 
     /// Default overflow keeps the admitted range and leaves newer text editable.
@@ -240,15 +241,15 @@ mod tests {
         let mut session = session("first.");
         let first = session.freeze_pending(&limits).0.unwrap();
         session.input(TypedInput::Text(" next.".into()), &limits);
-        assert_eq!(session.freeze_pending(&limits), (None, None));
+        assert_eq!(session.freeze_pending(&limits), (None, vec![]));
         assert_eq!(session.editable_context(), " next.");
         assert!(session.pending_matches(first, "first."));
         assert_eq!(session.correction_informative_context(), "first.");
     }
 
-    /// Cancel-oldest releases capacity by retiring the original before admitting newer text.
+    /// Cancel-oldest preserves unchecked original text in the newly admitted range.
     #[test]
-    fn cancel_oldest_retires_original_and_admits_new_segment() {
+    fn cancel_oldest_rechecks_original_with_new_segment() {
         let limits = ContextConfig {
             pending_queue_full_behavior: PendingQueueFullBehavior::CancelOldest,
             ..ContextConfig::default()
@@ -257,12 +258,71 @@ mod tests {
         let first = session.freeze_pending(&limits).0.unwrap();
         session.input(TypedInput::Text(" new".into()), &limits);
         let (second, cancelled) = session.freeze_pending(&limits);
-        assert_eq!(cancelled, Some(first));
+        assert_eq!(cancelled, vec![first]);
         assert_ne!(second, Some(first));
-        assert_eq!(session.informative_context(), "teh");
+        assert_eq!(session.informative_context(), "");
         assert!(!session.pending_matches(first, "teh"));
-        assert!(session.complete_pending(second.unwrap(), None, &limits));
+        let second = second.unwrap();
+        assert!(session.pending_matches(second, "teh new"));
+        assert!(session.complete_pending(second, "teh new", &limits));
         assert_eq!(session.informative_context(), "teh new");
+    }
+
+    /// Overflow must cancel every dependent range rather than commit unchecked text.
+    #[test]
+    fn cancel_oldest_restores_entire_full_queue_before_freezing_again() {
+        let limits = ContextConfig {
+            pending_queue_size: 2,
+            pending_queue_full_behavior: PendingQueueFullBehavior::CancelOldest,
+            ..ContextConfig::default()
+        };
+        let mut session = session("teh");
+        let first = session.freeze_pending(&limits).0.unwrap();
+        session.input(TypedInput::Text(" é".into()), &limits);
+        let second = session.freeze_pending(&limits).0.unwrap();
+        session.input(TypedInput::Text(" 尾".into()), &limits);
+        let (new, cancelled) = session.freeze_pending(&limits);
+        assert_eq!(cancelled, vec![first, second]);
+        let new = new.unwrap();
+        assert_eq!(
+            session.pending_context(new),
+            Some((String::new(), "teh é 尾".into()))
+        );
+        assert!(session.pending_matches(new, "teh é 尾"));
+        assert_eq!(session.informative_context(), "");
+        assert!(session.undo_target().is_none());
+    }
+
+    /// Frozen commit shrinks memory, preserves newer text, and retains safe undo.
+    #[test]
+    fn frozen_commit_shrinks_context_and_retains_undo_only_for_the_complete_span() {
+        for cap in [5, 8] {
+            let limits = ContextConfig {
+                informative_context_max_chars: cap,
+                ..ContextConfig::default()
+            };
+            let mut session = session("teh é");
+            session.set_informative_context("older ".into(), &limits);
+            let id = session.freeze_pending(&limits).0.unwrap();
+            session.input(TypedInput::Text(" 尾".into()), &limits);
+            assert!(session.complete_pending(id, "the é", &limits));
+            assert!(session.informative_context().ends_with("the é"));
+            assert!(session.informative_context().chars().count() <= cap as usize);
+            assert_eq!(session.editable_context(), " 尾");
+            let undo = session.undo_target().unwrap();
+            assert_eq!(undo.original, "teh é");
+            assert_eq!(undo.corrected, "the é");
+            assert_eq!(undo.following, " 尾");
+        }
+        let limits = ContextConfig {
+            informative_context_max_chars: 2,
+            ..ContextConfig::default()
+        };
+        let mut session = session("teh é");
+        let id = session.freeze_pending(&limits).0.unwrap();
+        assert!(session.complete_pending(id, "the é", &limits));
+        assert_eq!(session.informative_context(), " é");
+        assert!(session.undo_target().is_none());
     }
 
     /// Merge-newest restores only the latest frozen range and preserves older pending work.
@@ -278,7 +338,7 @@ mod tests {
         session.input(TypedInput::Text(" second.".into()), &limits);
         let second = session.freeze_pending(&limits).0.unwrap();
         session.input(TypedInput::Text(" third.".into()), &limits);
-        assert_eq!(session.freeze_pending(&limits), (None, Some(second)));
+        assert_eq!(session.freeze_pending(&limits), (None, vec![second]));
         assert_eq!(session.editable_context(), " second. third.");
         assert!(session.pending_matches(first, "first."));
         assert!(!session.pending_matches(second, " second."));
@@ -347,7 +407,7 @@ mod tests {
         session.input(TypedInput::Text(" next".into()), &limits);
         session.set_captured_informative_context("earlier ".into(), &limits);
         assert!(session.pending_matches(id, "teh."));
-        assert!(session.complete_pending(id, None, &limits));
+        assert!(session.complete_pending(id, "teh.", &limits));
         assert_eq!(session.informative_context(), "earlier teh.");
         assert_eq!(session.editable_context(), " next");
     }

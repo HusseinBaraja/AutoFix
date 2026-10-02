@@ -9,6 +9,45 @@ use super::{
     LearnedCorrectionRule,
 };
 
+/// Optional metadata must neither create a missing database nor migrate an existing one.
+#[test]
+fn metadata_nowait_never_creates_or_migrates_storage() {
+    let path = std::env::temp_dir().join(format!(
+        "autofix-metadata-{}.sqlite",
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let metadata = CorrectionMetadata {
+        session_id: "1".into(),
+        app_process_name: "notepad.exe".into(),
+        trigger_type: "manual_shortcut".into(),
+        confidence_tier: "high".into(),
+        engine_used: "local_rule".into(),
+        replacement_method: "none".into(),
+        result_reason: "no_correction_needed".into(),
+        latency_ms: 0,
+    };
+    assert!(Database::record_metadata_nowait(&path, &metadata).is_err());
+    assert!(!path.exists());
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("create table sentinel (value text)")
+        .unwrap();
+    assert!(Database::record_metadata_nowait(&path, &metadata).is_err());
+    let tables: i64 = connection
+        .query_row(
+            "select count(*) from sqlite_master where type = 'table'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(tables, 1);
+    drop(connection);
+    fs::remove_file(path).unwrap();
+}
+
 #[test]
 fn opens_sqlite_database_and_runs_migrations() {
     let database = Database::open_memory().unwrap();

@@ -12,6 +12,209 @@ const STAMP: InputStamp = InputStamp {
     sequence: 12,
 };
 
+/// Unavailable exclusion storage refuses submission without dispatching work or changing session text.
+#[test]
+fn unavailable_exclusions_refuse_submission_without_storage_side_effects() {
+    for failure in ["missing", "schema", "locked"] {
+        let path = std::env::temp_dir().join(format!(
+            "autofix-submit-policy-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let config = AppConfig::default();
+        let manager = manager(&config, "teh");
+        let mut connection = None;
+        let mut database = None;
+        if failure != "missing" {
+            let writer = rusqlite::Connection::open(&path).unwrap();
+            if failure == "schema" {
+                writer
+                    .execute_batch("create table sentinel (value text)")
+                    .unwrap();
+            } else {
+                database = Some(crate::storage::Database::open(&path).unwrap());
+                writer
+                    .execute_batch("PRAGMA journal_mode=delete; BEGIN EXCLUSIVE")
+                    .unwrap();
+            }
+            connection = Some(writer);
+        }
+        let mut pipeline =
+            CorrectionPipeline::start(|_| panic!("unavailable exclusions must not reach engine"))
+                .unwrap();
+        pipeline.database_path = Some(path.clone());
+        let started = Instant::now();
+        assert!(!pipeline.submit(
+            request(&manager, &config),
+            manager.active().unwrap(),
+            target(),
+            STAMP,
+            &config,
+            vec![]
+        ));
+        assert!(started.elapsed() < Duration::from_millis(250));
+        assert!(pipeline.active.is_empty());
+        assert!(pipeline.mailbox.0.lock().unwrap().jobs.is_empty());
+        assert_eq!(manager.active().unwrap().editable_context(), "teh");
+        if failure == "schema" {
+            let tables: usize = connection
+                .as_ref()
+                .unwrap()
+                .query_row(
+                    "select count(*) from sqlite_master where type = 'table'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(tables, 1);
+        }
+        drop(pipeline);
+        drop(connection);
+        drop(database);
+        if failure == "missing" {
+            assert!(!path.exists());
+        } else {
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+}
+
+/// Submission reads compatible exclusion tables without invoking migrations, even during an API send.
+#[test]
+fn submit_uses_exclusion_snapshot_without_migration_writes() {
+    for journal in ["delete", "wal"] {
+        let path = std::env::temp_dir().join(format!(
+            "autofix-submit-no-migrate-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let database = crate::storage::Database::open(&path).unwrap();
+        let writer = rusqlite::Connection::open(&path).unwrap();
+        writer
+            .execute_batch(&format!(
+                "PRAGMA journal_mode={journal}; drop table schema_migrations;
+            insert into custom_dictionary_entries(language_code,entry) values ('en','teh');"
+            ))
+            .unwrap();
+        let config = AppConfig::default();
+        let manager = manager(&config, "teh");
+        let mut pipeline = CorrectionPipeline::start(|job| {
+            assert_eq!(job.exclusions.terms, ["teh"]);
+            CorrectionOutput::unchanged(
+                job.input.executable_context.clone(),
+                ConfidenceTier::High,
+                NoChangeReason::NoCorrectionNeeded,
+                0,
+            )
+        })
+        .unwrap();
+        pipeline.database_path = Some(path.clone());
+        let guard = crate::storage::AppPolicyGuard::acquire(&path).unwrap();
+        let started = Instant::now();
+        assert!(pipeline.submit(
+            request(&manager, &config),
+            manager.active().unwrap(),
+            target(),
+            STAMP,
+            &config,
+            vec![]
+        ));
+        assert!(started.elapsed() < Duration::from_millis(250));
+        wait_completion(&pipeline);
+        let migration_tables: usize = writer
+            .query_row(
+                "select count(*) from sqlite_master where name = 'schema_migrations'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(migration_tables, 0);
+        drop(guard);
+        drop(pipeline);
+        drop(writer);
+        drop(database);
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+/// Persisted pairs filter worker edits without losing the original correction language.
+#[test]
+fn persisted_pair_filters_worker_edits_and_learns_original_language() {
+    let path = std::env::temp_dir().join(format!(
+        "autofix-pair-pipeline-{}.sqlite",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let db = crate::storage::Database::open(&path).unwrap();
+    let rejection = crate::dictionary::Rejection::from_undo(
+        "teh",
+        "the",
+        Some("en".into()),
+        "notepad.exe".into(),
+    )
+    .unwrap();
+    let learning = crate::settings::LearningConfig {
+        mode: crate::settings::LearningMode::Automatic,
+        ..Default::default()
+    };
+    db.dictionary().remember(&rejection, &learning).unwrap();
+    let mut config = AppConfig::default();
+    config.correction.preferred_language = Some("en".into());
+    let mut manager = manager(&config, "teh wierd");
+    let mut pipeline = CorrectionPipeline::with_database(&db).unwrap();
+    let mut request = request(&manager, &config);
+    request.language_info = crate::correction::LanguageInfo {
+        primary_language: Some("en".into()),
+        detected_languages: vec!["en".into()],
+    };
+    assert!(pipeline.submit(
+        request,
+        manager.active().unwrap(),
+        target(),
+        STAMP,
+        &config,
+        vec![]
+    ));
+    wait_completion(&pipeline);
+    let replaced = Cell::new(0);
+    assert!(finish(
+        &mut pipeline,
+        &mut manager,
+        &config,
+        STAMP,
+        &replaced,
+        true
+    ));
+    assert_eq!(replaced.get(), 1);
+    assert_eq!(manager.active().unwrap().informative_context(), "teh weird");
+    assert_eq!(
+        manager
+            .active()
+            .unwrap()
+            .undo_target()
+            .unwrap()
+            .language
+            .as_deref(),
+        Some("en")
+    );
+    assert!(manager
+        .active_mut()
+        .unwrap()
+        .undo_last_correction(&config.context));
+    assert_eq!(manager.active().unwrap().informative_context(), "teh wierd");
+    drop(pipeline);
+    drop(db);
+    std::fs::remove_file(path).unwrap();
+}
+
 /// A real queued API job must not transmit after revocation commits behind an earlier send.
 #[test]
 fn queued_api_job_is_denied_after_rule_revocation_and_releases_its_slot() {
@@ -147,28 +350,20 @@ fn queued_api_job_is_denied_after_rule_revocation_and_releases_its_slot() {
         || STAMP,
         |_| None,
         |_, _| panic!("revoked target must not be captured"),
-        |_, _, _| panic!("revoked target must not be edited")
+        |_, _, _| -> bool { panic!("revoked target must not be edited") }
     ));
-    wait_completion(&pipeline);
-    assert!(!pipeline.finish(
-        &mut manager,
-        &config.context,
-        || STAMP,
-        |_| panic!("denied send must complete silently"),
-        |_, _| panic!("denied send must not capture"),
-        |_, _, _| panic!("denied send must not replace")
-    ));
+    // The rejected first segment restores the dependent queued request too.
     let listener = server.join().unwrap();
     assert_eq!(
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock
     );
     assert!(pipeline.active.is_empty());
+    assert_eq!(manager.active().unwrap().informative_context(), "");
     assert_eq!(
-        manager.active().unwrap().informative_context(),
-        "First. Second."
+        manager.active().unwrap().editable_context(),
+        "First. Second. next"
     );
-    assert_eq!(manager.active().unwrap().editable_context(), " next");
     assert!(!pipeline.take_timeout_notice());
 }
 
@@ -274,7 +469,7 @@ fn stale_cancelled_or_secure_timeouts_cannot_show_notices() {
                 Some(live)
             },
             |_, _| panic!("timeout must not read target text"),
-            |_, _, _| panic!("timeout must not replace text"),
+            |_, _, _| -> bool { panic!("timeout must not replace text") },
         ));
         assert!(!pipeline.take_timeout_notice());
     }
@@ -298,12 +493,12 @@ fn automatic_timeout_releases_frozen_slot_without_live_target_calls() {
         || STAMP,
         |_| panic!("automatic timeout must skip live security/UIA calls"),
         |_, _| panic!("automatic timeout must not capture text"),
-        |_, _, _| panic!("automatic timeout must not replace text"),
+        |_, _, _| -> bool { panic!("automatic timeout must not replace text") },
     ));
     assert!(!pipeline.take_timeout_notice());
     assert!(pipeline.active.is_empty());
-    assert_eq!(manager.active().unwrap().informative_context(), "teh");
-    assert_eq!(manager.active().unwrap().editable_context(), " next");
+    assert_eq!(manager.active().unwrap().informative_context(), "");
+    assert_eq!(manager.active().unwrap().editable_context(), "teh next");
 }
 
 /// Build a safe ordinary control with stable focus identity.
@@ -376,10 +571,12 @@ fn submit_frozen(
         .active_mut()
         .unwrap()
         .freeze_pending(&config.context);
-    if let Some(id) = cancelled {
+    for id in cancelled {
         pipeline.cancel_segment(id);
     }
     let id = segment.unwrap();
+    (request.informative_context, request.executable_context) =
+        manager.active().unwrap().pending_context(id).unwrap();
     request.pending_segment_id = Some(id);
     pipeline.submit(
         request,
@@ -415,7 +612,7 @@ fn delayed_frozen_corrections_keep_all_results_and_preserve_newer_typing() {
         sequence: STAMP.sequence + 5,
         ..STAMP
     };
-    pipeline.invalidate(&manager, stamp);
+    pipeline.invalidate(&mut manager, stamp);
     assert_eq!(pipeline.active.len(), 2);
     release_tx.send(()).unwrap();
     wait_completion(&pipeline);
@@ -479,7 +676,11 @@ fn cancel_oldest_suppresses_late_transport_and_runs_new_segment() {
     submit_frozen(&mut pipeline, &mut manager, &config);
     assert!(cancelled.load(Ordering::Acquire));
     assert_eq!(pipeline.active.len(), 1);
-    assert_eq!(manager.active().unwrap().informative_context(), "teh");
+    assert_eq!(manager.active().unwrap().informative_context(), "");
+    assert_eq!(
+        pipeline.active.front().unwrap().request.executable_context,
+        "teh teh"
+    );
     release_tx.send(()).unwrap();
     let newest = started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     assert_ne!(first, newest);
@@ -494,14 +695,14 @@ fn cancel_oldest_suppresses_late_transport_and_runs_new_segment() {
         &Cell::new(0),
         true
     ));
-    assert_eq!(manager.active().unwrap().informative_context(), "teh the");
+    assert_eq!(manager.active().unwrap().informative_context(), "the the");
 }
 
-/// Failed and suppressed corrections retire originals without importing engine output.
+/// Failed and suppressed corrections restore unchecked text and release capacity.
 #[test]
 fn frozen_failures_release_capacity_without_committing_engine_output() {
     let config = AppConfig::default();
-    for failure in 0..5 {
+    for failure in 0..9 {
         let mut manager = manager(&config, "teh");
         let mut pipeline = CorrectionPipeline::new().unwrap();
         submit_frozen(&mut pipeline, &mut manager, &config);
@@ -515,6 +716,34 @@ fn frozen_failures_release_capacity_without_committing_engine_output() {
                 1 => output.behavior = ConfidenceBehavior::Suggestion,
                 2 => output.confidence = ConfidenceTier::Low,
                 3 | 4 => {}
+                5 => {
+                    *output = CorrectionOutput::failed(
+                        "teh".into(),
+                        crate::correction::EngineFailure {
+                            kind: crate::correction::EngineFailureKind::Internal,
+                            message: "test failure".into(),
+                            retryable: false,
+                        },
+                        0,
+                    )
+                }
+                6 => output.behavior = ConfidenceBehavior::DoNothing,
+                7 => {
+                    *output = CorrectionOutput::unchanged(
+                        "teh".into(),
+                        ConfidenceTier::Medium,
+                        NoChangeReason::ConfidenceBelowConfiguredBehavior,
+                        0,
+                    )
+                }
+                8 => {
+                    *output = CorrectionOutput::unchanged(
+                        "teh".into(),
+                        ConfidenceTier::Low,
+                        NoChangeReason::UnsupportedLanguage,
+                        0,
+                    )
+                }
                 _ => unreachable!(),
             }
         }
@@ -532,8 +761,9 @@ fn frozen_failures_release_capacity_without_committing_engine_output() {
             }
         ));
         assert_eq!(calls.get(), usize::from(failure == 3));
-        assert_eq!(manager.active().unwrap().informative_context(), "teh");
-        assert_eq!(manager.active().unwrap().editable_context(), " next");
+        assert_eq!(manager.active().unwrap().informative_context(), "");
+        assert_eq!(manager.active().unwrap().editable_context(), "teh next");
+        assert!(manager.active().unwrap().undo_target().is_none());
         assert!(manager
             .active_mut()
             .unwrap()
@@ -541,6 +771,212 @@ fn frozen_failures_release_capacity_without_committing_engine_output() {
             .0
             .is_some());
     }
+}
+
+/// Failure cancels dependent work and preserves the whole span for a successful retry.
+#[test]
+fn failed_frozen_prefix_restores_dependents_and_can_be_corrected_on_retry() {
+    let mut config = AppConfig::default();
+    config.context.pending_queue_size = 2;
+    let mut manager = manager(&config, "teh");
+    let mut pipeline = CorrectionPipeline::new().unwrap();
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    wait_completion(&pipeline);
+    manager.input(TypedInput::Text(" wierd".into()));
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    let cancelled = pipeline.active.back().unwrap().cancelled.clone();
+    manager.input(TypedInput::Text(" 尾".into()));
+    pipeline
+        .mailbox
+        .0
+        .lock()
+        .unwrap()
+        .completion
+        .as_mut()
+        .unwrap()
+        .output = CorrectionOutput::timed_out("teh".into(), 700);
+    assert!(!finish(
+        &mut pipeline,
+        &mut manager,
+        &config,
+        STAMP,
+        &Cell::new(0),
+        false
+    ));
+    assert!(cancelled.load(Ordering::Acquire));
+    assert!(pipeline.active.is_empty());
+    assert_eq!(manager.active().unwrap().informative_context(), "");
+    assert_eq!(manager.active().unwrap().editable_context(), "teh wierd 尾");
+    submit_frozen(&mut pipeline, &mut manager, &config);
+    wait_completion(&pipeline);
+    assert!(finish(
+        &mut pipeline,
+        &mut manager,
+        &config,
+        STAMP,
+        &Cell::new(0),
+        true
+    ));
+    assert_eq!(
+        manager.active().unwrap().informative_context(),
+        "the weird 尾"
+    );
+    assert_eq!(manager.active().unwrap().editable_context(), "");
+    assert!(manager
+        .active_mut()
+        .unwrap()
+        .undo_last_correction(&config.context));
+    assert_eq!(
+        manager.active().unwrap().informative_context(),
+        "teh wierd 尾"
+    );
+}
+
+/// Every trigger accepts only checked unchanged text and shrinks its read-only context.
+#[test]
+fn unchanged_commit_policy_preserves_skips_for_all_triggers() {
+    let path = std::env::temp_dir().join(format!(
+        "autofix-no-change-{}.sqlite",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let database = crate::storage::Database::open(&path).unwrap();
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    for trigger in [
+        TriggerKind::ManualShortcut,
+        TriggerKind::WordCount,
+        TriggerKind::Character,
+        TriggerKind::FinalFixBeforeReanchor,
+    ] {
+        for reason in [
+            NoChangeReason::NoCorrectionNeeded,
+            NoChangeReason::AllCandidatesProtected,
+            NoChangeReason::ConfidenceBelowConfiguredBehavior,
+            NoChangeReason::UnsupportedLanguage,
+            NoChangeReason::UncertainLanguage,
+            NoChangeReason::EngineUnavailable,
+            NoChangeReason::TimedOut,
+            NoChangeReason::EngineError,
+        ] {
+            let mut config = AppConfig::default();
+            config.context.informative_context_max_chars = 12;
+            config.logging.debug_mode_enabled = true;
+            config.logging.full_text_debug_mode_enabled = true;
+            let mut manager = manager(&config, "hello");
+            manager.set_informative_context("Old context ".into());
+            database.clear_logs().unwrap();
+            let mut pipeline = CorrectionPipeline::with_database(&database).unwrap();
+            if matches!(trigger, TriggerKind::WordCount | TriggerKind::Character) {
+                submit_frozen(&mut pipeline, &mut manager, &config);
+                pipeline.active.front_mut().unwrap().request.trigger = trigger;
+                manager.input(TypedInput::Text(" 尾".into()));
+            } else {
+                let mut request = request(&manager, &config);
+                request.trigger = trigger;
+                assert!(pipeline.submit(
+                    request,
+                    manager.active().unwrap(),
+                    target(),
+                    STAMP,
+                    &config,
+                    vec![]
+                ));
+            }
+            wait_completion(&pipeline);
+            pipeline
+                .mailbox
+                .0
+                .lock()
+                .unwrap()
+                .completion
+                .as_mut()
+                .unwrap()
+                .output = CorrectionOutput::unchanged(
+                "hello".into(),
+                ConfidenceTier::Low,
+                reason.clone(),
+                17,
+            );
+            let accepted = matches!(
+                reason,
+                NoChangeReason::NoCorrectionNeeded | NoChangeReason::AllCandidatesProtected
+            );
+            let calls = Cell::new(0);
+            assert_eq!(
+                finish(&mut pipeline, &mut manager, &config, STAMP, &calls, false),
+                accepted
+            );
+            assert_eq!(calls.get(), 0);
+            // A completion is consumed once, including its metadata event.
+            assert!(!finish(
+                &mut pipeline,
+                &mut manager,
+                &config,
+                STAMP,
+                &calls,
+                false
+            ));
+            let events: i64 = connection
+                .query_row("select count(*) from correction_metadata", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(events, i64::from(accepted));
+            if accepted {
+                let metadata: (String, String, String, String, String, String, u64) = connection.query_row(
+                    "select session_id, app_process_name, trigger_type, confidence_tier, replacement_method, result_reason, latency_ms from correction_metadata",
+                    [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?))
+                ).unwrap();
+                assert_eq!(
+                    metadata,
+                    (
+                        manager.active().unwrap().id().to_string(),
+                        "notepad.exe".into(),
+                        trigger.as_str().into(),
+                        "low".into(),
+                        "none".into(),
+                        if reason == NoChangeReason::NoCorrectionNeeded {
+                            "no_correction_needed"
+                        } else {
+                            "all_candidates_protected"
+                        }
+                        .into(),
+                        17
+                    )
+                );
+            }
+            let debug_events: i64 = connection
+                .query_row("select count(*) from debug_events", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(debug_events, 0);
+            let session = manager.active().unwrap();
+            let newer = if matches!(trigger, TriggerKind::WordCount | TriggerKind::Character) {
+                " 尾"
+            } else {
+                ""
+            };
+            assert_eq!(
+                session.editable_context(),
+                if accepted {
+                    newer.to_owned()
+                } else {
+                    format!("hello{newer}")
+                }
+            );
+            if accepted {
+                assert!(session.informative_context().ends_with("hello"));
+                assert!(session.informative_context().chars().count() <= 12);
+            } else {
+                assert_eq!(session.informative_context(), "Old context ");
+            }
+            assert!(session.undo_target().is_none());
+        }
+    }
+    drop(connection);
+    drop(database);
+    std::fs::remove_file(path).unwrap();
 }
 
 /// Completion rejects position changes and input arriving during live security validation.
@@ -565,7 +1001,7 @@ fn frozen_result_revalidates_queued_position_and_input_during_security_check() {
                 Some(target())
             },
             |_, _| panic!("raced input reached live range validation"),
-            |_, _, _| panic!("raced input reached replacement")
+            |_, _, _| -> bool { panic!("raced input reached replacement") }
         ));
     }
 }
@@ -632,6 +1068,7 @@ fn input_processor_defers_frozen_completion_until_hook_input_is_drained() {
     submit_frozen(&mut pipeline, &mut manager, &config);
     wait_completion(&pipeline);
     let mut processor = crate::background::InputProcessor {
+        learner: crate::dictionary::Learner::default(),
         pipeline,
         processed_input_sequence: crate::background::input_listener::current_input_sequence()
             .wrapping_sub(1),
@@ -698,6 +1135,152 @@ fn finish(
             success
         },
     )
+}
+
+/// A policy writer must not delay accepted no-change commits or later input.
+#[test]
+fn no_change_metadata_contention_never_stalls_completion() {
+    for mode in ["delete", "wal"] {
+        let path = std::env::temp_dir().join(format!(
+            "autofix-nowait-{mode}-{}.sqlite",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let database = crate::storage::Database::open(&path).unwrap();
+        let writer = rusqlite::Connection::open(&path).unwrap();
+        writer.pragma_update(None, "journal_mode", mode).unwrap();
+        let config = AppConfig::default();
+        let mut manager = manager(&config, "hello");
+        let mut pipeline = CorrectionPipeline::with_database(&database).unwrap();
+        submit_frozen(&mut pipeline, &mut manager, &config);
+        wait_completion(&pipeline);
+        manager.input(TypedInput::Text(" 尾".into()));
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let calls = Cell::new(0);
+        let started = Instant::now();
+        assert!(finish(
+            &mut pipeline,
+            &mut manager,
+            &config,
+            STAMP,
+            &calls,
+            false
+        ));
+        assert!(started.elapsed() < Duration::from_millis(250));
+        assert_eq!(calls.get(), 0);
+        assert_eq!(manager.active().unwrap().informative_context(), "hello");
+        assert_eq!(manager.active().unwrap().editable_context(), " 尾");
+        manager.input(TypedInput::Text(" next".into()));
+        assert_eq!(manager.active().unwrap().editable_context(), " 尾 next");
+        assert!(pipeline.active.is_empty());
+        writer.execute_batch("ROLLBACK").unwrap();
+        let count: i64 = writer
+            .query_row("select count(*) from correction_metadata", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        // Losing optional telemetry does not poison later accepted commits.
+        submit(&mut pipeline, &manager, &config);
+        wait_completion(&pipeline);
+        assert!(finish(
+            &mut pipeline,
+            &mut manager,
+            &config,
+            STAMP,
+            &calls,
+            false
+        ));
+        let count: i64 = writer
+            .query_row("select count(*) from correction_metadata", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+        drop(pipeline);
+        drop(writer);
+        drop(database);
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+/// Manual expansion must fit the Unicode typed buffer before any native mutation.
+#[test]
+fn oversized_manual_result_is_refused_before_native_replacement() {
+    let config = AppConfig::default();
+    let original = format!("{}teh", "é".repeat(4093));
+    let mut manager = manager(&config, &original);
+    let mut pipeline = CorrectionPipeline::new().unwrap();
+    submit(&mut pipeline, &manager, &config);
+    wait_completion(&pipeline);
+    let mut state = pipeline.mailbox.0.lock().unwrap();
+    state.completion.as_mut().unwrap().output = CorrectionOutput::changed(
+        format!("{}the!", "é".repeat(4093)),
+        ConfidenceTier::High,
+        None,
+        1,
+    );
+    drop(state);
+    let calls = Cell::new(0);
+    assert!(!finish(
+        &mut pipeline,
+        &mut manager,
+        &config,
+        STAMP,
+        &calls,
+        true
+    ));
+    assert_eq!(calls.get(), 0);
+    assert_eq!(manager.active().unwrap().editable_context(), original);
+    assert!(manager.active().unwrap().informative_context().is_empty());
+    assert!(manager.active().unwrap().undo_target().is_none());
+}
+
+/// Input arriving after a successful edit invalidates ownership and dependent work.
+#[test]
+fn input_race_after_native_success_drops_session_instead_of_restoring_stale_text() {
+    for frozen in [false, true] {
+        let mut config = AppConfig::default();
+        config.context.pending_queue_size = 2;
+        let mut manager = manager(&config, "teh");
+        let mut pipeline = CorrectionPipeline::new().unwrap();
+        if frozen {
+            submit_frozen(&mut pipeline, &mut manager, &config);
+            manager.input(TypedInput::Text(" next".into()));
+            submit_frozen(&mut pipeline, &mut manager, &config);
+        } else {
+            submit(&mut pipeline, &manager, &config);
+        }
+        wait_completion(&pipeline);
+        let live = manager.active().unwrap().executable_context();
+        let current = Cell::new(STAMP);
+        let calls = Cell::new(0);
+        assert!(!pipeline.finish(
+            &mut manager,
+            &config.context,
+            || current.get(),
+            |_| Some(target()),
+            |_, _| Some(live),
+            |_, _, _| {
+                calls.set(calls.get() + 1);
+                current.set(InputStamp {
+                    sequence: STAMP.sequence + 1,
+                    ..STAMP
+                });
+                true
+            }
+        ));
+        assert_eq!(calls.get(), 1);
+        assert!(manager.active().is_none());
+        assert!(pipeline.active.is_empty());
+        assert!(pipeline.mailbox.0.lock().unwrap().jobs.is_empty());
+        manager.focus(&target());
+        manager.input(TypedInput::Text("fresh".into()));
+        assert_eq!(manager.active().unwrap().editable_context(), "fresh");
+        assert!(manager.active().unwrap().undo_target().is_none());
+    }
 }
 
 /// Confirmed replacement commits once and records the original span for undo.
@@ -823,7 +1406,7 @@ fn security_and_input_changes_during_live_validation_block_replacement() {
                 Some(target)
             },
             |_, _| panic!("invalid result reached live range validation"),
-            |_, _, _| panic!("invalid result reached replacement")
+            |_, _, _| -> bool { panic!("invalid result reached replacement") }
         ));
         assert_eq!(manager.active().unwrap().editable_context(), "teh");
     }
@@ -857,7 +1440,8 @@ fn live_range_must_match_exactly_before_caret() {
             }
         ));
         assert_eq!(calls.get(), 0);
-        assert_eq!(manager.active().unwrap().informative_context(), "teh");
+        assert_eq!(manager.active().unwrap().informative_context(), "");
+        assert_eq!(manager.active().unwrap().editable_context(), "teh");
     }
 }
 
@@ -953,7 +1537,7 @@ fn unchanged_success_commits_only_after_validation() {
         || STAMP,
         |_| Some(target()),
         |_, _| Some(live),
-        |_, _, _| panic!("unchanged text needs no replacement")
+        |_, _, _| -> bool { panic!("unchanged text needs no replacement") }
     ));
     assert_eq!(manager.active().unwrap().informative_context(), "hello");
     assert_eq!(manager.active().unwrap().editable_context(), "");
@@ -1049,7 +1633,7 @@ fn slow_engine_never_blocks_automatic_input_and_keeps_only_latest_queued_work() 
     let cancelled = Arc::clone(&pipeline.active.front().unwrap().cancelled);
     let start = Instant::now();
     manager.input(TypedInput::Text("!".into()));
-    pipeline.invalidate(&manager, STAMP);
+    pipeline.invalidate(&mut manager, STAMP);
     assert!(cancelled.load(Ordering::Acquire));
     manager.input(TypedInput::Backspace);
     for _ in 0..32 {

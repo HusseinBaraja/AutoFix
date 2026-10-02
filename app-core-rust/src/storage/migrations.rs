@@ -169,7 +169,7 @@ fn current_version(connection: &Connection) -> Result<i64> {
 fn migrate_to_v1(connection: &Connection) -> Result<()> {
     connection.execute_batch(
         "
-        create table app_rules (
+        create table if not exists app_rules (
             id integer primary key,
             process_name text not null,
             window_title_pattern text not null default '',
@@ -184,7 +184,7 @@ fn migrate_to_v1(connection: &Connection) -> Result<()> {
             unique (process_name, window_title_pattern)
         );
 
-        create table custom_dictionary_entries (
+        create table if not exists custom_dictionary_entries (
             id integer primary key,
             language_code text not null,
             app_process_name text,
@@ -193,7 +193,7 @@ fn migrate_to_v1(connection: &Connection) -> Result<()> {
             unique (language_code, app_process_name, entry)
         );
 
-        create table learned_correction_rules (
+        create table if not exists learned_correction_rules (
             id integer primary key,
             learning_enabled integer not null default 0 check (learning_enabled in (0, 1)),
             original_text text not null,

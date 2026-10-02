@@ -25,6 +25,9 @@ public sealed class AppConfig
     [JsonPropertyName("replacement")]
     public ReplacementConfig Replacement { get; set; } = new();
 
+    [JsonPropertyName("learning")]
+    public LearningConfig Learning { get; set; } = new();
+
     [JsonPropertyName("api")]
     public ApiConfig Api { get; set; } = new();
 
@@ -35,6 +38,16 @@ public sealed class AppConfig
     public LoggingConfig Logging { get; set; } = new();
 
     public static AppConfig Default() => new();
+}
+
+public sealed class LearningConfig
+{
+    [JsonPropertyName("mode")]
+    public string Mode { get; set; } = "off";
+    [JsonPropertyName("rule")]
+    public string Rule { get; set; } = "pair";
+    [JsonPropertyName("per_app")]
+    public bool PerApp { get; set; }
 }
 
 public sealed class OnboardingConfig
@@ -87,6 +100,9 @@ public sealed class TriggersConfig
 
 public sealed class ContextConfig
 {
+    [JsonPropertyName("undo_history_size")]
+    public int UndoHistorySize { get; set; } = 10;
+
     [JsonPropertyName("pending_queue_size")]
     public int PendingQueueSize { get; set; } = 1;
 

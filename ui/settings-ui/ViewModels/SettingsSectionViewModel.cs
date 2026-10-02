@@ -14,12 +14,13 @@ public sealed class SettingsSectionViewModel : ObservableObject
     public string Name { get; init; } = "";
     public string Description { get; init; } = "";
     public bool ShowsAppRules { get; init; }
+    public bool ShowsDictionary { get; init; }
     public ObservableCollection<SettingCardViewModel> Settings { get; } = [];
     public ObservableCollection<AppRuleItem> AppRules { get; } = [];
     public ObservableCollection<DictionaryItem> Dictionary { get; } = [];
 
     public bool HasAppRules => ShowsAppRules;
-    public bool HasDictionary => Dictionary.Count > 0;
+    public bool HasDictionary => ShowsDictionary || Dictionary.Count > 0;
 
     private void OnDictionaryChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {

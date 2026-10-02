@@ -94,6 +94,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         AddAppRuleCommand = new AsyncRelayCommand(AddAppRuleAsync);
         DeleteAppRuleCommand = new AsyncRelayCommand(DeleteSelectedAppRuleAsync);
         ResetAppRulesCommand = new AsyncRelayCommand(ResetAppRulesAsync);
+        dictionaryStorage = new DictionaryStorage(appRuleStorage.DatabasePath);
+        NewDictionaryCommand = new RelayCommand(_ => NewDictionary());
+        SaveDictionaryCommand = new RelayCommand(_ => SaveDictionary());
+        DeleteDictionaryCommand = new RelayCommand(_ => DeleteDictionary());
+        RefreshDictionaryCommand = new RelayCommand(_ => LoadDictionary());
     }
 
     public ObservableCollection<SettingsSectionViewModel> Sections { get; }

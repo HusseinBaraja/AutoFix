@@ -19,6 +19,36 @@ the correction mode, enabled grammar categories, language and mixed-language
 policy, dictionary and protected terms, trigger, and confidence behavior. Its
 result includes corrected executable text, change need and optional details,
 confidence, no-change reason, latency, and completion/error/timeout status.
+
+`src/dictionary` owns persistent exclusions and optional learning. SQLite stores
+word/phrase entries and active pair-specific rules. App process matching ignores
+ASCII case. `und` and null language scopes protect every language; base tags such
+as `en` apply to variants such as `en-US`. Regional tags match the resolved tag.
+Unknown or mixed language conservatively protects all entries for the app.
+Both engine routes enforce whole-term boundaries, including phrases, and filter
+blocked pairs while preserving unrelated edits. Exclusions are snapshotted for
+execution through a fresh read-only connection with a zero busy timeout and one
+read transaction for both exclusion tables. Submission never creates or migrates
+storage; unreadable or incompatible exclusions refuse the request. Broad edits
+that cross a pair's boundary are refused when unchanged
+context cannot prove a different replacement. Exclusions are reread
+under the replacement writer reservation; a newly
+blocked edit refuses the in-flight replacement.
+
+Learning defaults to off. Only a verified, successful AutoFix undo supplies a
+rejection, using the original/replacement span and the correction's recorded
+language. It never captures document text or native Ctrl+Z. The smallest changed
+word/phrase is learned; multiple separated changes form one phrase. Ask mode uses
+a separate, coalesced native Yes/No prompt, defaults to No, and stores no text
+until consent. Input processing remains available while the prompt is open.
+Changing learning settings cancels pending consent. Accepted consent and automatic
+learning submit the selected dictionary or pair exclusion to a dedicated worker
+with its own SQLite connection and a 16-entry queue. Input processing never waits
+for a save. The worker waits at most 100 ms for SQLite writer contention; a full
+queue or unavailable storage skips the save and emits a warning without text.
+The worker never creates or migrates storage, and shutdown drains authorized saves.
+Disabling learning does not disable existing rules. Suggestion rejection remains unavailable with
+the planned suggestion UI; failed or refused undo never learns.
 `LocalRuleEngine`, `LocalMlEngine`, `OpenAiCompatibleApiEngine`, and
 `CustomApiEngine` implement the same interface. `LocalRuleEngine` provides fast,
 deterministic English correction for a conservative list of clear misspellings.
@@ -156,10 +186,16 @@ versions. Captured field text may enter informative context; executable context
 contains only text typed during the current engine run.
 On a successful correction, corrected text becomes read-only informative
 context. Automatic correction retires only its frozen segment and preserves newer
-executable text. A manual trigger or final fix with no changes
-does the same with the original text. Exceeding the configured executable word
-limit also commits the current segment. New typing starts a fresh executable
-segment. Undo restores the corrected span in informative context to its
+executable text. Validated no-change results from manual, word-count, character,
+and final-fix requests commit the original segment without replacement or an
+undo entry. Each accepted result logs one metadata-only event and writes a
+`correction_metadata` row with trigger, engine, confidence, reason, latency, and
+replacement method `none`; no context text enters these logs. Failed, stale,
+timed-out, unsupported-language, and confidence-suppressed results stay executable.
+Exceeding `context.executable_context_max_words` (default 80) also commits the
+current segment, including after caret movement resolves and after a limit update.
+This size-limit commit logs only session and word-count metadata. New typing
+starts a fresh executable segment. Undo restores the corrected span in informative context to its
 original text and leaves newer executable text intact. Informative context is
 shrunk in app memory after every append and commit. Shrinking stays within the
 configured character budget, prefers configured sentence boundaries, and
@@ -178,6 +214,21 @@ their owning process exits. All session state disappears on engine exit or
 termination and is never written to disk. Session completion methods do not
 themselves change target text; the replacement engine must confirm mutation first.
 
+Undo history is owned by `src/background/session/undo.rs`. The configurable
+`context.undo_history_size` defaults to 10 and accepts 1–1000 entries per session;
+overflow and capacity reductions evict the oldest entries. Each record retains
+the session ID, original executable-context Unicode range, verified native range
+relative to the correction-time caret when available, exact original/corrected
+text, commit timestamp, trigger, confidence tier, replacement method and language.
+Only verified app-made corrections enter history. No history text is persisted.
+Context shrinking adjusts byte anchors for fully retained spans and invalidates
+partial spans without truncating the recorded text. Movement and re-anchoring
+invalidate range proofs; session deletion drops history. Undo requires the latest
+entry's complete span at the verified current caret, restores its exact original
+text through the replacement engine, and pops the entry only after success.
+Newer typed text remains executable; restored text stays informative. Native
+Ctrl+Z is never used as the undo mechanism.
+
 The correction pipeline uses one worker, a FIFO of requests, and one completion
 slot with backpressure so results cannot overwrite each other. Each session has
 one active executable context and a bounded pending correction queue.
@@ -187,8 +238,9 @@ before processing subsequent typing, including keys in the same input batch.
 New typing starts a fresh executable context while correction runs asynchronously.
 `context.pending_queue_full_behavior` defaults to `skip_new`, which skips the
 new automatic trigger and retains current typing. `cancel_oldest` cancels the
-oldest pending request, retires its original text into informative context, and
-admits the new segment. `merge_newest` cancels the newest pending request, merges
+oldest pending request and its dependent newer requests, restores their unchecked
+text to executable context, and admits the combined segment for a new check.
+`merge_newest` cancels the newest pending request, merges
 its typed text back into the active executable context, and waits for the next
 trigger. Manual correction cancels pending work and restores its original text
 to the active context before taking its selection or caret snapshot.
@@ -223,7 +275,7 @@ writes from IPC and the settings UI, including when SQLite uses WAL mode.
 Revocation takes effect when the rule write commits: a send already holding the
 reservation may finish first, and transmitted data cannot be recalled. Missing,
 unreadable, or busy policy storage denies the send without waiting or retrying.
-Denied frozen jobs retire their original text and release queue capacity through
+Denied frozen jobs restore their original text and release queue capacity through
 normal failed completion. Completion rechecks the live security gate
 and focused target, then input generations again after those checks. Completions
 wait for hook input to be processed and retire frozen ranges in document order.
@@ -234,9 +286,23 @@ after a frozen segment. Missing captures or mismatches discard the result; no
 fuzzy search or replacement is attempted. Selected-text results are discarded
 because their replacement range cannot be proven before the caret, even when
 arbitrary selected-text correction is enabled.
-Failed, suppressed, or refused frozen results release their slot and retire the
-original text without applying engine output. Results are
-consumed once. Only completed silent corrections above low confidence reach the
+Failed, suppressed, or refused frozen results release their slot and restore the
+original text and dependent newer segments to active executable context. Their
+queued requests are cancelled so a later trigger can check the combined text in
+document order. Invalidated requests also restore any still-active segment;
+movement and lost caret ownership continue through the final-fix/re-anchor rules.
+Only validated unchanged results with `no_correction_needed` or
+`all_candidates_protected` accept the original text into informative context;
+language and confidence skips retain executable text. Accepted no-change commits
+are recorded as metadata without running migrations or waiting for SQLite locks.
+An active policy writer or unavailable database skips only this optional event;
+the accepted context commit and input processing continue.
+Changed results preflight exact session ownership and typed-buffer capacity
+before native mutation. If input races with a successful mutation or session
+bookkeeping cannot commit it, pending requests are cancelled and session
+ownership is invalidated. Undo likewise commits its session update before
+learning; a lost input snapshot invalidates ownership and skips learning.
+Results are consumed once. Only completed silent corrections above low confidence reach the
 replacement boundary. Failed and suppressed manual edits do not commit executable
 context. Tests cover delayed engines, frozen queues and overflow policies,
 manual override, stale and reordered results, queued input,
@@ -324,7 +390,7 @@ Range offsets count Unicode characters backwards from the original caret,
 with `start_back >= end_back >= 0`; they are not document byte or UTF-16 offsets.
 App-level undo uses only a recorded app correction that remains fully retained
 in informative context. It verifies the live anchor and restores that recorded
-span, preserving newer executable text. Memory truncation, movement, unknown
+span, preserving newer executable text. Truncation of that span, movement, unknown
 selection geometry and secure fields block native undo.
 
 Focused tests cover strategy ordering, the clipboard disable preference,
@@ -337,7 +403,8 @@ and a bitmap. It verifies actual native paste, restoration, recovery from a
 locked clipboard, and retention of a newer copy without touching the desktop
 clipboard. It refuses a visible station or unrelated existing clipboard data.
 The opt-in `native_edit_replacement_smoke` test owns a separate native editor;
-it checks clipboard/SendInput and preservation of the document suffix on an
+it checks clipboard/SendInput correction and recorded app undo, preserving the
+newer executable text, caret and document suffix on an
 interactive Windows desktop. It safely refuses unsupported clipboard formats.
 
 Feature code should be organized by product behavior, not technical layer. Keep modules small, private by default, and colocate tests with the behavior they verify.

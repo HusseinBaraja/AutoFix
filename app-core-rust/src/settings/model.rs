@@ -16,9 +16,38 @@ pub(crate) struct AppConfig {
     pub(crate) correction: CorrectionConfig,
     #[serde(default)]
     pub(crate) replacement: ReplacementConfig,
+    #[serde(default)]
+    pub(crate) learning: LearningConfig,
     pub(crate) api: ApiConfig,
     pub(crate) feedback: FeedbackConfig,
     pub(crate) logging: LoggingConfig,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct LearningConfig {
+    #[serde(default)]
+    pub(crate) mode: LearningMode,
+    #[serde(default)]
+    pub(crate) rule: LearningRule,
+    #[serde(default)]
+    pub(crate) per_app: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LearningMode {
+    #[default]
+    Off,
+    Ask,
+    Automatic,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LearningRule {
+    Dictionary,
+    #[default]
+    Pair,
 }
 
 impl AppConfig {
@@ -105,6 +134,8 @@ impl Default for TriggersConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ContextConfig {
+    #[serde(default = "default_undo_history_size")]
+    pub(crate) undo_history_size: u16,
     #[serde(default = "default_pending_queue_size")]
     pub(crate) pending_queue_size: u16,
     #[serde(default)]
@@ -118,8 +149,10 @@ pub(crate) struct ContextConfig {
 }
 
 impl Default for ContextConfig {
+    /// Bound retained context and correction queues, keeping ten session undo entries by default.
     fn default() -> Self {
         Self {
+            undo_history_size: default_undo_history_size(),
             pending_queue_size: 1,
             pending_queue_full_behavior: PendingQueueFullBehavior::SkipNew,
             initial_context_words: 25,
@@ -130,6 +163,11 @@ impl Default for ContextConfig {
             executable_context_max_words: 80,
         }
     }
+}
+
+/// Preserve the same ten-entry undo capacity when loading older TOML files.
+fn default_undo_history_size() -> u16 {
+    10
 }
 
 fn default_pending_queue_size() -> u16 {

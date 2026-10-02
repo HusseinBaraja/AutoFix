@@ -37,6 +37,11 @@ Never discard user changes. Never commit to main. For repository changes made
 on main, create a branch unless the user explicitly says no branch is needed.
 Use branch names without `/`. Commit completed logical checkpoints.
 
+Always push completed, verified review fixes and their supporting tests or
+documentation to the existing feature branch on `origin`. The user grants
+standing authorization for these pushes to this repository without asking
+again, unless the user explicitly requests local-only work.
+
 For commits, use `.agents/skills/conventional-commit/SKILL.md` and
 `.agents/skills/caveman-commit/SKILL.md`; keep the final message Conventional
 Commits compliant. Close only shells and app processes started for the task.
