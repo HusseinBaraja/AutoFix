@@ -2,11 +2,13 @@
 
 use super::security::BlockReason;
 mod notice;
+pub(crate) mod suggestion;
 use crate::settings::FeedbackConfig;
 use std::{
     sync::atomic::{AtomicU8, Ordering},
     time::{Duration, Instant},
 };
+use suggestion::{PreviewSuggestionUi, SuggestionUi};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Event {
@@ -83,13 +85,14 @@ impl Feedback {
     /// Opt-in, read-only preview. Text stays in the short-lived notice worker only.
     pub(super) fn suggestion(&mut self, preview: String, config: &FeedbackConfig) {
         let now = Instant::now();
-        if config.show_medium_confidence_suggestions
+        let ui = PreviewSuggestionUi::new(config);
+        if ui.is_available()
             && self
                 .last_notice
                 .is_none_or(|last| now.duration_since(last) >= Duration::from_millis(2500))
         {
             self.last_notice = Some(now);
-            notice::show(preview, config.show_near_caret_overlay);
+            ui.show_preview(preview);
         }
     }
     pub(super) fn reset(&mut self) {

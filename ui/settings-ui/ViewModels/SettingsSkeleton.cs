@@ -101,7 +101,7 @@ public static class SettingsSkeleton
             Dropdown("Mixed-language text", "Disable correction, use the dominant language, or correct each token with the API engine.", "correction.mixed_language_policy", config.Correction.MixedLanguagePolicy, MixedLanguagePolicies()),
             ..GrammarCategorySettings(config),
             Dropdown("High confidence behavior", "Default: apply silently for manual and automatic triggers.", "correction.high_confidence_behavior", config.Correction.HighConfidenceBehavior, ConfidenceBehaviors()),
-            Dropdown("Medium confidence behavior", "Default: suggest on manual correction when suggestion UI is available; otherwise do nothing. Automatic triggers do nothing unless Apply silently is selected. Suggestion UI is not available in v1.", "correction.medium_confidence_behavior", config.Correction.MediumConfidenceBehavior, ConfidenceBehaviors()),
+            Dropdown("Medium confidence behavior", "Default: do nothing. Enable read-only manual suggestion previews under Feedback, or choose Apply silently for manual and automatic corrections. Suggestion acceptance is not available in v1.", "correction.medium_confidence_behavior", config.Correction.MediumConfidenceBehavior, ConfidenceBehaviors()),
             new SettingCardViewModel
             {
                 Title = "Low confidence behavior",

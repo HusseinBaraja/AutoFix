@@ -13,6 +13,7 @@ use std::{
 };
 
 use super::{
+    feedback::suggestion::{PreviewSuggestionUi, SuggestionUi},
     feedback::Event,
     replacement::ReplacementConfirmation,
     security::TriggerKind,
@@ -74,6 +75,8 @@ struct ActiveRequest {
     stamp: InputStamp,
     cancelled: Arc<AtomicBool>,
     show_timeout_notice: bool,
+    trigger_type: TriggerType,
+    suggestion_ui_available: bool,
 }
 
 impl ActiveRequest {
@@ -235,7 +238,7 @@ impl CorrectionPipeline {
                 }
             },
             confidence_behavior: request.confidence_behavior.clone(),
-            suggestion_ui_available: config.feedback.show_medium_confidence_suggestions,
+            suggestion_ui_available: PreviewSuggestionUi::new(&config.feedback).is_available(),
         };
         let exclusions = match self.database_path.as_deref() {
             Some(path) => match crate::dictionary::Repository::policy_nowait(
@@ -259,6 +262,8 @@ impl CorrectionPipeline {
             stamp,
             cancelled: Arc::clone(&cancelled),
             show_timeout_notice: config.feedback.show_timeout_notice,
+            trigger_type: input.trigger_type,
+            suggestion_ui_available: input.suggestion_ui_available,
         });
         let (lock, ready) = &*self.mailbox;
         let mut state = lock.lock().unwrap();
@@ -483,6 +488,12 @@ impl CorrectionPipeline {
                 if target.focused_element_id.is_none()
                     || output.behavior == ConfidenceBehavior::DoNothing
                     || output.confidence == ConfidenceTier::Low
+                    || output.behavior
+                        != active.request.confidence_behavior.behavior_for(
+                            output.confidence,
+                            active.trigger_type,
+                            active.suggestion_ui_available,
+                        )
                     || output.corrected_executable_text == *original
                 {
                     self.feedback_event = Some((Event::Skipped("AutoFix: confidence policy requires a suggestion or skips this correction."), manual));

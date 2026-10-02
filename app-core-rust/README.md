@@ -135,13 +135,17 @@ enable read-only previews with `feedback.show_medium_confidence_suggestions`
 results can show a bounded preview of executable text; previews never include
 informative context, mutate text, commit sessions or record undo. New typing,
 movement, cancellation and secure targets suppress them. Suggestion acceptance
-remains planned. Outputs include
+remains planned. `src/background/feedback/suggestion` defines the `SuggestionUi`
+presentation interface for a future near-caret UI. The existing preview adapter
+advertises availability only when enabled on a supported platform. Display never
+authorizes replacement or acceptance. Outputs include
 an explicit `behavior`: only `silent` authorizes replacement; `suggestion`
 requires user acceptance. Suppressed outputs preserve the original executable
 text and discard edit details. Local results prioritize silent edits over
 suggested edits when both occur in one request. The pipeline snapshots confidence
-policy and rejects suggestions, suppressed edits, and low-confidence results at
-completion before allowing target replacement.
+policy and preview capability. At completion it rejects any changed result whose
+reported behavior differs from the admitted policy, as well as suppressed edits
+and low-confidence results. Only an authorized silent result can reach replacement.
 
 The keyboard session tracker is implemented. It keeps up to 4,096 characters
 typed during the current engine run in memory and exposes only the known text

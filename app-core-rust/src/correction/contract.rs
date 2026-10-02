@@ -150,7 +150,8 @@ pub struct CorrectionInput {
     pub trigger_type: TriggerType,
     pub confidence_behavior: ConfidenceBehaviorSettings,
     /// True only when the caller can display a suggestion for this request.
-    /// V1 has no suggestion UI, so omitted capabilities fail closed.
+    /// V1 has opt-in read-only previews but no acceptance UI. Omitted
+    /// capabilities fail closed.
     #[serde(default)]
     pub suggestion_ui_available: bool,
 }

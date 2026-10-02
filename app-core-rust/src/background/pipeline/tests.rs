@@ -1416,7 +1416,7 @@ fn medium_previews_are_manual_opt_in_and_never_mutate_or_commit() {
             assert_eq!(calls.get(), 0);
             assert_eq!(
                 pipeline.take_suggestion(),
-                if enabled && !automatic {
+                if enabled && !automatic && cfg!(windows) {
                     Some("AutoFix suggestion: the".into())
                 } else {
                     None
@@ -1426,6 +1426,116 @@ fn medium_previews_are_manual_opt_in_and_never_mutate_or_commit() {
             assert_eq!(manager.active().unwrap().editable_context(), "teh");
             assert!(manager.active().unwrap().informative_context().is_empty());
             assert!(manager.active().unwrap().undo_target().is_none());
+        }
+    }
+}
+
+/// An engine cannot grant itself silent apply or preview permission.
+#[test]
+fn completion_behavior_must_match_admitted_confidence_policy() {
+    for configured in [
+        ConfidenceBehavior::DoNothing,
+        ConfidenceBehavior::Suggestion,
+        ConfidenceBehavior::Silent,
+    ] {
+        for enabled in [false, true] {
+            for trigger in [
+                TriggerKind::ManualShortcut,
+                TriggerKind::WordCount,
+                TriggerKind::Character,
+                TriggerKind::FinalFixBeforeReanchor,
+            ] {
+                for confidence in [ConfidenceTier::Medium, ConfidenceTier::Low] {
+                    for reported in [ConfidenceBehavior::Silent, ConfidenceBehavior::Suggestion] {
+                        let mut config = AppConfig::default();
+                        config.correction.medium_confidence_behavior = configured;
+                        config.feedback.show_medium_confidence_suggestions = enabled;
+                        let mut manager = manager(&config, "teh");
+                        let mut pipeline = CorrectionPipeline::start(move |_| {
+                            let mut output =
+                                CorrectionOutput::changed("the".into(), confidence, None, 0);
+                            output.behavior = reported;
+                            output
+                        })
+                        .unwrap();
+                        let mut request = request(&manager, &config);
+                        request.trigger = trigger;
+                        assert!(pipeline.submit(
+                            request,
+                            manager.active().unwrap(),
+                            target(),
+                            STAMP,
+                            &config,
+                            vec![],
+                        ));
+                        wait_completion(&pipeline);
+                        let calls = Cell::new(0);
+                        let silent = confidence == ConfidenceTier::Medium
+                            && configured == ConfidenceBehavior::Silent
+                            && reported == ConfidenceBehavior::Silent;
+                        let preview = confidence == ConfidenceTier::Medium
+                            && configured == ConfidenceBehavior::Suggestion
+                            && reported == ConfidenceBehavior::Suggestion
+                            && enabled
+                            && cfg!(windows)
+                            && trigger == TriggerKind::ManualShortcut;
+                        assert_eq!(
+                            finish(&mut pipeline, &mut manager, &config, STAMP, &calls, true,),
+                            silent,
+                            "{configured:?}, {trigger:?}, {confidence:?}, {reported:?}"
+                        );
+                        assert_eq!(calls.get(), usize::from(silent));
+                        assert_eq!(pipeline.take_suggestion().is_some(), preview);
+                        let session = manager.active().unwrap();
+                        assert_eq!(session.undo_target().is_some(), silent);
+                        if !silent {
+                            assert_eq!(session.editable_context(), "teh");
+                            assert!(session.informative_context().is_empty());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Real local medium corrections use the saved policy for manual and frozen work.
+#[test]
+fn medium_local_results_skip_preview_or_apply_without_losing_typed_text() {
+    for configured in [
+        ConfidenceBehavior::DoNothing,
+        ConfidenceBehavior::Suggestion,
+        ConfidenceBehavior::Silent,
+    ] {
+        for automatic in [false, true] {
+            let mut config = AppConfig::default();
+            config.correction.medium_confidence_behavior = configured;
+            let mut manager = manager(&config, "accomodate");
+            let mut pipeline = CorrectionPipeline::new().unwrap();
+            if automatic {
+                submit_frozen(&mut pipeline, &mut manager, &config);
+            } else {
+                submit(&mut pipeline, &manager, &config);
+            }
+            wait_completion(&pipeline);
+            let calls = Cell::new(0);
+            let silent = configured == ConfidenceBehavior::Silent;
+            assert_eq!(
+                finish(&mut pipeline, &mut manager, &config, STAMP, &calls, true,),
+                silent
+            );
+            assert_eq!(calls.get(), usize::from(silent));
+            assert_eq!(pipeline.take_suggestion(), None);
+            let session = manager.active().unwrap();
+            assert_eq!(session.undo_target().is_some(), silent);
+            assert_eq!(
+                session.informative_context(),
+                if silent { "accommodate" } else { "" }
+            );
+            assert_eq!(
+                session.editable_context(),
+                if silent { "" } else { "accomodate" }
+            );
         }
     }
 }
