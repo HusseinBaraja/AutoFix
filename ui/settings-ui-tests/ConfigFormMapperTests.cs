@@ -7,6 +7,27 @@ namespace AutoFix.SettingsUi.Tests;
 public sealed class ConfigFormMapperTests
 {
     [TestMethod]
+    public void FeedbackHasQuietDefaultsAndEveryOptionSurvivesFormAndStorage()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var sections = SettingsSkeleton.CreateSections();
+        foreach (var option in new[] { "tray_state_enabled", "show_correction_applied_notification", "show_skipped_reason", "show_medium_confidence_suggestions", "show_blocked_app_notice", "show_timeout_notice", "show_near_caret_overlay" })
+        {
+            var card = Card(sections, $"feedback.{option}");
+            Assert.AreEqual(option is "tray_state_enabled" or "show_blocked_app_notice" or "show_timeout_notice", card.IsEnabled);
+            card.IsEnabled = !card.IsEnabled;
+        }
+        var config = ConfigFormMapper.BuildConfig(sections);
+        fixture.Storage.Save(config);
+        var loaded = fixture.Storage.Load(fixture.Path);
+        var reloaded = SettingsSkeleton.CreateSections(loaded);
+        foreach (var card in sections.Single(section => section.Name == "Feedback").Settings)
+            Assert.AreEqual(card.IsEnabled, Card(reloaded, card.Path).IsEnabled, card.Path);
+        File.WriteAllLines(fixture.Path, File.ReadAllLines(fixture.Path).Where(line => !line.StartsWith("show_near_caret_overlay", StringComparison.Ordinal)));
+        Assert.IsFalse(fixture.Storage.Load(fixture.Path).Feedback.ShowNearCaretOverlay);
+    }
+
+    [TestMethod]
     public void UndoShortcutAndHistorySurviveFormStorageAndLegacyLoad()
     {
         using var fixture = TempConfigFixture.Create();

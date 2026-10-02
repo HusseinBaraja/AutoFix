@@ -60,6 +60,38 @@ Both attempts share the trigger's
 total timeout budget. `feedback.show_timeout_notice` defaults to true and applies
 only to a valid manual API timeout; automatic timeouts always stay silent.
 
+Feedback defaults to tray states and small manual error/blocked/timeout notices.
+`show_correction_applied_notification`, `show_skipped_reason`,
+`show_medium_confidence_suggestions` and `show_near_caret_overlay` default false;
+`tray_state_enabled`, `show_blocked_app_notice` and `show_timeout_notice` default
+true. Missing feedback fields use these defaults; explicit saved values survive.
+Medium suggestions are read-only previews of validated executable text, never
+authorization to mutate. Near-caret placement does not enable any notice.
+`app_status` and `config_reloaded` include a text-free `tray_state` with one of
+`idle`, `active`, `correcting`, `blocked`, or `error`. Disabling state publishes
+idle while keeping the tray accessible.
+The status also carries `tray_state_enabled` so the shell can preserve that
+preference when the engine becomes unavailable. Hard secure-field/desktop refusals,
+cancelled and stale results cannot display a notice or suggestion preview.
+
+The Windows IPC pipe rejects remote clients and uses a protected ACL granting
+access only to its owner. The .NET client compares the server's owner SID with
+the current Windows identity's owner SID before sending a request. This check
+does not separately query the server's elevation level. Processes running
+as that account share the configuration trust boundary; IPC does not authenticate
+individual executables. Anonymous local clients cannot connect, including for
+read-only access.
+
+After one second, a watchdog requests cancellation of that client's pipe I/O,
+covering request reads, response writes and response consumption. Cancellation
+targets only that pipe and is best-effort; one second is the cancellation
+threshold, not a guaranteed completion bound. Native tests verify endpoint
+recovery with idle and nonreading clients held open. Responses drain
+before disconnect because Windows discards unread pipe bytes on disconnect.
+Both byte-stream clients reading to EOF and message-mode clients are supported.
+The .NET client retains its separate 400 ms connect and request deadlines; legacy
+status payloads without tray fields default to idle with state display enabled.
+
 Unavailable application rules deny authorization for typed capture and every
 correction trigger, including API execution. An empty successfully read rule
 list is distinct from a failed read.

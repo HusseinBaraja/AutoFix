@@ -14,7 +14,7 @@ use windows_sys::Win32::{
     Foundation::{
         CloseHandle, ERROR_MORE_DATA, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
     },
-    Storage::FileSystem::{ReadFile, WriteFile, PIPE_ACCESS_DUPLEX},
+    Storage::FileSystem::{FlushFileBuffers, ReadFile, WriteFile, PIPE_ACCESS_DUPLEX},
     System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_MESSAGE,
         PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_MESSAGE, PIPE_WAIT,
@@ -92,7 +92,10 @@ fn serve_pipe(pipe_path: String, state: Arc<Mutex<IpcServerState>>, shutdown: Ar
     }
 }
 
+/// Create a local, owner-only endpoint; security setup failure never falls back to a default ACL.
 fn create_pipe(pipe_path: &str) -> Result<HANDLE, String> {
+    let security = super::access::PipeSecurity::new().map_err(|error| error.to_string())?;
+    let attributes = security.attributes();
     let path = wide(pipe_path);
     let pipe = unsafe {
         CreateNamedPipeW(
@@ -103,7 +106,7 @@ fn create_pipe(pipe_path: &str) -> Result<HANDLE, String> {
             64 * 1024,
             64 * 1024,
             0,
-            null_mut(),
+            &attributes,
         )
     };
 
@@ -114,6 +117,7 @@ fn create_pipe(pipe_path: &str) -> Result<HANDLE, String> {
     }
 }
 
+/// Serve one connected client under a pipe-I/O deadline and drain its response before disconnect.
 fn handle_pipe(pipe: HANDLE, state: &Arc<Mutex<IpcServerState>>) {
     let connected = unsafe { ConnectNamedPipe(pipe, null_mut()) };
     if connected == 0
@@ -122,8 +126,15 @@ fn handle_pipe(pipe: HANDLE, state: &Arc<Mutex<IpcServerState>>) {
         return;
     }
 
+    let Ok(deadline) = super::request_deadline::RequestDeadline::start(pipe) else {
+        tracing::warn!("cannot enforce IPC request deadline");
+        return;
+    };
     let response = read_request(pipe)
         .and_then(|request| {
+            if deadline.expired() {
+                return Err("IPC request deadline exceeded".into());
+            }
             state
                 .lock()
                 .map_err(|_| "IPC state lock poisoned".to_owned())
@@ -131,7 +142,12 @@ fn handle_pipe(pipe: HANDLE, state: &Arc<Mutex<IpcServerState>>) {
         })
         .unwrap_or_else(IpcResponse::error);
 
-    let _ = write_response(pipe, &response);
+    if deadline.expired() {
+        return;
+    }
+    if let Err(error) = write_response(pipe, &response) {
+        tracing::warn!(%error, "IPC response delivery failed");
+    }
 }
 
 fn read_request(pipe: HANDLE) -> Result<IpcRequest, String> {
@@ -171,6 +187,7 @@ fn read_request(pipe: HANDLE) -> Result<IpcRequest, String> {
     serde_json::from_slice(&buffer[..total_read]).map_err(|error| error.to_string())
 }
 
+/// Preserve the complete response for delayed readers and clients that wait for EOF.
 fn write_response(pipe: HANDLE, response: &IpcResponse) -> Result<(), String> {
     let output = serde_json::to_vec(response).map_err(|error| error.to_string())?;
     let mut written = 0;
@@ -184,9 +201,11 @@ fn write_response(pipe: HANDLE, response: &IpcResponse) -> Result<(), String> {
         )
     };
 
-    if write_ok == 0 || written != output.len() as u32 {
+    if write_ok == 0 || written != output.len() as u32 || unsafe { FlushFileBuffers(pipe) } == 0 {
         Err(std::io::Error::last_os_error().to_string())
     } else {
+        // DisconnectNamedPipe discards unread bytes. Drain before the caller disconnects,
+        // including clients that consume a byte stream until EOF instead of message boundaries.
         Ok(())
     }
 }

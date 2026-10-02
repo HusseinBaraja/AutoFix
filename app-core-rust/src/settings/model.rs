@@ -292,6 +292,7 @@ impl From<&ApiConfig> for crate::correction::ApiEngineConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub(crate) struct FeedbackConfig {
     pub(crate) tray_state_enabled: bool,
     pub(crate) show_correction_applied_notification: bool,
@@ -299,6 +300,7 @@ pub(crate) struct FeedbackConfig {
     pub(crate) show_medium_confidence_suggestions: bool,
     pub(crate) show_blocked_app_notice: bool,
     pub(crate) show_timeout_notice: bool,
+    pub(crate) show_near_caret_overlay: bool,
 }
 
 impl Default for FeedbackConfig {
@@ -306,10 +308,11 @@ impl Default for FeedbackConfig {
         Self {
             tray_state_enabled: true,
             show_correction_applied_notification: false,
-            show_skipped_reason: true,
-            show_medium_confidence_suggestions: true,
+            show_skipped_reason: false,
+            show_medium_confidence_suggestions: false,
             show_blocked_app_notice: true,
             show_timeout_notice: true,
+            show_near_caret_overlay: false,
         }
     }
 }

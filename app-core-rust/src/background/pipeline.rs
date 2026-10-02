@@ -13,6 +13,8 @@ use std::{
 };
 
 use super::{
+    feedback::suggestion::{Preview, PreviewSuggestionUi, SuggestionUi},
+    feedback::Event,
     replacement::ReplacementConfirmation,
     security::TriggerKind,
     session::{Session, SessionManager},
@@ -73,6 +75,8 @@ struct ActiveRequest {
     stamp: InputStamp,
     cancelled: Arc<AtomicBool>,
     show_timeout_notice: bool,
+    trigger_type: TriggerType,
+    suggestion_ui_available: bool,
 }
 
 impl ActiveRequest {
@@ -105,6 +109,9 @@ pub(super) struct CorrectionPipeline {
     active: VecDeque<ActiveRequest>,
     next_id: u64,
     timeout_notice: bool,
+    feedback_event: Option<(Event, bool)>,
+    suggestion_preview: Option<Preview>,
+    preview_cancelled: Arc<AtomicBool>,
 }
 
 impl CorrectionPipeline {
@@ -170,6 +177,9 @@ impl CorrectionPipeline {
             active: VecDeque::new(),
             next_id: 1,
             timeout_notice: false,
+            feedback_event: None,
+            suggestion_preview: None,
+            preview_cancelled: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -230,7 +240,7 @@ impl CorrectionPipeline {
                 }
             },
             confidence_behavior: request.confidence_behavior.clone(),
-            suggestion_ui_available: false,
+            suggestion_ui_available: PreviewSuggestionUi::new(&config.feedback).is_available(),
         };
         let exclusions = match self.database_path.as_deref() {
             Some(path) => match crate::dictionary::Repository::policy_nowait(
@@ -254,6 +264,8 @@ impl CorrectionPipeline {
             stamp,
             cancelled: Arc::clone(&cancelled),
             show_timeout_notice: config.feedback.show_timeout_notice,
+            trigger_type: input.trigger_type,
+            suggestion_ui_available: input.suggestion_ui_available,
         });
         let (lock, ready) = &*self.mailbox;
         let mut state = lock.lock().unwrap();
@@ -272,7 +284,11 @@ impl CorrectionPipeline {
 
     /// Cancel all admitted work and clear queued jobs, completions, and timeout feedback.
     pub(super) fn cancel(&mut self) {
+        self.preview_cancelled.store(true, Ordering::Release);
+        self.preview_cancelled = Arc::new(AtomicBool::new(false));
         self.timeout_notice = false;
+        self.feedback_event = None;
+        self.suggestion_preview = None;
         for active in self.active.drain(..) {
             active.cancelled.store(true, Ordering::Release);
         }
@@ -352,8 +368,21 @@ impl CorrectionPipeline {
     }
 
     /// Consume eligible manual timeout feedback exactly once.
+    #[cfg(test)]
     pub(super) fn take_timeout_notice(&mut self) -> bool {
         std::mem::take(&mut self.timeout_notice)
+    }
+
+    pub(super) fn take_feedback(&mut self) -> Option<(Event, bool)> {
+        self.feedback_event.take()
+    }
+
+    pub(super) fn take_suggestion(&mut self) -> Option<Preview> {
+        self.suggestion_preview.take()
+    }
+
+    pub(super) fn is_correcting(&self) -> bool {
+        !self.active.is_empty()
     }
 
     /// Take once: duplicates and reordered completions cannot reach the mutation owner.
@@ -367,6 +396,8 @@ impl CorrectionPipeline {
         replace: impl FnOnce(&FocusedTarget, &CorrectionRequest, &CorrectionOutput) -> R,
     ) -> bool {
         self.timeout_notice = false;
+        self.feedback_event = None;
+        self.suggestion_preview = None;
         self.invalidate(manager, current_stamp());
         let completion = {
             let (lock, ready) = &*self.mailbox;
@@ -391,6 +422,7 @@ impl CorrectionPipeline {
         // failed or skipped work returns to executable context below.
         let applied = (|| {
             let output = completion.output;
+            let manual = active.request.trigger == TriggerKind::ManualShortcut;
             let notify_timeout = output.status == EngineStatus::TimedOut
                 && active.show_timeout_notice
                 && active.request.trigger == TriggerKind::ManualShortcut
@@ -399,7 +431,16 @@ impl CorrectionPipeline {
                     EngineKind::OpenAiCompatibleApi | EngineKind::CustomApi
                 );
             // Silent failures release their slot without another potentially slow UIA call.
-            if output.status != EngineStatus::Completed && !notify_timeout {
+            let notify_error = manual && matches!(output.status, EngineStatus::Error(_));
+            if output.status != EngineStatus::Completed && !notify_timeout && !notify_error {
+                self.feedback_event = Some((
+                    if output.status == EngineStatus::TimedOut {
+                        Event::Timeout
+                    } else {
+                        Event::Error
+                    },
+                    false,
+                ));
                 return false;
             }
             let Some(target) = check_target(active.request.trigger) else {
@@ -422,8 +463,25 @@ impl CorrectionPipeline {
             }
             if output.status != EngineStatus::Completed {
                 self.timeout_notice = notify_timeout;
+                self.feedback_event = Some((
+                    if notify_timeout {
+                        Event::Timeout
+                    } else {
+                        Event::Error
+                    },
+                    manual,
+                ));
                 return false;
             }
+            // Generic fallback contains no provider text or document contents.
+            self.feedback_event = Some((
+                if manual {
+                    Event::Error
+                } else {
+                    Event::Skipped("AutoFix: could not verify the editable range.")
+                },
+                manual,
+            ));
             let original = &active.request.executable_context;
             let no_change_reason = match output.no_change_reason {
                 Some(NoChangeReason::NoCorrectionNeeded) => Some("no_correction_needed"),
@@ -432,13 +490,33 @@ impl CorrectionPipeline {
             };
             if output.changes_needed {
                 if target.focused_element_id.is_none()
-                    || output.behavior != ConfidenceBehavior::Silent
+                    || output.behavior == ConfidenceBehavior::DoNothing
                     || output.confidence == ConfidenceTier::Low
+                    || output.behavior
+                        != active.request.confidence_behavior.behavior_for(
+                            output.confidence,
+                            active.trigger_type,
+                            active.suggestion_ui_available,
+                        )
                     || output.corrected_executable_text == *original
                 {
+                    self.feedback_event = Some((Event::Skipped("AutoFix: confidence policy requires a suggestion or skips this correction."), manual));
                     return false;
                 }
             } else if output.corrected_executable_text != *original || no_change_reason.is_none() {
+                let reason = match output.no_change_reason {
+                    Some(NoChangeReason::UnsupportedLanguage) => {
+                        "AutoFix: language is not supported by this engine."
+                    }
+                    Some(NoChangeReason::UncertainLanguage) => {
+                        "AutoFix: language policy skipped this correction."
+                    }
+                    Some(NoChangeReason::ConfidenceBelowConfiguredBehavior) => {
+                        "AutoFix: confidence policy skipped this correction."
+                    }
+                    _ => "AutoFix: correction was skipped.",
+                };
+                self.feedback_event = Some((Event::Skipped(reason), manual));
                 return false;
             }
             if let Some(id) = segment_id {
@@ -475,6 +553,21 @@ impl CorrectionPipeline {
             {
                 return false;
             }
+            if output.behavior == ConfidenceBehavior::Suggestion {
+                // A preview never authorizes replacement or commits executable context.
+                self.feedback_event = None;
+                if manual && output.confidence == ConfidenceTier::Medium {
+                    self.suggestion_preview = Some(Preview {
+                        text: super::feedback::suggestion_preview(
+                            &output.corrected_executable_text,
+                        ),
+                        stamp: validation_stamp,
+                        target,
+                        cancelled: Arc::clone(&self.preview_cancelled),
+                    });
+                }
+                return false;
+            }
             let confirmation = if output.changes_needed {
                 if !session.can_complete_correction(
                     segment_id,
@@ -508,6 +601,7 @@ impl CorrectionPipeline {
                 true
             };
             if completed && changed {
+                self.feedback_event = Some((Event::Applied, manual));
                 session.record_undo_metadata(
                     active.request.language_info.primary_language.clone(),
                     active.request.trigger,
@@ -515,6 +609,14 @@ impl CorrectionPipeline {
                     confirmation.unwrap(),
                 );
             } else if completed {
+                self.feedback_event = Some((
+                    Event::Skipped(if no_change_reason == Some("all_candidates_protected") {
+                        "AutoFix: matching terms are protected."
+                    } else {
+                        "AutoFix: no correction needed."
+                    }),
+                    manual,
+                ));
                 self.log_no_change_commit(
                     &active.request,
                     &active.target,

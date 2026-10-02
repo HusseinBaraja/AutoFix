@@ -10,7 +10,9 @@ public sealed record IpcEnvelope(
 public sealed record AppStatusResponse(
     [property: JsonPropertyName("running")] bool Running,
     [property: JsonPropertyName("correction_mode")] string CorrectionMode,
-    [property: JsonPropertyName("engine")] string Engine);
+    [property: JsonPropertyName("engine")] string Engine,
+    [property: JsonPropertyName("tray_state")] string TrayState = "idle",
+    [property: JsonPropertyName("tray_state_enabled")] bool TrayStateEnabled = true);
 
 public sealed record CorrectionModeResponse(
     [property: JsonPropertyName("mode")] string Mode);

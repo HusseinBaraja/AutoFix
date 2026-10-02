@@ -191,7 +191,7 @@ fn request(
         },
         uncertain_language_policy: UncertainLanguagePolicy::default(),
         mixed_language_policy: MixedLanguagePolicy::default(),
-        confidence_behavior: ConfidenceBehaviorSettings::default(),
+        confidence_behavior: config.confidence_behavior(),
     })
 }
 

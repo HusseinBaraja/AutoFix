@@ -8,6 +8,56 @@ namespace AutoFix.SettingsUi.Tests;
 public sealed class MainWindowViewModelTests
 {
     [TestMethod]
+    public void FeedbackWindowRendersQuietDefaultsAndSavesChangedToggle()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            MainWindow? window = null;
+            try
+            {
+                using var fixture = TempConfigFixture.Create();
+                var config = AppConfig.Default(); config.Onboarding.Completed = true;
+                fixture.Storage.Save(config);
+                var viewModel = new MainWindowViewModel(new FakeBackgroundIpcClient(), fixture.Storage,
+                    new AppRuleStorage(Path.Combine(fixture.Root, "autofix.sqlite")), new NullConfigFileDialog(), new FakeApiKeyStatus(false), new FakeStartupRegistration());
+                window = new MainWindow(viewModel) { ShowActivated = false, Left = -10000, Top = -10000, Width = 1080, Height = 1150 };
+                window.Show();
+                viewModel.SelectedSection = viewModel.Sections.Single(s => s.Name == "Feedback");
+                Pump();
+                var boxes = Descendants(window).OfType<System.Windows.Controls.CheckBox>()
+                    .Where(box => box.DataContext is SettingCardViewModel).ToArray();
+                Assert.AreEqual(7, boxes.Length);
+                foreach (var box in boxes)
+                {
+                    var card = (SettingCardViewModel)box.DataContext;
+                    Assert.AreEqual(card.Path is "feedback.tray_state_enabled" or "feedback.show_blocked_app_notice" or "feedback.show_timeout_notice", box.IsChecked);
+                }
+                var preview = Environment.GetEnvironmentVariable("AUTOFIX_FEEDBACK_PREVIEW");
+                if (!string.IsNullOrEmpty(preview))
+                {
+                    window.UpdateLayout();
+                    var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                    bitmap.Render(window);
+                    var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                    encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+                    using var file = File.Create(preview); encoder.Save(file);
+                }
+                boxes.Single(box => ((SettingCardViewModel)box.DataContext).Path == "feedback.show_near_caret_overlay")
+                    .SetCurrentValue(System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty, true);
+                Pump();
+                Assert.IsTrue(fixture.Storage.Load(fixture.Path).Feedback.ShowNearCaretOverlay);
+            }
+            catch (Exception error) { failure = error; }
+            finally { window?.Close(); }
+        }) { IsBackground = true };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(15)), "WPF feedback flow timed out.");
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    [TestMethod]
     public void DictionaryWindowEditsScopedPairsAndPreservesInvalidEdits()
     {
         Exception? failure = null;

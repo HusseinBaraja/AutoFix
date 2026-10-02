@@ -14,6 +14,15 @@ This component owns settings mode:
 - Communication with the background process.
 - User-facing configuration for triggers, correction behavior, dictionaries, app rules, privacy, and engine selection.
 
+**Feedback** exposes seven independent switches. Tray states, manual blocked-action
+notices and manual API timeout notices default on. Applied notices, skipped reasons,
+medium-confidence suggestion previews and near-caret placement default off. Every
+switch round-trips through TOML and IPC, including older files without the new
+`feedback.show_near_caret_overlay` key. Near-caret placement changes only where an
+enabled notice appears. The tray polls metadata-only engine state and changes a
+small icon badge and tooltip; it stays available when state is disabled or the
+engine cannot restart. Correction feedback never uses modal dialogs or balloons.
+
 The UI should remain a thin product surface over explicit config and IPC contracts from `shared-schema`. Background correction behavior belongs in `app-core-rust`.
 
 The **Dictionary** section lists and edits SQLite word/phrase exclusions and
@@ -38,9 +47,9 @@ correction requires the API engine.
 
 Confidence controls expose high and medium behavior (`silent`, `suggestion`,
 or `do_nothing`). High defaults to silent apply. Medium defaults to manual
-suggestions when suggestion UI is available; automatic triggers do nothing
-unless silent apply is selected. V1 has no suggestion UI, so medium suggestions
-currently do nothing. Low confidence is fixed to do nothing in a disabled
+suggestions when the Feedback preview switch is enabled; automatic triggers do
+nothing unless silent apply is selected. Previews are read-only and never accept
+or apply edits. Low confidence is fixed to do nothing in a disabled
 control, and importing other low-confidence behaviors is rejected.
 
 Context settings expose the pending correction queue. Capacity defaults to one

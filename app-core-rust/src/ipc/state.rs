@@ -142,6 +142,8 @@ impl IpcServerState {
             running: true,
             correction_mode: self.config.correction.mode.into(),
             engine: self.config.correction.engine.clone().into(),
+            tray_state: crate::background::feedback::tray_state().into(),
+            tray_state_enabled: self.config.feedback.tray_state_enabled,
         }
     }
 

@@ -40,6 +40,21 @@ before reporting success. Disable it under **Correction > Use clipboard for
 correction** or set `replacement.clipboard_enabled = false` in settings TOML.
 See [the engine documentation](app-core-rust/README.md) for runtime boundaries.
 
+**Feedback** keeps AutoFix quiet by default. The tray always stays available,
+with idle, active, correcting, blocked and error states. Successful automatic
+corrections show no popup. Manual failures, blocked actions and manual API
+timeouts use a small notice that never takes focus. Repeated notices coalesce
+and disappear after 2.5 seconds, new typing or a focus change. Secure fields do
+not receive correction notices.
+
+You can enable correction-applied notices, skipped reasons, and read-only manual
+medium-confidence suggestion previews. Suggestions never apply edits; acceptance
+remains planned. Blocked-action and timeout notices can be disabled independently.
+Optional near-caret placement uses the Windows native caret when available,
+otherwise the notice appears in the current monitor's work-area corner. Turning
+off tray state keeps the tray icon and its settings/Exit menu available. Existing
+saved preferences are preserved; new feedback options default to off.
+
 When safer methods are unavailable or clipboard correction is disabled, SendInput
 can replace a verified pre-caret span in supported Unicode Edit controls. Unknown
 controls, unsafe selections and security refusals skip correction and log only

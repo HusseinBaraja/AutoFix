@@ -80,6 +80,8 @@ pub(crate) struct AppStatusResponse {
     pub(crate) running: bool,
     pub(crate) correction_mode: IpcCorrectionMode,
     pub(crate) engine: IpcCorrectionEngine,
+    pub(crate) tray_state: String,
+    pub(crate) tray_state_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

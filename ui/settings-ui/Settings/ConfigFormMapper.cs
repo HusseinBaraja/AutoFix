@@ -119,6 +119,7 @@ public static class ConfigFormMapper
         config.Feedback.ShowMediumConfidenceSuggestions = Toggle(values, "feedback.show_medium_confidence_suggestions");
         config.Feedback.ShowBlockedAppNotice = Toggle(values, "feedback.show_blocked_app_notice");
         config.Feedback.ShowTimeoutNotice = Toggle(values, "feedback.show_timeout_notice");
+        config.Feedback.ShowNearCaretOverlay = Toggle(values, "feedback.show_near_caret_overlay");
     }
 
     private static void ApplyLogging(AppConfig config, IReadOnlyDictionary<string, SettingCardViewModel> values)

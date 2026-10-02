@@ -2,6 +2,7 @@ mod admin;
 pub(crate) mod app_identity;
 mod components;
 mod context_capture;
+pub(crate) mod feedback;
 mod informative_context;
 mod input_listener;
 mod message_loop;
@@ -15,7 +16,6 @@ mod shortcuts;
 mod target;
 #[cfg(test)]
 mod tests;
-mod timeout_notice;
 mod triggers;
 mod typing;
 
@@ -104,6 +104,7 @@ fn capture_if_current<T>(
 }
 
 struct InputProcessor {
+    feedback: feedback::Feedback,
     learner: crate::dictionary::Learner,
     pipeline: CorrectionPipeline,
     processed_input_sequence: u64,
@@ -314,6 +315,7 @@ impl InputWorker {
             .name("autofix-input-processing".into())
             .spawn(move || {
                 let mut processor = InputProcessor {
+                    feedback: feedback::Feedback::default(),
                     learner: crate::dictionary::Learner::default(),
                     pipeline,
                     processed_input_sequence: input_listener::current_input_sequence(),
@@ -345,6 +347,7 @@ impl InputWorker {
                         InputWork::Shortcut(id) => processor.process_shortcut(id),
                         InputWork::Tick => processor.session_manager.prune_exited(),
                         InputWork::Config(config) => {
+                            processor.feedback.reset();
                             processor.pipeline.cancel();
                             if let Some(session) = processor.session_manager.active_mut() {
                                 session.restore_pending();
@@ -355,6 +358,7 @@ impl InputWorker {
                             processor.config = *config;
                         }
                         InputWork::Reset => {
+                            processor.feedback.reset();
                             processor.pipeline.cancel();
                             processor
                                 .session_manager
@@ -448,6 +452,8 @@ impl InputProcessor {
         // Frozen ranges may survive processed typing, but never guess what keys
         // still queued in the hooks did to the target.
         if Self::input_stamp().sequence != self.processed_input_sequence {
+            self.feedback
+                .publish(&self.config.feedback, false, self.pipeline.is_correcting());
             return;
         }
         let config = &self.config;
@@ -505,9 +511,20 @@ impl InputProcessor {
             self.session_manager
                 .deactivate(MovementSignal::UnknownPosition);
         }
-        if self.pipeline.take_timeout_notice() {
-            timeout_notice::show();
+        if let Some((event, manual)) = self.pipeline.take_feedback() {
+            self.feedback.event(event, manual, &self.config.feedback);
         }
+        if let Some(preview) = self.pipeline.take_suggestion() {
+            self.feedback.suggestion(preview, &self.config.feedback);
+        }
+        self.feedback.publish(
+            &self.config.feedback,
+            self.config.correction.enabled
+                && self.session_manager.active().is_some_and(|session| {
+                    !session.position_uncertain() && !session.executable_context().is_empty()
+                }),
+            self.pipeline.is_correcting(),
+        );
     }
 
     /// Processes a guarded input batch, captures context, and snapshots correction policies.
@@ -521,11 +538,13 @@ impl InputProcessor {
         for event in events {
             match event {
                 InputEvent::FocusChange => {
+                    self.feedback.reset();
                     gate_result = None;
                     self.session_manager
                         .input(typing::TypedInput::Uncertain(MovementSignal::FocusChange));
                 }
                 InputEvent::MouseClick => {
+                    self.feedback.reset();
                     gate_result = None;
                     self.session_manager
                         .input(typing::TypedInput::Uncertain(MovementSignal::MouseClick));
@@ -573,12 +592,14 @@ impl InputProcessor {
                     }
                     match decision {
                         SecurityDecision::Allowed { target } if target.window_handle == window => {
+                            self.feedback.blocked(false);
                             needs_capture |= self.session_manager.focus(&target);
                             gate_result = Some((window, true));
                             needs_capture |=
                                 self.track_input(key.translate(), &mut pending_requests);
                         }
                         _ => {
+                            self.feedback.blocked(true);
                             gate_result = Some((window, false));
                             self.session_manager.deactivate(MovementSignal::FocusChange);
                         }
@@ -719,9 +740,18 @@ impl InputProcessor {
                 if stamp.sequence != self.processed_input_sequence {
                     return;
                 }
-                if let SecurityDecision::Allowed { target } =
-                    SecurityGate::check(TriggerKind::ManualShortcut, &self.config, &self.database)
-                {
+                let decision =
+                    SecurityGate::check(TriggerKind::ManualShortcut, &self.config, &self.database);
+                if let SecurityDecision::Blocked { reason, .. } = decision {
+                    self.feedback.blocked(true);
+                    if feedback::is_app_block(reason) && Self::input_stamp() == stamp {
+                        self.feedback
+                            .event(feedback::Event::Blocked, true, &self.config.feedback);
+                    }
+                    return;
+                }
+                self.feedback.blocked(false);
+                if let SecurityDecision::Allowed { target } = decision {
                     if self.config.shortcuts.correct_arbitrary_selection
                         && !self.session_manager.active_matches(&target)
                     {
@@ -753,6 +783,11 @@ impl InputProcessor {
                                     context_capture::SelectionCapture::NoSelection
                                 ) && session.position_uncertain()
                                 {
+                                    self.feedback.event(
+                                        feedback::Event::Blocked,
+                                        true,
+                                        &self.config.feedback,
+                                    );
                                     return;
                                 }
                                 if let Some(request) = triggers::manual(
@@ -764,9 +799,18 @@ impl InputProcessor {
                                     &self.config,
                                 ) {
                                     self.dispatch_trigger(request, stamp);
+                                } else if Self::input_stamp() == stamp {
+                                    self.feedback.event(
+                                        feedback::Event::Blocked,
+                                        true,
+                                        &self.config.feedback,
+                                    );
                                 }
                             }
                         }
+                    } else if Self::input_stamp() == stamp {
+                        self.feedback
+                            .event(feedback::Event::Blocked, true, &self.config.feedback);
                     }
                 }
             }
@@ -784,18 +828,34 @@ impl InputProcessor {
         if stamp.sequence != self.processed_input_sequence {
             return;
         }
-        let SecurityDecision::Allowed { target } =
-            SecurityGate::check(TriggerKind::Undo, &self.config, &self.database)
-        else {
+        let decision = SecurityGate::check(TriggerKind::Undo, &self.config, &self.database);
+        if let SecurityDecision::Blocked { reason, .. } = decision {
+            self.feedback.blocked(true);
+            if feedback::is_app_block(reason) && Self::input_stamp() == stamp {
+                self.feedback
+                    .event(feedback::Event::Blocked, true, &self.config.feedback);
+            }
             return;
+        }
+        let SecurityDecision::Allowed { target } = decision else {
+            unreachable!()
         };
+        self.feedback.blocked(false);
         if !self.session_manager.active_matches(&target) {
+            if Self::input_stamp() == stamp {
+                self.feedback
+                    .event(feedback::Event::Blocked, true, &self.config.feedback);
+            }
             return;
         }
         let Some(session) = self.session_manager.active() else {
             return;
         };
         let Some(undo) = session.undo_target() else {
+            if Self::input_stamp() == stamp {
+                self.feedback
+                    .event(feedback::Event::Blocked, true, &self.config.feedback);
+            }
             return;
         };
         let known = format!(
@@ -808,6 +868,10 @@ impl InputProcessor {
             &self.config.context,
             known.chars().count(),
         ) else {
+            if Self::input_stamp() == stamp {
+                self.feedback
+                    .event(feedback::Event::Blocked, true, &self.config.feedback);
+            }
             return;
         };
         if Self::input_stamp() != stamp || !live.ends_with(&known) {
@@ -844,6 +908,10 @@ impl InputProcessor {
         } else if result.may_have_changed {
             self.session_manager
                 .deactivate(MovementSignal::UnknownPosition);
+        }
+        if !result.success && Self::input_stamp() == stamp {
+            self.feedback
+                .event(feedback::Event::Error, true, &self.config.feedback);
         }
     }
 

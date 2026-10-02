@@ -203,16 +203,19 @@ public sealed class FeedbackConfig
     public bool ShowCorrectionAppliedNotification { get; set; }
 
     [JsonPropertyName("show_skipped_reason")]
-    public bool ShowSkippedReason { get; set; } = true;
+    public bool ShowSkippedReason { get; set; }
 
     [JsonPropertyName("show_medium_confidence_suggestions")]
-    public bool ShowMediumConfidenceSuggestions { get; set; } = true;
+    public bool ShowMediumConfidenceSuggestions { get; set; }
 
     [JsonPropertyName("show_blocked_app_notice")]
     public bool ShowBlockedAppNotice { get; set; } = true;
 
     [JsonPropertyName("show_timeout_notice")]
     public bool ShowTimeoutNotice { get; set; } = true;
+
+    [JsonPropertyName("show_near_caret_overlay")]
+    public bool ShowNearCaretOverlay { get; set; }
 }
 
 public sealed class LoggingConfig

@@ -22,6 +22,212 @@ use super::pipe_path_for_process;
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// .NET tray clients must receive a complete response even when reading starts after the write.
+#[test]
+fn dotnet_status_clients_preserve_delayed_responses_in_byte_and_message_modes() {
+    use std::{
+        os::windows::process::CommandExt,
+        process::Command,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    let fixture = IpcFixture::start();
+    let pipe_name = fixture.pipe_path.strip_prefix(r"\\.\pipe\").unwrap();
+    for read_mode in ["Byte", "Message"] {
+        let script = format!(
+            r#"
+$ErrorActionPreference = 'Stop'
+$pipe = [System.IO.Pipes.NamedPipeClientStream]::new('.', '{pipe_name}', [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::Asynchronous)
+try {{
+    $pipe.Connect(2000)
+    $pipe.ReadMode = [System.IO.Pipes.PipeTransmissionMode]::{read_mode}
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes('{{"type":"get_app_status"}}')
+    $pipe.Write($bytes, 0, $bytes.Length)
+    $pipe.Flush()
+    Start-Sleep -Milliseconds 100
+    $reader = [System.IO.StreamReader]::new($pipe)
+    try {{
+        $read = $reader.ReadToEndAsync()
+        if (!$read.Wait(2000)) {{ throw 'IPC response timed out.' }}
+        [Console]::Write($read.GetAwaiter().GetResult())
+    }} finally {{ $reader.Dispose() }}
+}} finally {{ $pipe.Dispose() }}
+"#
+        );
+        let mut child = Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let started = Instant::now();
+        while child.try_wait().unwrap().is_none() {
+            // Allow cold PowerShell/.NET startup on busy CI hosts; the connect and
+            // response deadlines inside the client remain two seconds each.
+            if started.elapsed() > Duration::from_secs(30) {
+                child.kill().unwrap();
+                let output = child.wait_with_output().unwrap();
+                panic!(
+                    ".NET IPC client did not finish in {read_mode} mode: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let response: IpcResponse = serde_json::from_slice(&output.stdout)
+            .expect(".NET tray client must receive a complete JSON response");
+        assert!(matches!(response, IpcResponse::AppStatus(status) if status.running));
+    }
+}
+
+/// Local anonymous readers must not connect; the owning account remains able to poll status.
+#[test]
+fn anonymous_local_clients_are_denied_even_read_only_access() {
+    use std::{os::windows::ffi::OsStrExt, ptr::null_mut, thread, time::Duration};
+    use windows_sys::Win32::{
+        Foundation::{
+            CloseHandle, GetLastError, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, GENERIC_READ,
+            INVALID_HANDLE_VALUE,
+        },
+        Security::{ImpersonateAnonymousToken, RevertToSelf},
+        Storage::FileSystem::{CreateFileW, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING},
+        System::Threading::GetCurrentThread,
+    };
+    let fixture = IpcFixture::start();
+    assert!(matches!(
+        send_request(&fixture.pipe_path, &IpcRequest::GetAppStatus).unwrap(),
+        IpcResponse::AppStatus(_)
+    ));
+    let pipe_path = fixture.pipe_path.clone();
+    let error = thread::spawn(move || {
+        struct Revert;
+        impl Drop for Revert {
+            fn drop(&mut self) {
+                assert_ne!(unsafe { RevertToSelf() }, 0);
+            }
+        }
+        assert_ne!(unsafe { ImpersonateAnonymousToken(GetCurrentThread()) }, 0);
+        let _revert = Revert;
+        let path: Vec<u16> = std::ffi::OsStr::new(&pipe_path)
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        for _ in 0..100 {
+            let pipe = unsafe {
+                CreateFileW(
+                    path.as_ptr(),
+                    GENERIC_READ,
+                    0,
+                    null_mut(),
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    null_mut(),
+                )
+            };
+            if pipe != INVALID_HANDLE_VALUE {
+                unsafe {
+                    CloseHandle(pipe);
+                }
+                return 0;
+            }
+            let error = unsafe { GetLastError() };
+            if error != ERROR_FILE_NOT_FOUND {
+                return error;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        ERROR_FILE_NOT_FOUND
+    })
+    .join()
+    .unwrap();
+    assert_eq!(error, ERROR_ACCESS_DENIED);
+    assert!(matches!(
+        send_request(&fixture.pipe_path, &IpcRequest::GetAppStatus).unwrap(),
+        IpcResponse::AppStatus(_)
+    ));
+}
+
+/// An idle or nonreading local client must not monopolize the status endpoint.
+#[test]
+fn stalled_clients_release_the_status_endpoint_at_the_request_deadline() {
+    use std::{
+        os::windows::ffi::OsStrExt,
+        ptr::null_mut,
+        thread,
+        time::{Duration, Instant},
+    };
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE},
+        Storage::FileSystem::{CreateFileW, WriteFile, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING},
+    };
+    struct Client(HANDLE);
+    impl Drop for Client {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+    for send_request_first in [false, true] {
+        let fixture = IpcFixture::start();
+        let path: Vec<u16> = std::ffi::OsStr::new(&fixture.pipe_path)
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        let started = Instant::now();
+        let client = loop {
+            let pipe = unsafe {
+                CreateFileW(
+                    path.as_ptr(),
+                    GENERIC_READ | GENERIC_WRITE,
+                    0,
+                    null_mut(),
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    null_mut(),
+                )
+            };
+            if pipe != INVALID_HANDLE_VALUE {
+                break Client(pipe);
+            }
+            assert!(started.elapsed() < Duration::from_secs(2));
+            thread::sleep(Duration::from_millis(10));
+        };
+        if send_request_first {
+            let request = serde_json::to_vec(&IpcRequest::GetAppStatus).unwrap();
+            let mut written = 0;
+            assert_ne!(
+                unsafe {
+                    WriteFile(
+                        client.0,
+                        request.as_ptr().cast(),
+                        request.len() as u32,
+                        &mut written,
+                        null_mut(),
+                    )
+                },
+                0
+            );
+            assert_eq!(written as usize, request.len());
+        }
+        thread::sleep(Duration::from_millis(1200));
+        let resumed = Instant::now();
+        let response = send_request(&fixture.pipe_path, &IpcRequest::GetAppStatus).unwrap();
+        assert!(matches!(response, IpcResponse::AppStatus(status) if status.running));
+        assert!(resumed.elapsed() < Duration::from_millis(500));
+        // Keep the unresponsive client open until after the next client has succeeded.
+        drop(client);
+    }
+}
+
 #[test]
 fn reports_basic_app_status() {
     let fixture = IpcFixture::start();
@@ -33,8 +239,41 @@ fn reports_basic_app_status() {
             assert!(status.running);
             assert_eq!(status.correction_mode, CorrectionMode::TyposOnly.into());
             assert_eq!(status.engine, CorrectionEngine::Local.into());
+            assert!(["idle", "active", "correcting", "blocked", "error"]
+                .contains(&status.tray_state.as_str()));
         }
         other => panic!("unexpected response: {other:?}"),
+    }
+}
+
+#[test]
+fn feedback_options_can_be_updated_through_ipc() {
+    let fixture = IpcFixture::start();
+    for (path, value) in [
+        ("feedback.show_near_caret_overlay", true),
+        ("feedback.show_correction_applied_notification", true),
+        ("feedback.show_skipped_reason", true),
+        ("feedback.show_medium_confidence_suggestions", true),
+        ("feedback.show_blocked_app_notice", false),
+        ("feedback.show_timeout_notice", false),
+        ("feedback.tray_state_enabled", false),
+    ] {
+        let response = send_request(
+            &fixture.pipe_path,
+            &IpcRequest::UpdateSetting(UpdateSettingRequest {
+                path: path.into(),
+                value: json!(value),
+            }),
+        )
+        .unwrap();
+        assert!(matches!(response, IpcResponse::SettingUpdated(_)));
+        let config =
+            serde_json::to_value(crate::settings::load_config(&fixture.config_path).unwrap())
+                .unwrap();
+        assert_eq!(
+            config["feedback"][path.strip_prefix("feedback.").unwrap()],
+            json!(value)
+        );
     }
 }
 
