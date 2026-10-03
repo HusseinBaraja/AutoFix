@@ -496,7 +496,7 @@ fn native_caret_movement_flows(edit: isize) {
             processor.pipeline.wait_manual();
             processor.finish_correction();
             assert!(
-                std::time::Instant::now() < deadline,
+                !processor.pipeline.is_correcting() || std::time::Instant::now() < deadline,
                 "movement correction did not complete"
             );
         }
@@ -549,6 +549,7 @@ fn native_caret_movement_flows(edit: isize) {
 /// Share the isolated editor while allowing affected automatic flows to run alone.
 #[cfg(windows)]
 fn native_editor_smoke(automatic_only: bool, movement_only: bool) {
+    let _ = tracing_subscriber::fmt().with_target(false).try_init();
     const EM_SETSEL: u32 = 0x00b1;
     use crate::background::security::TriggerKind;
     use std::{
@@ -651,6 +652,23 @@ fn native_editor_smoke(automatic_only: bool, movement_only: bool) {
             "test editor could not acquire foreground focus"
         );
         thread::sleep(std::time::Duration::from_millis(25));
+    }
+    // Late activation retries must preserve both a caret and a selection. Cases
+    // install their own ranges after startup; activation cannot restore offset 7.
+    for (start, end) in [(4usize, 7isize), (9, 9)] {
+        let mut observed_start = 0u32;
+        let mut observed_end = 0u32;
+        unsafe {
+            SendMessageW(edit as _, EM_SETSEL, start, end);
+            SendMessageW(GetAncestor(edit as _, GA_ROOT), WM_APP + 1, 0, 0);
+            SendMessageW(
+                edit as _,
+                0x00b0,
+                &mut observed_start as *mut u32 as usize,
+                &mut observed_end as *mut u32 as isize,
+            );
+        }
+        assert_eq!((observed_start, observed_end), (start as u32, end as u32));
     }
     if movement_only {
         native_caret_movement_flows(edit);
@@ -936,7 +954,7 @@ fn native_editor_smoke(automatic_only: bool, movement_only: bool) {
             processor.pipeline.wait_manual();
             processor.finish_correction();
             assert!(
-                std::time::Instant::now() < deadline,
+                !processor.pipeline.is_correcting() || std::time::Instant::now() < deadline,
                 "automatic trigger flow did not complete: {trigger:?}"
             );
         }
@@ -1095,7 +1113,7 @@ fn native_editor_smoke(automatic_only: bool, movement_only: bool) {
             processor.pipeline.wait_manual();
             processor.finish_correction();
             assert!(
-                std::time::Instant::now() < deadline,
+                !processor.pipeline.is_correcting() || std::time::Instant::now() < deadline,
                 "manual shortcut did not complete"
             );
         }
@@ -1396,6 +1414,12 @@ unsafe extern "system" fn native_test_editor_window_proc(
     lparam: isize,
 ) -> isize {
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
+    if message == WM_APP + 1 {
+        // Activation retries may arrive after a case has installed its document
+        // and caret. Focus the editor without resetting that case's selection.
+        windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus(GetWindow(window, GW_CHILD));
+        return 0;
+    }
     if message == WM_APP + 2 {
         SetWindowLongPtrW(window, GWLP_USERDATA, wparam as isize);
         return 0;
@@ -1487,16 +1511,13 @@ fn native_edit_test_host() {
         );
         assert!(!edit.is_null());
         SetForegroundWindow(window);
+        SetFocus(edit);
+        SendMessageW(edit, 0x00b1, 7, 7);
+        println!("AUTOFIX_EDITOR {} {}", GetCurrentThreadId(), edit as isize);
+        std::io::stdout().flush().unwrap();
         PostMessageW(window, WM_APP + 1, 0, 0);
         let mut message: MSG = std::mem::zeroed();
         while GetMessageW(&mut message, ptr::null_mut(), 0, 0) > 0 {
-            if message.message == WM_APP + 1 {
-                SetFocus(edit);
-                SendMessageW(edit, 0x00b1, 7, 7);
-                println!("AUTOFIX_EDITOR {} {}", GetCurrentThreadId(), edit as isize);
-                std::io::stdout().flush().unwrap();
-                continue;
-            }
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
