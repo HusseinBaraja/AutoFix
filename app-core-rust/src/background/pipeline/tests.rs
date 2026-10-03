@@ -1,13 +1,58 @@
 use super::*;
 use crate::background::{
     context_capture::SelectionCapture,
+    security,
     target::FocusedElementId,
     triggers,
     typing::{MovementSignal, TypedInput},
+    InputProcessor, PendingTrigger,
 };
 use std::{cell::Cell, sync::mpsc, time::Instant};
 
+mod character;
 mod manual;
+mod word_count;
+
+/// Build the runtime input owner for automatic-trigger flow tests.
+fn processor(config: AppConfig, pipeline: CorrectionPipeline) -> InputProcessor {
+    let mut processor = InputProcessor {
+        feedback: crate::background::feedback::Feedback::default(),
+        learner: crate::dictionary::Learner::default(),
+        pipeline,
+        processed_input_sequence: STAMP.sequence,
+        session_manager: SessionManager::new(config.context.clone()),
+        config,
+        database: crate::storage::Database::open_memory().unwrap(),
+    };
+    processor.session_manager.focus(&target());
+    processor
+}
+
+/// Send translated keys individually, preserving the real trigger boundary.
+fn type_text(processor: &mut InputProcessor, text: &str) -> Vec<PendingTrigger> {
+    let mut pending = Vec::new();
+    for character in text.chars() {
+        processor.track_input(TypedInput::Text(character.to_string()), &mut pending);
+    }
+    pending
+}
+
+/// Dispatch with real app rules and a deterministic focused target.
+fn dispatch(processor: &mut InputProcessor, request: CorrectionRequest) -> bool {
+    processor.dispatch_trigger_with(
+        request,
+        STAMP,
+        || STAMP,
+        |trigger, config, database| {
+            security::check_detection(
+                trigger,
+                config,
+                &database.app_rules().list().unwrap(),
+                crate::background::target::TargetDetection::Available(target()),
+            )
+        },
+    )
+}
 
 const STAMP: InputStamp = InputStamp {
     position: 7,
@@ -767,7 +812,7 @@ fn cancel_oldest_suppresses_late_transport_and_runs_new_segment() {
 #[test]
 fn frozen_failures_release_capacity_without_committing_engine_output() {
     let config = AppConfig::default();
-    for failure in 0..9 {
+    for failure in 0..8 {
         let mut manager = manager(&config, "teh");
         let mut pipeline = CorrectionPipeline::new().unwrap();
         submit_frozen(&mut pipeline, &mut manager, &config);
@@ -794,14 +839,6 @@ fn frozen_failures_release_capacity_without_committing_engine_output() {
                 }
                 6 => output.behavior = ConfidenceBehavior::DoNothing,
                 7 => {
-                    *output = CorrectionOutput::unchanged(
-                        "teh".into(),
-                        ConfidenceTier::Medium,
-                        NoChangeReason::ConfidenceBelowConfiguredBehavior,
-                        0,
-                    )
-                }
-                8 => {
                     *output = CorrectionOutput::unchanged(
                         "teh".into(),
                         ConfidenceTier::Low,
@@ -964,10 +1001,12 @@ fn unchanged_commit_policy_preserves_skips_for_all_triggers() {
                 reason.clone(),
                 17,
             );
-            let accepted = matches!(
-                reason,
-                NoChangeReason::NoCorrectionNeeded | NoChangeReason::AllCandidatesProtected
-            );
+            let accepted =
+                matches!(
+                    reason,
+                    NoChangeReason::NoCorrectionNeeded | NoChangeReason::AllCandidatesProtected
+                ) || (matches!(trigger, TriggerKind::WordCount | TriggerKind::Character)
+                    && reason == NoChangeReason::ConfidenceBelowConfiguredBehavior);
             let calls = Cell::new(0);
             assert_eq!(
                 finish(&mut pipeline, &mut manager, &config, STAMP, &calls, false),
@@ -1002,10 +1041,12 @@ fn unchanged_commit_policy_preserves_skips_for_all_triggers() {
                         trigger.as_str().into(),
                         "low".into(),
                         "none".into(),
-                        if reason == NoChangeReason::NoCorrectionNeeded {
-                            "no_correction_needed"
-                        } else {
-                            "all_candidates_protected"
+                        match reason {
+                            NoChangeReason::NoCorrectionNeeded => "no_correction_needed",
+                            NoChangeReason::ConfidenceBelowConfiguredBehavior => {
+                                "confidence_below_configured_behavior"
+                            }
+                            _ => "all_candidates_protected",
                         }
                         .into(),
                         17
@@ -1470,14 +1511,10 @@ fn medium_previews_are_manual_opt_in_and_never_mutate_or_commit() {
             }
             wait_completion(&pipeline);
             let calls = Cell::new(0);
-            assert!(!finish(
-                &mut pipeline,
-                &mut manager,
-                &config,
-                STAMP,
-                &calls,
-                true
-            ));
+            assert_eq!(
+                finish(&mut pipeline, &mut manager, &config, STAMP, &calls, true),
+                automatic
+            );
             assert_eq!(calls.get(), 0);
             let preview = pipeline.take_suggestion();
             if let Some(preview) = &preview {
@@ -1496,8 +1533,14 @@ fn medium_previews_are_manual_opt_in_and_never_mutate_or_commit() {
                 }
             );
             assert!(pipeline.take_suggestion().is_none());
-            assert_eq!(manager.active().unwrap().editable_context(), "teh");
-            assert!(manager.active().unwrap().informative_context().is_empty());
+            assert_eq!(
+                manager.active().unwrap().editable_context(),
+                if automatic { "" } else { "teh" }
+            );
+            assert_eq!(
+                manager.active().unwrap().informative_context(),
+                if automatic { "teh" } else { "" }
+            );
             assert!(manager.active().unwrap().undo_target().is_none());
         }
     }
@@ -1593,9 +1636,10 @@ fn medium_local_results_skip_preview_or_apply_without_losing_typed_text() {
             wait_completion(&pipeline);
             let calls = Cell::new(0);
             let silent = configured == ConfidenceBehavior::Silent;
+            let committed = silent || automatic;
             assert_eq!(
                 finish(&mut pipeline, &mut manager, &config, STAMP, &calls, true,),
-                silent
+                committed
             );
             assert_eq!(calls.get(), usize::from(silent));
             assert!(pipeline.take_suggestion().is_none());
@@ -1603,11 +1647,17 @@ fn medium_local_results_skip_preview_or_apply_without_losing_typed_text() {
             assert_eq!(session.undo_target().is_some(), silent);
             assert_eq!(
                 session.informative_context(),
-                if silent { "accommodate" } else { "" }
+                if silent {
+                    "accommodate"
+                } else if automatic {
+                    "accomodate"
+                } else {
+                    ""
+                }
             );
             assert_eq!(
                 session.editable_context(),
-                if silent { "" } else { "accomodate" }
+                if committed { "" } else { "accomodate" }
             );
         }
     }

@@ -223,8 +223,13 @@ executable text. Validated no-change results from manual, word-count, character,
 and final-fix requests commit the original segment without replacement or an
 undo entry. Each accepted result logs one metadata-only event and writes a
 `correction_metadata` row with trigger, engine, confidence, reason, latency, and
-replacement method `none`; no context text enters these logs. Failed, stale,
-timed-out, unsupported-language, and confidence-suppressed results stay executable.
+replacement method `none`; no context text enters these logs. Completed frozen
+word-count and character results suppressed by the admitted confidence policy
+also commit the verified original, with reason `confidence_below_configured_behavior`,
+no native replacement and no undo entry. They require the same target, security and exact
+live range checks as changed results. Medium automatic suggestions resolve to
+skip; low confidence always skips. Other confidence-suppressed results and
+failed, stale, timed-out or unsupported-language results stay executable.
 Exceeding `context.executable_context_max_words` (default 80) also commits the
 current segment, including after caret movement resolves and after a limit update.
 This size-limit commit logs only session and word-count metadata. New typing
@@ -269,6 +274,11 @@ one active executable context and a bounded pending correction queue.
 includes running work. Automatic triggers freeze the current executable context
 before processing subsequent typing, including keys in the same input batch.
 New typing starts a fresh executable context while correction runs asynchronously.
+The character trigger is optional, defaults to `.`, and reads its configurable
+list from `triggers.characters`. Matching uses the active pre-caret text, allowing
+Unicode boundaries and configured sequences entered over multiple key events.
+The whole completed active segment is frozen, including earlier skipped
+boundaries; informative text and already frozen text never become editable.
 `context.pending_queue_full_behavior` defaults to `skip_new`, which skips the
 new automatic trigger and retains current typing. `cancel_oldest` cancels the
 oldest pending request and its dependent newer requests, restores their unchecked

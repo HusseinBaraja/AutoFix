@@ -518,6 +518,24 @@ impl CorrectionPipeline {
             let no_change_reason = match output.no_change_reason {
                 Some(NoChangeReason::NoCorrectionNeeded) => Some("no_correction_needed"),
                 Some(NoChangeReason::AllCandidatesProtected) => Some("all_candidates_protected"),
+                // A completed automatic check may deliberately keep the original.
+                // Retire it only after the same live range proof as an applied edit,
+                // and only when the admitted policy really suppresses this tier.
+                Some(NoChangeReason::ConfidenceBelowConfiguredBehavior)
+                    if matches!(
+                        active.request.trigger,
+                        TriggerKind::WordCount | TriggerKind::Character
+                    ) && segment_id.is_some()
+                        && output.behavior == ConfidenceBehavior::DoNothing
+                        && output.changes.as_ref().is_some_and(Vec::is_empty)
+                        && active.request.confidence_behavior.behavior_for(
+                            output.confidence,
+                            active.trigger_type,
+                            active.suggestion_ui_available,
+                        ) == ConfidenceBehavior::DoNothing =>
+                {
+                    Some("confidence_below_configured_behavior")
+                }
                 _ => None,
             };
             if output.changes_needed {
@@ -668,10 +686,14 @@ impl CorrectionPipeline {
                 );
             } else if completed {
                 self.feedback_event = Some((
-                    Event::Skipped(if no_change_reason == Some("all_candidates_protected") {
-                        "AutoFix: matching terms are protected."
-                    } else {
-                        "AutoFix: no correction needed."
+                    Event::Skipped(match no_change_reason {
+                        Some("all_candidates_protected") => {
+                            "AutoFix: matching terms are protected."
+                        }
+                        Some("confidence_below_configured_behavior") => {
+                            "AutoFix: confidence policy skipped this correction."
+                        }
+                        _ => "AutoFix: no correction needed.",
                     }),
                     manual,
                 ));
