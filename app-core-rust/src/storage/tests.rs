@@ -85,6 +85,8 @@ fn stores_and_lists_app_rules() {
         character_trigger_allowed: true,
         local_engine_allowed: true,
         api_engine_allowed: false,
+        safety_mode: "auto".into(),
+        prose_context_allowed: false,
     };
 
     database.app_rules().upsert(&rule).unwrap();
@@ -104,6 +106,8 @@ fn upserts_process_only_app_rules_into_one_row() {
         character_trigger_allowed: false,
         local_engine_allowed: true,
         api_engine_allowed: true,
+        safety_mode: "auto".into(),
+        prose_context_allowed: false,
     };
     database.app_rules().upsert(&rule).unwrap();
 
@@ -188,12 +192,94 @@ fn seeds_default_app_rules() {
         && !rule.word_count_trigger_allowed
         && !rule.character_trigger_allowed));
     assert!(rules.iter().any(|rule| rule.process_name == "code.exe"
-        && rule.manual_shortcut_allowed
+        && !rule.manual_shortcut_allowed
         && !rule.word_count_trigger_allowed
         && !rule.character_trigger_allowed));
     assert!(rules
         .iter()
         .any(|rule| rule.process_name == "Bitwarden.exe" && rule.list_behavior == "blocklist"));
+}
+
+#[test]
+fn safety_migration_preserves_existing_permissions_and_defaults_prose_to_off() {
+    let connection = Connection::open_in_memory().unwrap();
+    migrations::migrate(&connection).unwrap();
+    connection.execute_batch("UPDATE app_rules SET manual_shortcut_allowed=1, character_trigger_allowed=1 WHERE process_name='code.exe'; ALTER TABLE app_rules DROP COLUMN safety_mode; ALTER TABLE app_rules DROP COLUMN prose_context_allowed; DELETE FROM schema_migrations WHERE version=5;").unwrap();
+    migrations::migrate(&connection).unwrap();
+    migrations::migrate(&connection).unwrap();
+    let repository = super::repositories::AppRuleRepository::new(&connection);
+    let mut rule = repository
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|rule| rule.process_name == "code.exe")
+        .unwrap();
+    assert!(rule.manual_shortcut_allowed && rule.character_trigger_allowed);
+    assert_eq!(rule.safety_mode, "auto");
+    assert!(!rule.prose_context_allowed);
+    rule.safety_mode = "code_editor".into();
+    rule.prose_context_allowed = true;
+    repository.upsert(&rule).unwrap();
+    assert!(repository.list().unwrap().contains(&rule));
+}
+
+#[test]
+fn safety_migration_rolls_back_columns_and_retries_after_marker_failure() {
+    for retained_column in [None, Some("safety_mode"), Some("prose_context_allowed")] {
+        let connection = Connection::open_in_memory().unwrap();
+        migrations::migrate(&connection).unwrap();
+        connection
+            .execute_batch(
+                "UPDATE app_rules SET safety_mode='code_editor', prose_context_allowed=1,
+                     manual_shortcut_allowed=1 WHERE process_name='code.exe';
+                 DELETE FROM schema_migrations WHERE version=5;
+                 CREATE TRIGGER reject_safety_version BEFORE INSERT ON schema_migrations
+                 WHEN NEW.version=5 BEGIN SELECT RAISE(ABORT, 'migration failure'); END;",
+            )
+            .unwrap();
+        for column in ["safety_mode", "prose_context_allowed"] {
+            if retained_column != Some(column) {
+                connection
+                    .execute_batch(&format!("ALTER TABLE app_rules DROP COLUMN {column}"))
+                    .unwrap();
+            }
+        }
+        let original_columns = table_columns(&connection, "app_rules");
+        let original_rows = row_count(&connection, "app_rules");
+
+        let error = migrations::migrate(&connection).unwrap_err();
+        assert!(error.to_string().contains("migration failure"));
+        assert_eq!(table_columns(&connection, "app_rules"), original_columns);
+        assert_eq!(schema_version(&connection), 4);
+        assert_eq!(row_count(&connection, "app_rules"), original_rows);
+        assert!(connection.is_autocommit());
+
+        connection
+            .execute_batch("DROP TRIGGER reject_safety_version")
+            .unwrap();
+        migrations::migrate(&connection).unwrap();
+        migrations::migrate(&connection).unwrap();
+        assert_eq!(schema_version(&connection), CURRENT_SCHEMA_VERSION);
+        let rule = super::repositories::AppRuleRepository::new(&connection)
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|rule| rule.process_name == "code.exe")
+            .unwrap();
+        assert!(rule.manual_shortcut_allowed);
+        assert_eq!(
+            rule.safety_mode,
+            if retained_column == Some("safety_mode") {
+                "code_editor"
+            } else {
+                "auto"
+            }
+        );
+        assert_eq!(
+            rule.prose_context_allowed,
+            retained_column == Some("prose_context_allowed")
+        );
+    }
 }
 
 #[test]
@@ -208,6 +294,8 @@ fn deletes_app_rules_by_process_and_title_pattern() {
         character_trigger_allowed: false,
         local_engine_allowed: false,
         api_engine_allowed: false,
+        safety_mode: "auto".into(),
+        prose_context_allowed: false,
     };
     database.app_rules().upsert(&rule).unwrap();
 
@@ -231,6 +319,38 @@ fn reset_app_rules_restores_seed_defaults() {
     assert!(first_reset
         .iter()
         .any(|rule| rule.process_name == "cmd.exe"));
+}
+
+#[test]
+fn failed_app_rule_reset_preserves_all_existing_rules() {
+    let database = Database::open_memory().unwrap();
+    let mut custom = database.app_rules().list().unwrap().remove(0);
+    custom.process_name = "custom.exe".into();
+    custom.list_behavior = "blocklist".into();
+    database.app_rules().upsert(&custom).unwrap();
+    let before = database.app_rules().list().unwrap();
+    // Fail after cmd.exe has been inserted, so rollback must undo both the
+    // original deletion and an already partially seeded replacement list.
+    database
+        .connection
+        .execute_batch(
+            "create trigger reject_default before insert on app_rules
+         when new.process_name = 'powershell.exe'
+         begin select raise(abort, 'injected seed failure'); end;",
+        )
+        .unwrap();
+
+    assert!(database.app_rules().reset_to_defaults().is_err());
+    assert_eq!(database.app_rules().list().unwrap(), before);
+
+    database
+        .connection
+        .execute_batch("drop trigger reject_default")
+        .unwrap();
+    database.app_rules().reset_to_defaults().unwrap();
+    let after = database.app_rules().list().unwrap();
+    assert!(!after.contains(&custom));
+    assert_eq!(after.len(), migrations::DEFAULT_APP_RULES.len());
 }
 
 #[test]

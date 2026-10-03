@@ -60,6 +60,21 @@ can replace a verified pre-caret span in supported Unicode Edit controls. Unknow
 controls, unsafe selections and security refusals skip correction and log only
 failure metadata.
 
+**App Rules** adds layered terminal/editor safety. New terminal and editor rules
+disable manual, word-count and character triggers. Enable **Manual** explicitly;
+editors also require **Editor prose**. **Safety** defaults to automatic detection,
+or can classify a custom app as `terminal` or `code_editor`. Known apps cannot be
+downgraded by choosing `auto`.
+
+Manual requests in these apps require selected prose. Heuristics reject commands,
+flags, paths, URLs, identifiers, code and uncertain fragments before either engine
+runs. Editor automatic correction requires explicit trigger and prose opt-ins,
+and a whole segment of recognizable line-comment prose. Terminal automatic
+requests still skip because the shell context cannot be proven safe.
+Existing permissions survive migration; the new editor prose permission starts
+off. Selected results still skip native replacement until caret-end proof is
+available, and manual-only rules do not enable continuous typed-input capture.
+
 ## Run App
 
 From the repository root, build and run AutoFix:

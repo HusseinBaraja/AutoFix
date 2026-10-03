@@ -31,7 +31,9 @@ public sealed record AppRuleDto(
     [property: JsonPropertyName("word_count_trigger_allowed")] bool WordCountTriggerAllowed,
     [property: JsonPropertyName("character_trigger_allowed")] bool CharacterTriggerAllowed,
     [property: JsonPropertyName("local_engine_allowed")] bool LocalEngineAllowed,
-    [property: JsonPropertyName("api_engine_allowed")] bool ApiEngineAllowed);
+    [property: JsonPropertyName("api_engine_allowed")] bool ApiEngineAllowed,
+    [property: JsonPropertyName("safety_mode")] string? SafetyMode = "auto",
+    [property: JsonPropertyName("prose_context_allowed")] bool ProseContextAllowed = false);
 
 public sealed record AppRulesResponse(
     [property: JsonPropertyName("rules")] IReadOnlyList<AppRuleDto> Rules);

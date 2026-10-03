@@ -38,21 +38,33 @@ fn dotnet_status_clients_preserve_delayed_responses_in_byte_and_message_modes() 
         let script = format!(
             r#"
 $ErrorActionPreference = 'Stop'
-$pipe = [System.IO.Pipes.NamedPipeClientStream]::new('.', '{pipe_name}', [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::Asynchronous)
-try {{
-    $pipe.Connect(2000)
-    $pipe.ReadMode = [System.IO.Pipes.PipeTransmissionMode]::{read_mode}
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes('{{"type":"get_app_status"}}')
-    $pipe.Write($bytes, 0, $bytes.Length)
-    $pipe.Flush()
-    Start-Sleep -Milliseconds 100
-    $reader = [System.IO.StreamReader]::new($pipe)
-    try {{
-        $read = $reader.ReadToEndAsync()
-        if (!$read.Wait(2000)) {{ throw 'IPC response timed out.' }}
-        [Console]::Write($read.GetAwaiter().GetResult())
-    }} finally {{ $reader.Dispose() }}
-}} finally {{ $pipe.Dispose() }}
+# Compile before connecting: cold PowerShell statement/type binding must not
+# consume the server's one-second pipe-I/O deadline on busy CI hosts.
+Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.IO.Pipes;
+using System.Text;
+using System.Threading;
+
+public static class DelayedStatusClient {{
+    public static string ReadStatus() {{
+        byte[] bytes = Encoding.UTF8.GetBytes("{{\"type\":\"get_app_status\"}}");
+        using (var pipe = new NamedPipeClientStream(".", @"{pipe_name}", PipeDirection.InOut, PipeOptions.Asynchronous))
+        using (var reader = new StreamReader(pipe)) {{
+            pipe.Connect(2000);
+            pipe.ReadMode = PipeTransmissionMode.{read_mode};
+            pipe.Write(bytes, 0, bytes.Length);
+            pipe.Flush();
+            Thread.Sleep(100);
+            var read = reader.ReadToEndAsync();
+            if (!read.Wait(2000)) {{ throw new TimeoutException("IPC response timed out."); }}
+            return read.GetAwaiter().GetResult();
+        }}
+    }}
+}}
+'@
+[Console]::Write([DelayedStatusClient]::ReadStatus())
 "#
         );
         let mut child = Command::new("powershell.exe")
@@ -64,13 +76,13 @@ try {{
             .unwrap();
         let started = Instant::now();
         while child.try_wait().unwrap().is_none() {
-            // Allow cold PowerShell/.NET startup on busy CI hosts; the connect and
-            // response deadlines inside the client remain two seconds each.
-            if started.elapsed() > Duration::from_secs(30) {
+            // Allow cold PowerShell/.NET startup and C# compilation on busy CI hosts;
+            // the connect and response deadlines remain two seconds each.
+            if started.elapsed() > Duration::from_secs(120) {
                 child.kill().unwrap();
                 let output = child.wait_with_output().unwrap();
                 panic!(
-                    ".NET IPC client did not finish in {read_mode} mode: {}",
+                    ".NET IPC client setup/exchange did not finish within 120 seconds in {read_mode} mode: {}",
                     String::from_utf8_lossy(&output.stderr)
                 );
             }
@@ -82,8 +94,12 @@ try {{
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let response: IpcResponse = serde_json::from_slice(&output.stdout)
-            .expect(".NET tray client must receive a complete JSON response");
+        let response: IpcResponse = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+            panic!(
+                ".NET tray client must receive a complete JSON response in {read_mode} mode: {error}; stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
         assert!(matches!(response, IpcResponse::AppStatus(status) if status.running));
     }
 }
@@ -361,6 +377,8 @@ fn lists_upserts_and_deletes_app_rules() {
         character_trigger_allowed: false,
         local_engine_allowed: false,
         api_engine_allowed: false,
+        safety_mode: "auto".into(),
+        prose_context_allowed: false,
     };
 
     let upserted =

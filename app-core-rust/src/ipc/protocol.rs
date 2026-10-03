@@ -48,6 +48,10 @@ pub(crate) struct AppRuleRequest {
     pub(crate) character_trigger_allowed: bool,
     pub(crate) local_engine_allowed: bool,
     pub(crate) api_engine_allowed: bool,
+    #[serde(default = "default_safety_mode")]
+    pub(crate) safety_mode: String,
+    #[serde(default)]
+    pub(crate) prose_context_allowed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -149,4 +153,8 @@ impl IpcResponse {
             message: message.into(),
         })
     }
+}
+
+fn default_safety_mode() -> String {
+    "auto".into()
 }

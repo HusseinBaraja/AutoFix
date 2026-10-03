@@ -6,7 +6,9 @@ use crate::{
 use super::target::{self, CorrectionEligibility, FocusedTarget, TargetDetection};
 
 mod outbound;
+mod text_safety;
 pub(super) use outbound::api_send_authorization;
+pub(super) use text_safety::request_allowed;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TriggerKind {
@@ -48,6 +50,17 @@ pub(crate) enum BlockReason {
 pub(crate) struct SecurityGate;
 
 impl SecurityGate {
+    /// Revalidate prose opt-in and text heuristics under the mutation reservation.
+    pub(super) fn authorize_correction_replacement(
+        request: &super::triggers::CorrectionRequest,
+        config: &AppConfig,
+        database: &Database,
+        target: &FocusedTarget,
+    ) -> Option<AppPolicyGuard> {
+        let guard = Self::authorize_replacement(request.trigger, config, database, target)?;
+        request_allowed(&guard.rules().ok()?, target, request).then_some(guard)
+    }
+
     /// Keep the current app rules stable through native mutation and verification.
     /// Missing/busy storage refuses replacement before any selection or input.
     pub(super) fn authorize_replacement(
@@ -127,8 +140,12 @@ pub(crate) fn check_detection(
         };
     }
 
-    // TODO: Once typed-session executable text is available here, block command
-    // lines, filesystem paths, URLs, and code-like text before app rules.
+    if !text_safety::trigger_allowed(app_rules, &target, trigger) {
+        return SecurityDecision::Blocked {
+            reason: BlockReason::AppRuleBlocked,
+            target: Some(target),
+        };
+    }
     let matching_rule = matching_rule(app_rules, &target);
     if let Some(rule) = matching_rule.filter(|rule| !trigger_allowed(rule, trigger)) {
         let _ = rule;
@@ -248,9 +265,7 @@ fn trigger_allowed(rule: &AppRule, trigger: TriggerKind) -> bool {
         TriggerKind::WordCount => rule.word_count_trigger_allowed,
         TriggerKind::Character => rule.character_trigger_allowed,
         TriggerKind::FinalFixBeforeReanchor => {
-            rule.manual_shortcut_allowed
-                || rule.word_count_trigger_allowed
-                || rule.character_trigger_allowed
+            rule.word_count_trigger_allowed || rule.character_trigger_allowed
         }
         TriggerKind::Undo => rule.manual_shortcut_allowed,
     }
@@ -454,6 +469,8 @@ mod tests {
             character_trigger_allowed: true,
             local_engine_allowed: true,
             api_engine_allowed: true,
+            safety_mode: "auto".into(),
+            prose_context_allowed: false,
         }
     }
 
@@ -554,6 +571,8 @@ mod tests {
             character_trigger_allowed: false,
             local_engine_allowed: false,
             api_engine_allowed: false,
+            safety_mode: "auto".into(),
+            prose_context_allowed: false,
             ..allow_rule(process_name)
         }
     }
@@ -568,6 +587,8 @@ mod tests {
             character_trigger_allowed: false,
             local_engine_allowed: true,
             api_engine_allowed: true,
+            safety_mode: "auto".into(),
+            prose_context_allowed: false,
         }
     }
 

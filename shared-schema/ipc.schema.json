@@ -20,6 +20,32 @@
       "type": "string",
       "enum": ["idle", "active", "correcting", "blocked", "error"]
     },
+    "appRule": {
+      "type": "object",
+      "required": ["process_name", "list_behavior", "manual_shortcut_allowed", "word_count_trigger_allowed", "character_trigger_allowed", "local_engine_allowed", "api_engine_allowed"],
+      "properties": {
+        "process_name": { "type": "string", "minLength": 1 },
+        "window_title_pattern": { "type": ["string", "null"] },
+        "list_behavior": { "enum": ["allowlist", "blocklist"] },
+        "manual_shortcut_allowed": { "type": "boolean" },
+        "word_count_trigger_allowed": { "type": "boolean" },
+        "character_trigger_allowed": { "type": "boolean" },
+        "local_engine_allowed": { "type": "boolean" },
+        "api_engine_allowed": { "type": "boolean" },
+        "safety_mode": { "enum": ["auto", "terminal", "code_editor"], "default": "auto" },
+        "prose_context_allowed": { "type": "boolean", "default": false }
+      },
+      "additionalProperties": false
+    },
+    "deleteAppRule": {
+      "type": "object",
+      "required": ["process_name"],
+      "properties": {
+        "process_name": { "type": "string" },
+        "window_title_pattern": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
     "appStatus": {
       "type": "object",
       "required": ["running", "correction_mode", "engine", "tray_state", "tray_state_enabled"],
@@ -43,6 +69,10 @@
             "get_current_engine",
             "reload_config",
             "update_setting",
+            "list_app_rules",
+            "upsert_app_rule",
+            "delete_app_rule",
+            "reset_app_rules",
             "open_logs",
             "request_undo_last_correction",
             "test_correction_engine_later",
@@ -50,14 +80,26 @@
           ]
         },
         "payload": {
-          "oneOf": [{ "$ref": "#/$defs/updateSettingRequest" }]
+          "oneOf": [{ "$ref": "#/$defs/updateSettingRequest" }, { "$ref": "#/$defs/appRule" }, { "$ref": "#/$defs/deleteAppRule" }]
         }
       },
       "allOf": [
         {
-          "if": { "properties": { "type": { "const": "update_setting" } } },
+          "if": { "properties": { "type": { "enum": ["update_setting", "upsert_app_rule", "delete_app_rule"] } } },
           "then": { "required": ["payload"] },
           "else": { "not": { "required": ["payload"] } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "upsert_app_rule" } } },
+          "then": { "properties": { "payload": { "$ref": "#/$defs/appRule" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "delete_app_rule" } } },
+          "then": { "properties": { "payload": { "$ref": "#/$defs/deleteAppRule" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "update_setting" } } },
+          "then": { "properties": { "payload": { "$ref": "#/$defs/updateSettingRequest" } } }
         }
       ]
     },
@@ -85,6 +127,10 @@
             "current_engine",
             "config_reloaded",
             "setting_updated",
+            "app_rules",
+            "app_rule_updated",
+            "app_rule_deleted",
+            "app_rules_reset",
             "logs",
             "undo_requested",
             "test_correction_engine_queued",

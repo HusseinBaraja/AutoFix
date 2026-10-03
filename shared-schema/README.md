@@ -82,8 +82,10 @@ as that account share the configuration trust boundary; IPC does not authenticat
 individual executables. Anonymous local clients cannot connect, including for
 read-only access.
 
-After one second, a watchdog requests cancellation of that client's pipe I/O,
-covering request reads, response writes and response consumption. Cancellation
+Request reads and response delivery each have a one-second watchdog. Application
+handling, including settings-file and SQLite work, runs between those I/O phases;
+it cannot expire a response before delivery starts. The delivery watchdog covers
+both response writes and response consumption. Cancellation
 targets only that pipe and is best-effort; one second is the cancellation
 threshold, not a guaranteed completion bound. Native tests verify endpoint
 recovery with idle and nonreading clients held open. Responses drain
@@ -128,3 +130,8 @@ clipboard paste and SendInput replacement are implemented for supported controls
 direct text APIs and UI Automation mutation remain planned. Focused native tests
 verify correction, recorded app-level undo, clipboard preservation and recovery,
 and preservation of newer typing, caret position, and text after the caret.
+
+App-rule safety fields (SQLite schema v5 and IPC): `safety_mode` is `auto`,
+`terminal` or `code_editor`; `prose_context_allowed` defaults to false. Legacy
+IPC requests default to auto/off. Both runtimes add missing columns idempotently
+and preserve existing trigger and engine preferences.

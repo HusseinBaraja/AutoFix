@@ -472,9 +472,9 @@ impl InputProcessor {
                 context_capture::read_before_caret(target, &config.context, known_chars)
             },
             |target, request, output| {
-                let Some(_policy_guard) =
-                    SecurityGate::authorize_replacement(request.trigger, config, database, target)
-                else {
+                let Some(_policy_guard) = SecurityGate::authorize_correction_replacement(
+                    request, config, database, target,
+                ) else {
                     tracing::warn!(
                         success = false,
                         method = "none",

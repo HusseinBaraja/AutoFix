@@ -11,6 +11,14 @@ pub(crate) struct AppPolicyGuard {
 }
 
 impl AppPolicyGuard {
+    /// Admission may read committed policy during an API send. Never create,
+    /// migrate, reserve a writer, or wait for a contended policy database.
+    pub(crate) fn read_rules_nowait(path: &Path) -> Result<Vec<AppRule>> {
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        connection.busy_timeout(Duration::ZERO)?;
+        AppRuleRepository::new(&connection).list()
+    }
+
     /// Reserve the writer slot before reading, even in WAL mode. Never create or migrate.
     pub(crate) fn acquire(path: &Path) -> Result<Self> {
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;

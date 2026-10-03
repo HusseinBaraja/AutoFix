@@ -180,6 +180,12 @@ fn validate_app_rule_request(rule: &AppRuleRequest) -> Result<(), String> {
     if !matches!(rule.list_behavior.as_str(), "allowlist" | "blocklist") {
         return Err("list_behavior must be allowlist or blocklist".to_owned());
     }
+    if !matches!(
+        rule.safety_mode.as_str(),
+        "auto" | "terminal" | "code_editor"
+    ) {
+        return Err("safety_mode must be auto, terminal or code_editor".into());
+    }
     Ok(())
 }
 
@@ -194,6 +200,8 @@ impl From<AppRule> for AppRuleRequest {
             character_trigger_allowed: value.character_trigger_allowed,
             local_engine_allowed: value.local_engine_allowed,
             api_engine_allowed: value.api_engine_allowed,
+            safety_mode: value.safety_mode,
+            prose_context_allowed: value.prose_context_allowed,
         }
     }
 }
@@ -211,6 +219,8 @@ impl From<AppRuleRequest> for AppRule {
             character_trigger_allowed: value.character_trigger_allowed,
             local_engine_allowed: value.local_engine_allowed,
             api_engine_allowed: value.api_engine_allowed,
+            safety_mode: value.safety_mode,
+            prose_context_allowed: value.prose_context_allowed,
         }
     }
 }

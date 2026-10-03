@@ -12,6 +12,64 @@ const STAMP: InputStamp = InputStamp {
     sequence: 12,
 };
 
+/// Both routes refuse restricted content before dispatch; refusal preserves session ownership.
+#[test]
+fn restricted_text_never_reaches_either_correction_engine() {
+    let path = std::env::temp_dir().join(format!(
+        "autofix-text-safety-{}-{}.sqlite",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let database = crate::storage::Database::open(&path).unwrap();
+    for process in ["cmd.exe", "code.exe"] {
+        let mut rule = database
+            .app_rules()
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|rule| rule.process_name == process)
+            .unwrap();
+        rule.manual_shortcut_allowed = true;
+        rule.prose_context_allowed = true;
+        database.app_rules().upsert(&rule).unwrap();
+        for engine in [
+            crate::settings::CorrectionEngine::Local,
+            crate::settings::CorrectionEngine::Api,
+        ] {
+            let mut config = AppConfig::default();
+            config.correction.engine = engine;
+            let mut restricted_target = target();
+            restricted_target.process_name = process.into();
+            let manager = manager(&config, "This is user_name.");
+            let mut request = request(&manager, &config);
+            request.selected_text = true;
+            let mut pipeline =
+                CorrectionPipeline::start(|_| panic!("unsafe text reached correction engine"))
+                    .unwrap();
+            pipeline.database_path = Some(path.clone());
+            assert!(!pipeline.submit(
+                request,
+                manager.active().unwrap(),
+                restricted_target,
+                STAMP,
+                &config,
+                vec![]
+            ));
+            assert!(pipeline.active.is_empty());
+            assert!(pipeline.mailbox.0.lock().unwrap().jobs.is_empty());
+            assert_eq!(
+                manager.active().unwrap().editable_context(),
+                "This is user_name."
+            );
+        }
+    }
+    drop(database);
+    std::fs::remove_file(path).unwrap();
+}
+
 /// Unavailable exclusion storage refuses submission without dispatching work or changing session text.
 #[test]
 fn unavailable_exclusions_refuse_submission_without_storage_side_effects() {
@@ -344,6 +402,8 @@ fn queued_api_job_is_denied_after_rule_revocation_and_releases_its_slot() {
             character_trigger_allowed: true,
             local_engine_allowed: true,
             api_engine_allowed: false,
+            safety_mode: "auto".into(),
+            prose_context_allowed: false,
         })
         .unwrap();
     wait_completion(&pipeline);

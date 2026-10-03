@@ -283,6 +283,34 @@ context/executable/caret-anchor versions, trigger, engine kind, and correction m
 Grammar, language, confidence, dictionary, and API settings are snapshotted for
 engine execution. Following selected text stays informative.
 
+Terminal/editor text safety lives in `background/security/text_safety`.
+SQLite app rules store `safety_mode` (`auto`, `terminal`, `code_editor`) and
+`prose_context_allowed` (false by default). Schema v5 adds these fields without
+changing existing trigger/engine choices; legacy IPC payloads default to auto/off.
+Fresh and reset editor rules now default manual correction to off too. Known
+process names and terminal/editor title heuristics enforce conservative defaults
+even after a rule is deleted. Custom profiles classify other applications;
+known terminal/editor identities cannot be downgraded to general text fields.
+
+Restricted manual requests require selection, explicit manual permission and,
+for editors, explicit prose permission. Admission recognizes only conservative
+English sentence shapes, with at least three words, sentence punctuation and a
+prose function word. Structured punctuation, identifiers, commands, paths, URLs,
+mixed prose/code and unclear surrounding lines refuse the entire request.
+Uncertain languages and fragments skip. Editor automatic requests additionally
+require their trigger permission and complete `//` or `#` line-comment sentences;
+inline/block comments are unsupported. Terminal automatic text requests skip
+because the shell dialect and prompt state are unknown. Manual-only rules never
+authorize tracking or final-fix triggers. Selected results retain the existing
+native replacement refusal until the live caret end can be proven.
+
+Admission reads app rules through a fresh, nonblocking read-only connection without
+migrations or writer reservations. API sends and native replacement recheck the
+same text policy under their existing writer reservations, so a committed prose
+revocation prevents further sends or mutation. Neither logs nor skip notices include
+the rejected text. Hard secure-field gates, dictionary policy, clipboard preservation,
+session ownership and undo remain enforced.
+
 Frozen results survive processed typing and backspace confined to the new active
 context. The tracker retains the original typed ranges and supplies the replacement
 owner with the known following text up to the current caret, which must be verified
