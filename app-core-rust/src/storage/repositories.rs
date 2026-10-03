@@ -96,8 +96,10 @@ impl<'a> AppRuleRepository<'a> {
     }
 
     pub(crate) fn reset_to_defaults(&self) -> Result<()> {
-        self.connection.execute("delete from app_rules", [])?;
-        migrations::seed_default_app_rules(self.connection)
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute("delete from app_rules", [])?;
+        migrations::seed_default_app_rules(&transaction)?;
+        transaction.commit()
     }
 }
 

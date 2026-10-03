@@ -322,6 +322,38 @@ fn reset_app_rules_restores_seed_defaults() {
 }
 
 #[test]
+fn failed_app_rule_reset_preserves_all_existing_rules() {
+    let database = Database::open_memory().unwrap();
+    let mut custom = database.app_rules().list().unwrap().remove(0);
+    custom.process_name = "custom.exe".into();
+    custom.list_behavior = "blocklist".into();
+    database.app_rules().upsert(&custom).unwrap();
+    let before = database.app_rules().list().unwrap();
+    // Fail after cmd.exe has been inserted, so rollback must undo both the
+    // original deletion and an already partially seeded replacement list.
+    database
+        .connection
+        .execute_batch(
+            "create trigger reject_default before insert on app_rules
+         when new.process_name = 'powershell.exe'
+         begin select raise(abort, 'injected seed failure'); end;",
+        )
+        .unwrap();
+
+    assert!(database.app_rules().reset_to_defaults().is_err());
+    assert_eq!(database.app_rules().list().unwrap(), before);
+
+    database
+        .connection
+        .execute_batch("drop trigger reject_default")
+        .unwrap();
+    database.app_rules().reset_to_defaults().unwrap();
+    let after = database.app_rules().list().unwrap();
+    assert!(!after.contains(&custom));
+    assert_eq!(after.len(), migrations::DEFAULT_APP_RULES.len());
+}
+
+#[test]
 fn dictionary_matches_global_or_app_specific_entries() {
     let database = Database::open_memory().unwrap();
     database

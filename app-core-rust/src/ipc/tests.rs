@@ -78,11 +78,11 @@ public static class DelayedStatusClient {{
         while child.try_wait().unwrap().is_none() {
             // Allow cold PowerShell/.NET startup and C# compilation on busy CI hosts;
             // the connect and response deadlines remain two seconds each.
-            if started.elapsed() > Duration::from_secs(30) {
+            if started.elapsed() > Duration::from_secs(120) {
                 child.kill().unwrap();
                 let output = child.wait_with_output().unwrap();
                 panic!(
-                    ".NET IPC client did not finish in {read_mode} mode: {}",
+                    ".NET IPC client setup/exchange did not finish within 120 seconds in {read_mode} mode: {}",
                     String::from_utf8_lossy(&output.stderr)
                 );
             }

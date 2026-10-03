@@ -82,8 +82,10 @@ as that account share the configuration trust boundary; IPC does not authenticat
 individual executables. Anonymous local clients cannot connect, including for
 read-only access.
 
-After one second, a watchdog requests cancellation of that client's pipe I/O,
-covering request reads, response writes and response consumption. Cancellation
+Request reads and response delivery each have a one-second watchdog. Application
+handling, including settings-file and SQLite work, runs between those I/O phases;
+it cannot expire a response before delivery starts. The delivery watchdog covers
+both response writes and response consumption. Cancellation
 targets only that pipe and is best-effort; one second is the cancellation
 threshold, not a guaranteed completion bound. Native tests verify endpoint
 recovery with idle and nonreading clients held open. Responses drain

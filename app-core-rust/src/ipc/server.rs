@@ -117,8 +117,18 @@ fn create_pipe(pipe_path: &str) -> Result<HANDLE, String> {
     }
 }
 
-/// Serve one connected client under a pipe-I/O deadline and drain its response before disconnect.
+/// Bound request/response pipe I/O separately from application work, then drain before disconnect.
 fn handle_pipe(pipe: HANDLE, state: &Arc<Mutex<IpcServerState>>) {
+    handle_pipe_with(pipe, |request| {
+        state
+            .lock()
+            .map_err(|_| "IPC state lock poisoned".to_owned())
+            .map(|mut state| state.handle(request))
+            .unwrap_or_else(IpcResponse::error)
+    });
+}
+
+fn handle_pipe_with(pipe: HANDLE, handle_request: impl FnOnce(IpcRequest) -> IpcResponse) {
     let connected = unsafe { ConnectNamedPipe(pipe, null_mut()) };
     if connected == 0
         && std::io::Error::last_os_error().raw_os_error() != Some(ERROR_PIPE_CONNECTED as i32)
@@ -126,25 +136,26 @@ fn handle_pipe(pipe: HANDLE, state: &Arc<Mutex<IpcServerState>>) {
         return;
     }
 
-    let Ok(deadline) = super::request_deadline::RequestDeadline::start(pipe) else {
-        tracing::warn!("cannot enforce IPC request deadline");
+    let request = {
+        let Ok(deadline) = super::request_deadline::RequestDeadline::start(pipe) else {
+            tracing::warn!("cannot enforce IPC request read deadline");
+            return;
+        };
+        let request = read_request(pipe);
+        if deadline.expired() {
+            return;
+        }
+        request
+    };
+    // CancelIoEx cannot cancel a state lock or SQLite work. Do not let that work
+    // expire a later response before any response I/O has even started.
+    let response = request
+        .map(handle_request)
+        .unwrap_or_else(IpcResponse::error);
+    let Ok(_deadline) = super::request_deadline::RequestDeadline::start(pipe) else {
+        tracing::warn!("cannot enforce IPC response delivery deadline");
         return;
     };
-    let response = read_request(pipe)
-        .and_then(|request| {
-            if deadline.expired() {
-                return Err("IPC request deadline exceeded".into());
-            }
-            state
-                .lock()
-                .map_err(|_| "IPC state lock poisoned".to_owned())
-                .map(|mut state| state.handle(request))
-        })
-        .unwrap_or_else(IpcResponse::error);
-
-    if deadline.expired() {
-        return;
-    }
     if let Err(error) = write_response(pipe, &response) {
         tracing::warn!(%error, "IPC response delivery failed");
     }
@@ -216,4 +227,48 @@ pub(crate) fn pipe_path_for_process(name: &str) -> String {
 
 fn wide(value: &str) -> Vec<u16> {
     OsStr::new(value).encode_wide().chain(once(0)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        sync::mpsc,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn slow_request_handling_does_not_consume_pipe_io_deadlines() {
+        let pipe_path = pipe_path_for_process(&format!(
+            "AutoFix.SlowHandler.{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let server_path = pipe_path.clone();
+        let (ready, started) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let pipe = create_pipe(&server_path).unwrap();
+            ready.send(()).unwrap();
+            handle_pipe_with(pipe, |request| {
+                assert!(matches!(request, IpcRequest::IsBackgroundRunning));
+                // Deterministic stand-in for storage work or a contended state lock.
+                thread::sleep(Duration::from_millis(1200));
+                IpcResponse::BackgroundRunning(super::super::protocol::BackgroundRunningResponse {
+                    running: true,
+                })
+            });
+            unsafe {
+                DisconnectNamedPipe(pipe);
+                CloseHandle(pipe);
+            }
+        });
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        let response =
+            super::super::client::send_request(&pipe_path, &IpcRequest::IsBackgroundRunning);
+        worker.join().unwrap();
+        assert!(matches!(response, Ok(IpcResponse::BackgroundRunning(status)) if status.running));
+    }
 }
