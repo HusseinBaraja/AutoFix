@@ -382,19 +382,173 @@ fn app_undo_refuses_partially_retained_correction() {
 #[test]
 #[ignore = "requires an interactive Windows desktop; briefly focuses an isolated test editor"]
 fn native_edit_replacement_smoke() {
-    native_editor_smoke(false);
+    native_editor_smoke(false, false);
 }
 
 #[cfg(windows)]
 #[test]
 #[ignore = "requires an interactive Windows desktop; briefly focuses an isolated test editor"]
 fn native_automatic_trigger_smoke() {
-    native_editor_smoke(true);
+    native_editor_smoke(true, false);
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "requires an interactive Windows desktop; briefly focuses an isolated test editor"]
+fn native_caret_movement_smoke() {
+    native_editor_smoke(true, true);
+}
+
+#[cfg(windows)]
+fn native_caret_movement_flows(edit: isize) {
+    const EM_SETSEL: u32 = 0x00b1;
+    use crate::background::security::TriggerKind;
+    use windows_sys::Win32::UI::WindowsAndMessaging::*;
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain(Some(0)).collect()
+    }
+    // Movement uses the runtime owner and real native range verification. The
+    // single-slot queue must drain disjoint typing without changing gaps/suffixes.
+    for (original, corrected, gap, inserted) in [
+        ("teh", "the", " one two three four five six ", "X"),
+        ("hello", "hello", " one two three four five six ", "X"),
+        ("teh", "the", " teh ", "X."),
+    ] {
+        let prefix = "Earlier notes: ";
+        let initial = format!("{prefix}{original}{gap}{inserted} AFTER");
+        let caret = initial
+            .strip_suffix(" AFTER")
+            .unwrap()
+            .encode_utf16()
+            .count();
+        unsafe {
+            SendMessageW(GetAncestor(edit as _, GA_ROOT), WM_APP + 2, 0, 0);
+            let text = wide(&initial);
+            SendMessageW(edit as _, WM_SETTEXT, 0, text.as_ptr() as isize);
+            SendMessageW(edit as _, EM_SETSEL, caret, caret as isize);
+        }
+        let super::super::target::TargetDetection::Available(target) =
+            super::super::target::detect_focused_target()
+        else {
+            panic!("movement test editor lost focus")
+        };
+        let mut config = AppConfig::default();
+        config.correction.preferred_language = Some("en".into());
+        config.correction.uncertain_language_policy =
+            crate::correction::UncertainLanguagePolicy::CorrectNormally;
+        config.replacement.clipboard_enabled = false;
+        config.triggers.word_count_enabled = false;
+        let path = std::env::temp_dir().join(format!(
+            "autofix-native-movement-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let database = crate::storage::Database::open(&path).unwrap();
+        let pipeline =
+            super::super::pipeline::CorrectionPipeline::with_database(&database).unwrap();
+        let mut processor = super::super::InputProcessor {
+            feedback: super::super::feedback::Feedback::default(),
+            learner: crate::dictionary::Learner::default(),
+            pipeline,
+            processed_input_sequence: super::super::input_listener::current_input_sequence(),
+            session_manager: SessionManager::new(config.context.clone()),
+            config,
+            database,
+        };
+        processor.session_manager.focus(&target);
+        processor
+            .session_manager
+            .set_informative_context(prefix.into());
+        processor
+            .session_manager
+            .input(TypedInput::Text(original.into()));
+        let mut pending = Vec::new();
+        processor.track_input(
+            TypedInput::Uncertain(super::super::typing::MovementSignal::MouseClick),
+            &mut pending,
+        );
+        processor.track_input(TypedInput::Text(inserted.into()), &mut pending);
+        let preceding = super::super::context_capture::read_before_caret(
+            &target,
+            &processor.config.context,
+            processor.session_manager.movement_capture_extra_chars(),
+        )
+        .unwrap();
+        processor.resolve_caret_movement(Some(&preceding), &mut pending);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            pending[0].request.trigger,
+            if gap.split_whitespace().count() > 5 {
+                TriggerKind::FinalFixBeforeReanchor
+            } else {
+                TriggerKind::Character
+            }
+        );
+        for request in pending {
+            processor
+                .dispatch_trigger(request.request, super::super::InputProcessor::input_stamp());
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while processor.pipeline.is_correcting() {
+            processor.pipeline.wait_manual();
+            processor.finish_correction();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "movement correction did not complete"
+            );
+        }
+        let mut observed = [0u16; 256];
+        let length = unsafe {
+            SendMessageW(
+                edit as _,
+                WM_GETTEXT,
+                observed.len(),
+                observed.as_mut_ptr() as isize,
+            )
+        };
+        assert_eq!(
+            String::from_utf16_lossy(&observed[..length as usize]),
+            format!("{prefix}{corrected}{gap}{inserted} AFTER")
+        );
+        let session = processor.session_manager.active().unwrap();
+        assert_eq!(
+            session.editable_context(),
+            if inserted.ends_with('.') {
+                ""
+            } else {
+                inserted
+            }
+        );
+        if original != corrected {
+            let undo = session.undo_target().unwrap();
+            assert_eq!(undo.following, format!("{gap}{inserted}"));
+            processor.process_shortcut(2);
+            let length = unsafe {
+                SendMessageW(
+                    edit as _,
+                    WM_GETTEXT,
+                    observed.len(),
+                    observed.as_mut_ptr() as isize,
+                )
+            };
+            assert_eq!(
+                String::from_utf16_lossy(&observed[..length as usize]),
+                initial
+            );
+        } else {
+            assert!(session.undo_target().is_none());
+        }
+        drop(processor);
+        std::fs::remove_file(path).unwrap();
+    }
 }
 
 /// Share the isolated editor while allowing affected automatic flows to run alone.
 #[cfg(windows)]
-fn native_editor_smoke(automatic_only: bool) {
+fn native_editor_smoke(automatic_only: bool, movement_only: bool) {
     const EM_SETSEL: u32 = 0x00b1;
     use crate::background::security::TriggerKind;
     use std::{
@@ -497,6 +651,10 @@ fn native_editor_smoke(automatic_only: bool) {
             "test editor could not acquire foreground focus"
         );
         thread::sleep(std::time::Duration::from_millis(25));
+    }
+    if movement_only {
+        native_caret_movement_flows(edit);
+        return;
     }
     if !automatic_only {
         // Both correction and undo use this boundary. A title-only change must
@@ -868,6 +1026,7 @@ fn native_editor_smoke(automatic_only: bool) {
         drop(processor);
         std::fs::remove_file(path).unwrap();
     }
+    native_caret_movement_flows(edit);
     if automatic_only {
         return;
     }

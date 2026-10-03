@@ -13,6 +13,7 @@ use crate::settings::ContextConfig;
 
 mod pending;
 use pending::FrozenSegment;
+mod movement;
 mod undo;
 use undo::CorrectionUndo;
 pub(super) use undo::CorrectionUndoTarget;
@@ -61,6 +62,7 @@ struct PendingMovement {
     old_executable: String,
     typed_after: String,
     tracked_arrows_only: bool,
+    had_pending_fix: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -202,6 +204,18 @@ impl Session {
 
     /// Restore frozen text and invalidate correction ownership before resolving a new caret.
     fn mark_movement(&mut self, tracked_arrows_only: bool) {
+        if let Some(pending) = &mut self.pending_movement {
+            pending.tracked_arrows_only &= tracked_arrows_only;
+            if !pending.typed_after.is_empty() {
+                // Typing at two unresolved positions must never be joined.
+                pending.typed_after.clear();
+                pending.old_executable.clear();
+                pending.tracked_arrows_only = false;
+            }
+            return;
+        }
+        let had_pending_fix = self.frozen_segments.iter().any(|segment| segment.submitted)
+            || !self.pending_corrections.is_empty();
         self.restore_pending();
         let old_executable: String = self
             .executable_context()
@@ -212,6 +226,7 @@ impl Session {
             old_executable,
             typed_after: String::new(),
             tracked_arrows_only,
+            had_pending_fix,
         });
         self.pending_corrections.clear();
         self.invalidate_undo_anchors();
@@ -286,6 +301,10 @@ impl Session {
         // proof for every frozen range, even if a repeated prefix looks equal.
         if appended.is_some_and(|expected| expected != self.executable_context()) {
             self.restore_pending();
+            self.frozen_segments.clear();
+            self.correction_floor = 0;
+            self.informative_context.clear();
+            self.invalidate_undo_anchors();
             self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
         }
         if self
@@ -306,7 +325,7 @@ impl Session {
 
     /// Retire oversized active text only after its pre-caret position is known.
     fn enforce_executable_limit(&mut self, limits: &ContextConfig) {
-        let words = self.editable_context().split_whitespace().count();
+        let words = self.trigger_context().split_whitespace().count();
         if !self.position_uncertain() && words > usize::from(limits.executable_context_max_words) {
             self.commit_executable(limits);
             tracing::info!(
@@ -324,6 +343,15 @@ impl Session {
         preceding: Option<&str>,
         limits: &ContextConfig,
     ) -> MovementResolution {
+        if !self.needs_movement_resolution()
+            && (preceding.is_none()
+                || self
+                    .pending_movement
+                    .as_ref()
+                    .is_none_or(|pending| !pending.tracked_arrows_only))
+        {
+            return MovementResolution::Continued;
+        }
         let Some(pending) = self.pending_movement.take() else {
             return MovementResolution::Continued;
         };
@@ -338,20 +366,21 @@ impl Session {
         }
         let before_typing = preceding.and_then(|text| text.strip_suffix(&pending.typed_after));
         let old = pending.old_executable.as_str();
+        let informative = self.correction_informative_context();
         if let Some(before_typing) = before_typing {
             // Only a prefix of the known editable text can prove a backward move.
             if !old.is_empty() {
                 let mut matching_caret = None;
                 let mut ambiguous = false;
                 for (offset, _) in old.char_indices().rev() {
-                    let candidate = format!("{}{}", self.informative_context, &old[..offset]);
-                    let anchored = if self.informative_context.is_empty() {
+                    let candidate = format!("{}{}", informative, &old[..offset]);
+                    let anchored = if informative.is_empty() {
                         before_typing == candidate
                     } else {
                         matching_anchor(
                             &candidate,
                             old[..offset].chars().count(),
-                            self.informative_context.chars().count(),
+                            informative.chars().count(),
                             before_typing.chars().count(),
                         )
                         .is_some_and(|anchor| before_typing.ends_with(anchor))
@@ -373,37 +402,36 @@ impl Session {
                     );
                 }
                 if let Some(caret) = matching_caret {
+                    if pending.had_pending_fix {
+                        // The old complete span now extends after the caret and
+                        // is ineligible for final replacement.
+                        return self.reanchor_after_movement(
+                            Some(before_typing),
+                            pending.typed_after,
+                            None,
+                            limits,
+                        );
+                    }
                     if self.executable.set_caret(caret) {
                         self.executable.input(TypedInput::Text(pending.typed_after));
                         self.versions.context = self.versions.context.wrapping_add(1);
                         self.versions.executable = self.versions.executable.wrapping_add(1);
+                        self.refresh_movement_anchors();
                         return MovementResolution::Continued;
                     }
                 }
             }
-            if let Some(end) = forward_skipped_start(before_typing, &self.informative_context, old)
+            if !pending.had_pending_fix
+                && self.continue_retained_backward(before_typing, &pending.typed_after)
             {
+                return MovementResolution::Continued;
+            }
+            if let Some(end) = forward_skipped_start(before_typing, &informative, old) {
                 let skipped = &before_typing[end..];
-                if skipped.split_whitespace().count()
-                    <= usize::from(limits.forward_movement_word_limit)
-                {
-                    self.append_informative(old, limits);
-                    self.append_informative(skipped, limits);
-                    // The old suffix was behind the previous caret. It is not
-                    // proven to be adjacent to the new caret.
-                    self.executable.clear_executable();
-                    self.executable.input(TypedInput::Text(pending.typed_after));
-                    self.correction_floor = 0;
-                    self.versions.context = self.versions.context.wrapping_add(1);
-                    self.versions.executable = self.versions.executable.wrapping_add(1);
-                    return MovementResolution::Continued;
-                }
-                return self.reanchor_after_movement(
-                    Some(before_typing),
-                    pending.typed_after,
-                    Some(old.to_owned()),
-                    limits,
-                );
+                let final_fix = pending.had_pending_fix
+                    || skipped.split_whitespace().count()
+                        > usize::from(limits.forward_movement_word_limit);
+                return self.continue_forward(old, skipped, pending.typed_after, final_fix, limits);
             }
         }
         self.reanchor_after_movement(before_typing, pending.typed_after, None, limits)
@@ -416,6 +444,7 @@ impl Session {
         final_fix: Option<String>,
         limits: &ContextConfig,
     ) -> MovementResolution {
+        self.frozen_segments.clear();
         self.executable.clear_executable();
         self.correction_floor = 0;
         self.informative_context = before_typing
@@ -450,12 +479,7 @@ impl Session {
 
     /// Move only known text before the caret into read-only context.
     fn commit_executable(&mut self, limits: &ContextConfig) {
-        self.restore_pending();
-        let observed: String = self
-            .executable_context()
-            .chars()
-            .skip(self.correction_floor)
-            .collect();
+        let observed = self.known_before_caret()[self.informative_context.len()..].to_owned();
         if observed.is_empty() {
             if self.correction_floor > 0 {
                 self.executable.clear_executable();
@@ -465,6 +489,7 @@ impl Session {
             return;
         }
         self.append_informative(&observed, limits);
+        self.frozen_segments.clear();
         self.executable.clear_executable();
         self.correction_floor = 0;
         self.pending_corrections.clear();
@@ -504,6 +529,13 @@ impl Session {
     /// already observed in this input batch remains a separate segment.
     fn set_informative_context(&mut self, context: String, limits: &ContextConfig) {
         self.restore_pending();
+        if self.has_movement_context() {
+            let active = self.editable_context();
+            self.frozen_segments.clear();
+            self.correction_floor = 0;
+            self.executable.clear_executable();
+            self.executable.input(TypedInput::Text(active));
+        }
         self.informative_context = context;
         self.shrink_informative(limits);
         self.pending_corrections.clear();
@@ -527,7 +559,8 @@ impl Session {
 
     /// Check an admitted selection against the still-retained typed segment.
     pub(super) fn owns_selection(&self, informative: &str, original: &str) -> bool {
-        let Some(prefix) = informative.strip_prefix(&self.informative_context) else {
+        let context = self.correction_informative_context();
+        let Some(prefix) = informative.strip_prefix(&context) else {
             return false;
         };
         !original.is_empty()
@@ -553,6 +586,7 @@ impl Session {
         self.pending_movement = None;
         self.executable.clear_executable();
         self.correction_floor = 0;
+        self.frozen_segments.clear();
         self.invalidate_undo_anchors();
         self.informative_context = informative.to_owned();
         self.informative_context.push_str(replacement);
@@ -821,7 +855,7 @@ mod tests {
     use super::*;
     use crate::background::target::FocusedElementId;
 
-    fn target(pid: u32, window: isize, element: Option<&str>) -> FocusedTarget {
+    pub(super) fn target(pid: u32, window: isize, element: Option<&str>) -> FocusedTarget {
         FocusedTarget {
             process_id: pid,
             process_name: "notepad.exe".into(),
@@ -908,9 +942,11 @@ mod tests {
             MovementResolution::Continued
         );
 
-        let session = manager.active().unwrap();
+        let session = manager.active_mut().unwrap();
+        assert_eq!(session.editable_context(), "X");
+        let id = session.frozen_segments.front().unwrap().id();
+        assert!(session.complete_pending(id, "Discard this sentence.", &shrinking_limits(24, 3)));
         assert_eq!(session.informative_context(), " Keep these three words ");
-        assert_eq!(session.executable_context(), "X");
     }
 
     #[test]
@@ -1152,11 +1188,19 @@ mod tests {
             manager.resolve_movement(Some("klmnoptyped oneX")),
             MovementResolution::Continued
         );
-        assert_eq!(manager.active().unwrap().executable_context(), "X");
+        let session = manager.active_mut().unwrap();
+        assert_eq!(session.executable_context(), "typedX");
         assert_eq!(
-            manager.active().unwrap().informative_context(),
-            "jklmnoptyped one"
+            session.correction_informative_context(),
+            "abcdefghijklmnoptyped one"
         );
+        let id = session.frozen_segments.front().unwrap().id();
+        let limits = ContextConfig {
+            informative_context_max_chars: 16,
+            ..ContextConfig::default()
+        };
+        assert!(session.complete_pending(id, "typed", &limits));
+        assert_eq!(session.informative_context(), "jklmnoptyped one");
     }
 
     #[test]
@@ -1213,10 +1257,10 @@ mod tests {
         );
         let session = manager.active_mut().unwrap();
         assert_eq!(
-            session.informative_context(),
+            session.correction_informative_context(),
             "typed one two three four five "
         );
-        assert_eq!(session.executable_context(), "X");
+        assert_eq!(session.executable_context(), "typedX");
         assert!(!session.queue_correction("typedX".into(), "bad".into()));
         assert!(session.queue_correction("X".into(), "Y".into()));
         session.complete_without_changes(&ContextConfig::default());
@@ -1286,11 +1330,18 @@ mod tests {
                 final_fix: Some("typed".into())
             }
         );
-        let session = manager.active().unwrap();
+        let session = manager.active_mut().unwrap();
+        assert_eq!(session.editable_context(), "X");
+        assert_eq!(
+            session.correction_informative_context(),
+            "typed one two three four five six "
+        );
+        let id = session.frozen_segments.front().unwrap().id();
+        assert!(session.complete_pending(id, "Typed", &ContextConfig::default()));
         assert_eq!(session.executable_context(), "X");
         assert_eq!(
             session.informative_context(),
-            "typed one two three four five six "
+            "Typed one two three four five six "
         );
     }
 

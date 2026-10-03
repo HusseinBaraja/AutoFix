@@ -86,6 +86,7 @@ impl ActiveRequest {
             return !self.cancelled.load(Ordering::Acquire)
                 && self.request.session_id == session.id()
                 && self.stamp.permits(stamp, true)
+                && session.pending_submitted(id)
                 && session.pending_matches(id, &self.request.executable_context);
         }
         !self.cancelled.load(Ordering::Acquire)
@@ -586,11 +587,7 @@ impl CorrectionPipeline {
             let known_before_caret = if active.request.selected_text {
                 format!("{}{}", active.request.informative_context, original)
             } else {
-                format!(
-                    "{}{}",
-                    session.informative_context(),
-                    session.executable_context()
-                )
+                session.known_before_caret()
             };
             let Some(live_before_caret) =
                 read_before_caret(&target, &active.request, known_before_caret.chars().count())
@@ -719,6 +716,7 @@ impl CorrectionPipeline {
             }
             if let (Some(id), Some(session)) = (segment_id, manager.active_mut()) {
                 if session.id() == active.request.session_id {
+                    session.retire_final_pending(id, limits);
                     for cancelled in session.restore_pending_from(id) {
                         self.cancel_segment(cancelled);
                     }

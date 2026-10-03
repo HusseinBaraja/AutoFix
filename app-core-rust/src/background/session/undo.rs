@@ -131,7 +131,8 @@ impl Session {
             following: format!(
                 "{}{}",
                 self.informative_context.get(end..)?,
-                self.executable_context()
+                self.known_before_caret()
+                    .strip_prefix(&self.informative_context)?
             ),
         })
     }

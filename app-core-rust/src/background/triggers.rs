@@ -151,6 +151,25 @@ pub(super) fn automatic(
 }
 
 /// Reject empty executable spans and initialize common request metadata.
+pub(super) fn retained(
+    session_id: u64,
+    trigger: TriggerKind,
+    informative: &str,
+    executable: &str,
+    versions: ContextVersions,
+    config: &AppConfig,
+) -> Option<CorrectionRequest> {
+    request(
+        session_id,
+        trigger,
+        informative,
+        executable,
+        versions,
+        config,
+    )
+}
+
+/// Reject empty executable spans and initialize common request metadata.
 fn request(
     session_id: u64,
     trigger: TriggerKind,
