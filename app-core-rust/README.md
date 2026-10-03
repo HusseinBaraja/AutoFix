@@ -185,8 +185,15 @@ An outside or unreadable selection blocks
 the shortcut by default. The `shortcuts.correct_arbitrary_selection` setting is
 off by default; when enabled, a selected span outside the typed segment becomes
 temporary executable context for that request, while text before and after it
-stays informative. V1 discards selected results because it cannot prove which
-selection end is the live caret.
+stays informative. Selected correction requires TextPattern2 and a native caret
+in the focused control. The provider caret and a TextPattern range at the native
+caret must both equal the selection end; backward selections refuse correction.
+Completion recaptures the selected text and its read-only anchors, and the native
+replacement owner rechecks exact selection geometry before mutation. Successful
+selection replacement establishes a collapsed caret, retires its preceding text
+and corrected span into informative context, clears executable context and records
+undo. Unselected text after the caret is never changed or promoted to executable
+context. Unchanged and suppressed selections retain their original context.
 App rules and the hard security gate are checked before routing. Application
 policy must be readable: a failed app-rule read blocks capture and correction
 for every trigger and engine, even if dictionary reads still work. A matching app
@@ -301,8 +308,8 @@ Uncertain languages and fragments skip. Editor automatic requests additionally
 require their trigger permission and complete `//` or `#` line-comment sentences;
 inline/block comments are unsupported. Terminal automatic text requests skip
 because the shell dialect and prompt state are unknown. Manual-only rules never
-authorize tracking or final-fix triggers. Selected results retain the existing
-native replacement refusal until the live caret end can be proven.
+authorize tracking or final-fix triggers. Selected results require the same
+independently verified caret-end proof as ordinary selected correction.
 
 Admission reads app rules through a fresh, nonblocking read-only connection without
 migrations or writer reservations. API sends and native replacement recheck the
@@ -337,9 +344,10 @@ Before a changed result reaches replacement, completion also requires a stable
 focused control identity and a fresh read-only TextPattern capture. The entire
 known session region must match exactly at the live caret, including text typed
 after a frozen segment. Missing captures or mismatches discard the result; no
-fuzzy search or replacement is attempted. Selected-text results are discarded
-because their replacement range cannot be proven before the caret, even when
-arbitrary selected-text correction is enabled.
+fuzzy search or replacement is attempted. Selected-text results require a fresh
+exact selection capture with native caret-end proof. Arbitrary-selection opt-in
+changes only ownership admission; it never relaxes security, confidence, geometry
+or post-caret protection.
 Failed, suppressed, or refused frozen results release their slot and restore the
 original text and dependent newer segments to active executable context. Their
 queued requests are cancelled so a later trigger can check the combined text in
@@ -363,11 +371,18 @@ manual override, stale and reordered results, queued input,
 secure targets, failed replacement, selection boundaries, and commit/undo after
 confirmed replacement.
 
+Every successful changed commit writes the same metadata-only correction event
+as accepted no-change commits, including trigger, engine, confidence, replacement
+method, result reason and latency. Document text and engine response details are
+excluded even when full-text debug logging is enabled. Busy or unavailable storage
+skips persistence without delaying input processing or losing the committed undo.
+
 The replacement feature lives in `src/background/replacement`. Its strategy
 interface tries direct text APIs, UI Automation replacement, clipboard paste,
 then SendInput. Direct APIs/TSF and UI Automation mutation currently report
 unavailable and can be implemented progressively. UI Automation TextPattern
-must first prove a collapsed caret, the exact executable span and any newer
+must first prove a collapsed caret (or a selection ending at the native caret),
+the exact executable span and any newer
 typed text between that span and the caret. Only that span is selected; text
 after the original caret remains untouched. Missing or unreliable providers
 refuse replacement rather than guessing a keystroke distance.

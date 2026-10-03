@@ -525,6 +525,49 @@ impl Session {
         true
     }
 
+    /// Check an admitted selection against the still-retained typed segment.
+    pub(super) fn owns_selection(&self, informative: &str, original: &str) -> bool {
+        let Some(prefix) = informative.strip_prefix(&self.informative_context) else {
+            return false;
+        };
+        !original.is_empty()
+            && self
+                .editable_context()
+                .starts_with(&format!("{prefix}{original}"))
+    }
+
+    /// After verified selection replacement, establish a new collapsed caret anchor.
+    /// Unselected text after that caret is forgotten, never promoted to executable text.
+    pub(super) fn complete_selection(
+        &mut self,
+        informative: &str,
+        original: &str,
+        replacement: &str,
+        limits: &ContextConfig,
+    ) {
+        let start = informative
+            .strip_prefix(&self.informative_context)
+            .map_or(0, |prefix| prefix.chars().count());
+        self.restore_pending();
+        self.pending_corrections.clear();
+        self.pending_movement = None;
+        self.executable.clear_executable();
+        self.correction_floor = 0;
+        self.invalidate_undo_anchors();
+        self.informative_context = informative.to_owned();
+        self.informative_context.push_str(replacement);
+        self.versions.context = self.versions.context.wrapping_add(1);
+        self.versions.executable = self.versions.executable.wrapping_add(1);
+        self.versions.caret_anchor = self.versions.caret_anchor.wrapping_add(1);
+        self.shrink_informative(limits);
+        self.record_undo(
+            original.to_owned(),
+            replacement.to_owned(),
+            start..start + original.chars().count(),
+            limits,
+        );
+    }
+
     /// Prove bookkeeping can retain a changed result before authorizing its native edit.
     /// Frozen prefixes retire into informative context; manual suffixes need typed capacity.
     pub(super) fn can_complete_correction(

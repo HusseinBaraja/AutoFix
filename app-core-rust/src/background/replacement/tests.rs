@@ -78,6 +78,7 @@ fn disabling_clipboard_skips_its_preparation_and_uses_fallback() {
         original: "teh",
         replacement: "the",
         following: "",
+        selected_text: false,
         stamp: STAMP,
     };
     let calls = RefCell::new(Vec::new());
@@ -135,6 +136,7 @@ fn strategy_order_and_preparation_failures_allow_fallback() {
         original: "teh",
         replacement: "the",
         following: " newer",
+        selected_text: false,
         stamp: STAMP,
     };
     let calls = RefCell::new(Vec::new());
@@ -187,6 +189,7 @@ fn successful_safer_method_never_reaches_send_input() {
             original: "teh",
             replacement: "the",
             following: "",
+            selected_text: false,
             stamp: STAMP,
         };
         let calls = RefCell::new(Vec::new());
@@ -227,6 +230,7 @@ fn no_retry_after_paste_partial_input_or_failed_verification() {
             original: "teh",
             replacement: "the",
             following: "",
+            selected_text: false,
             stamp: STAMP,
         };
         let calls = RefCell::new(Vec::new());
@@ -262,6 +266,7 @@ fn unavailable_result_has_method_reason_and_unknown_range() {
         original: "teh",
         replacement: "the",
         following: "",
+        selected_text: false,
         stamp: STAMP,
     };
     let calls = RefCell::new(Vec::new());
@@ -285,6 +290,7 @@ fn exact_range_counts_unicode_characters_and_preserves_following_text() {
         original: "é😃",
         replacement: "new",
         following: " العربية",
+        selected_text: false,
         stamp: STAMP,
     };
     assert_eq!(
@@ -320,7 +326,10 @@ fn protected_selected_empty_suppressed_and_failed_requests_never_reach_native_st
         let mut output = output.clone();
         match case {
             0 => target.is_password_or_protected = true,
-            1 => request.selected_text = true,
+            1 => {
+                request.selected_text = true;
+                request.replacement_following_text = "later".into();
+            }
             2 => request.executable_context.clear(),
             3 => output.behavior = ConfidenceBehavior::Suggestion,
             4 => output.confidence = ConfidenceTier::Low,
@@ -488,6 +497,7 @@ fn native_edit_replacement_smoke() {
         original: "teh",
         replacement: "the",
         following: "",
+        selected_text: false,
         stamp: InputStamp {
             position: super::super::input_listener::current_position_generation(),
             sequence: super::super::input_listener::current_input_sequence(),
@@ -591,7 +601,7 @@ fn native_edit_replacement_smoke() {
                 &config.context,
                 || stamp,
                 |_| Some(target.clone()),
-                |target, known| {
+                |target, _, known| {
                     super::super::context_capture::read_before_caret(target, &config.context, known)
                 },
                 |_, _, _| -> bool { panic!("unchanged result reached native replacement") },
@@ -629,14 +639,140 @@ fn native_edit_replacement_smoke() {
         }
         assert_eq!((caret_start as usize, caret_end as usize), (caret, caret));
     }
-    for (method, original, replacement, following) in [
-        (ReplacementMethod::Clipboard, "teh", "the", ""),
-        (ReplacementMethod::Clipboard, "teh", "the", " newer"),
-        (ReplacementMethod::SendInput, "teh", "the", ""),
-        (ReplacementMethod::SendInput, "teh", "the", " newer"),
-        (ReplacementMethod::SendInput, "teh", "", " newer"),
-        (ReplacementMethod::SendInput, "teh", "é😃", ""),
-        (ReplacementMethod::SendInput, "teh", "العربية", ""),
+    // Exercise the runtime shortcut owner, real security/policy gates, local
+    // engine, native replacement, session commit, undo and metadata together.
+    for (selected, arbitrary, allowed) in [
+        (false, false, true),
+        (true, false, true),
+        (true, true, true),
+        (true, false, false),
+    ] {
+        let initial = "old teh AFTER";
+        unsafe {
+            SendMessageW(GetAncestor(edit as _, GA_ROOT), WM_APP + 2, 0, 0);
+            let text = wide(initial);
+            SendMessageW(edit as _, WM_SETTEXT, 0, text.as_ptr() as isize);
+            SendMessageW(edit as _, EM_SETSEL, if selected { 4 } else { 7 }, 7);
+        }
+        let super::super::target::TargetDetection::Available(target) =
+            super::super::target::detect_focused_target()
+        else {
+            panic!("test editor lost focus")
+        };
+        let path = std::env::temp_dir().join(format!(
+            "autofix-native-shortcut-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let database = crate::storage::Database::open(&path).unwrap();
+        let mut config = AppConfig::default();
+        config.correction.preferred_language = Some("en".into());
+        config.shortcuts.correct_arbitrary_selection = arbitrary;
+        config.replacement.clipboard_enabled = false;
+        config.feedback.show_blocked_app_notice = false;
+        let mut processor = super::super::InputProcessor {
+            feedback: super::super::feedback::Feedback::default(),
+            learner: crate::dictionary::Learner::default(),
+            pipeline: super::super::pipeline::CorrectionPipeline::with_database(&database).unwrap(),
+            processed_input_sequence: super::super::input_listener::current_input_sequence(),
+            session_manager: SessionManager::new(config.context.clone()),
+            config,
+            database,
+        };
+        processor.session_manager.focus(&target);
+        if !arbitrary {
+            processor
+                .session_manager
+                .set_informative_context("old ".into());
+            processor.session_manager.input(TypedInput::Text(
+                if !allowed {
+                    "other"
+                } else if selected {
+                    "teh AFTER"
+                } else {
+                    "teh"
+                }
+                .into(),
+            ));
+        }
+        processor.process_shortcut(1);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while processor.pipeline.is_correcting() {
+            processor.pipeline.wait_manual();
+            processor.finish_correction();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "manual shortcut did not complete"
+            );
+        }
+        let mut text = [0u16; 128];
+        let length = unsafe {
+            SendMessageW(
+                edit as _,
+                WM_GETTEXT,
+                text.len(),
+                text.as_mut_ptr() as isize,
+            )
+        };
+        assert_eq!(
+            String::from_utf16_lossy(&text[..length as usize]),
+            if allowed { "old the AFTER" } else { initial }
+        );
+        let session = processor.session_manager.active().unwrap();
+        if allowed {
+            assert_eq!(session.informative_context(), "old the");
+            assert!(session.editable_context().is_empty());
+            assert_eq!(session.undo_target().unwrap().original, "teh");
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            let count: u64 = connection.query_row(
+                "select count(*) from correction_metadata where result_reason = 'correction_applied' and replacement_method = 'send_input'",
+                [], |row| row.get(0)).unwrap();
+            assert_eq!(count, 1);
+            processor.process_shortcut(2);
+            let length = unsafe {
+                SendMessageW(
+                    edit as _,
+                    WM_GETTEXT,
+                    text.len(),
+                    text.as_mut_ptr() as isize,
+                )
+            };
+            assert_eq!(String::from_utf16_lossy(&text[..length as usize]), initial);
+            assert_eq!(
+                processor
+                    .session_manager
+                    .active()
+                    .unwrap()
+                    .informative_context(),
+                "old teh"
+            );
+            assert!(processor
+                .session_manager
+                .active()
+                .unwrap()
+                .undo_target()
+                .is_none());
+        } else {
+            assert_eq!(session.editable_context(), "other");
+            assert!(session.undo_target().is_none());
+        }
+        drop(processor);
+        std::fs::remove_file(path).unwrap();
+    }
+    for (method, original, replacement, following, selected_text) in [
+        (ReplacementMethod::Clipboard, "teh", "the", "", false),
+        (ReplacementMethod::Clipboard, "teh", "the", " newer", false),
+        (ReplacementMethod::SendInput, "teh", "the", "", false),
+        (ReplacementMethod::SendInput, "teh", "the", " newer", false),
+        (ReplacementMethod::SendInput, "teh", "", " newer", false),
+        (ReplacementMethod::SendInput, "teh", "é😃", "", false),
+        (ReplacementMethod::SendInput, "teh", "العربية", "", false),
+        (ReplacementMethod::Clipboard, "teh", "the", "", true),
+        (ReplacementMethod::SendInput, "teh", "é😃", "", true),
+        (ReplacementMethod::SendInput, "teh", "", "", true),
     ] {
         let initial = format!("old {original}{following} AFTER");
         let initial_caret = format!("old {original}{following}").encode_utf16().count();
@@ -675,11 +811,53 @@ fn native_edit_replacement_smoke() {
             position: super::super::input_listener::current_position_generation(),
             sequence: super::super::input_listener::current_input_sequence(),
         };
+        if selected_text {
+            // A backward selection has its active caret at the start. It must
+            // never edit the selected text after that caret.
+            unsafe {
+                SendMessageW(edit as _, EM_SETSEL, initial_caret, initial_caret as isize);
+                SendMessageW(
+                    GetAncestor(edit as _, GA_ROOT),
+                    WM_APP + 3,
+                    original.chars().count(),
+                    0,
+                );
+            };
+            let backward = super::super::context_capture::read_selection(
+                &target,
+                "old ",
+                original,
+                &AppConfig::default().context,
+            );
+            assert!(
+                matches!(backward, SelectionCapture::Unavailable),
+                "{backward:?}"
+            );
+            let unsafe_plan = ReplacementPlan {
+                target: &target,
+                original,
+                replacement,
+                following,
+                selected_text: true,
+                stamp,
+            };
+            let refused = run_strategies(
+                &unsafe_plan,
+                &mut [&mut native::NativeStrategy(method)],
+                true,
+            );
+            assert!(!refused.success && !refused.may_have_changed);
+            unsafe { SendMessageW(edit as _, EM_SETSEL, 4, initial_caret as isize) };
+            assert!(matches!(super::super::context_capture::read_selection(
+                &target, "old ", original, &AppConfig::default().context),
+                SelectionCapture::Selected { executable_prefix: Some(prefix), .. } if prefix.is_empty()));
+        }
         let plan = ReplacementPlan {
             target: &target,
             original,
             replacement,
             following,
+            selected_text,
             stamp,
         };
         unsafe { SendMessageW(GetAncestor(edit as _, GA_ROOT), WM_APP + 2, 1, 0) };
@@ -829,6 +1007,23 @@ unsafe extern "system" fn native_test_editor_window_proc(
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
     if message == WM_APP + 2 {
         SetWindowLongPtrW(window, GWLP_USERDATA, wparam as isize);
+        return 0;
+    }
+    if message == WM_APP + 3 {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+            GetKeyboardState, SetKeyboardState, VK_LEFT, VK_SHIFT,
+        };
+        let mut previous = [0u8; 256];
+        assert_ne!(GetKeyboardState(previous.as_mut_ptr()), 0);
+        let mut shift = previous;
+        shift[VK_SHIFT as usize] = 0x80;
+        assert_ne!(SetKeyboardState(shift.as_ptr()), 0);
+        let edit = GetWindow(window, GW_CHILD);
+        for _ in 0..wparam {
+            SendMessageW(edit, WM_KEYDOWN, VK_LEFT as usize, 1);
+            SendMessageW(edit, WM_KEYUP, VK_LEFT as usize, 1);
+        }
+        assert_ne!(SetKeyboardState(previous.as_ptr()), 0);
         return 0;
     }
     if message == WM_COMMAND
