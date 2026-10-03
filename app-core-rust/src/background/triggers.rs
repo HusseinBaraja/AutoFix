@@ -101,7 +101,7 @@ pub(super) fn automatic(
     versions: ContextVersions,
     config: &AppConfig,
 ) -> Option<CorrectionRequest> {
-    if inserted.is_empty() || !after.ends_with(inserted) {
+    if !config.correction.enabled || inserted.is_empty() || !after.ends_with(inserted) {
         return None;
     }
     if config.triggers.character_trigger_enabled {

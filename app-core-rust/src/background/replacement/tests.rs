@@ -639,6 +639,168 @@ fn native_edit_replacement_smoke() {
         }
         assert_eq!((caret_start as usize, caret_end as usize), (caret, caret));
     }
+    // Exercise configured word thresholds through the runtime owner, live gates,
+    // real pre-caret proof, native replacement, metadata and app-level undo.
+    for (original, corrected, medium_silent) in [
+        ("teh word ", "the word ", false),
+        ("hello word ", "hello word ", false),
+        ("accomodate word ", "accomodate word ", false),
+        ("accomodate word ", "accommodate word ", true),
+    ] {
+        let following = "newer";
+        let initial = format!("old {original}{following} AFTER");
+        let caret = format!("old {original}{following}").encode_utf16().count();
+        unsafe {
+            SendMessageW(GetAncestor(edit as _, GA_ROOT), WM_APP + 2, 0, 0);
+            let text = wide(&initial);
+            SendMessageW(edit as _, WM_SETTEXT, 0, text.as_ptr() as isize);
+            SendMessageW(edit as _, EM_SETSEL, caret, caret as isize);
+        }
+        let super::super::target::TargetDetection::Available(target) =
+            super::super::target::detect_focused_target()
+        else {
+            panic!("test editor lost focus")
+        };
+        let path = std::env::temp_dir().join(format!(
+            "autofix-native-word-count-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let database = crate::storage::Database::open(&path).unwrap();
+        let mut config = AppConfig::default();
+        config.correction.preferred_language = Some("en".into());
+        config.triggers.character_trigger_enabled = false;
+        config.triggers.word_count = 2;
+        config.correction.uncertain_language_policy =
+            crate::correction::UncertainLanguagePolicy::CorrectNormally;
+        config.replacement.clipboard_enabled = false;
+        if medium_silent {
+            config.correction.medium_confidence_behavior = ConfidenceBehavior::Silent;
+        }
+        let mut processor = super::super::InputProcessor {
+            feedback: super::super::feedback::Feedback::default(),
+            learner: crate::dictionary::Learner::default(),
+            pipeline: super::super::pipeline::CorrectionPipeline::with_database(&database).unwrap(),
+            processed_input_sequence: super::super::input_listener::current_input_sequence(),
+            session_manager: SessionManager::new(config.context.clone()),
+            config,
+            database,
+        };
+        processor.session_manager.focus(&target);
+        processor
+            .session_manager
+            .set_informative_context("old ".into());
+        let mut pending = Vec::new();
+        for character in original.chars() {
+            processor.track_input(TypedInput::Text(character.to_string()), &mut pending);
+        }
+        assert_eq!(pending.len(), 1);
+        let request = pending.remove(0).request;
+        let id = request.pending_segment_id.unwrap();
+        assert_eq!(request.trigger, TriggerKind::WordCount);
+        processor.dispatch_trigger(request, super::super::InputProcessor::input_stamp());
+        assert!(processor.pipeline.is_correcting());
+        processor.track_input(TypedInput::Text(following.into()), &mut pending);
+        assert!(pending.is_empty());
+        assert_eq!(
+            processor
+                .session_manager
+                .active()
+                .unwrap()
+                .editable_context(),
+            following
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while processor.pipeline.is_correcting() {
+            processor.pipeline.wait_manual();
+            processor.finish_correction();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "word-count flow did not complete"
+            );
+        }
+        let mut observed = [0u16; 128];
+        let length = unsafe {
+            SendMessageW(
+                edit as _,
+                WM_GETTEXT,
+                observed.len(),
+                observed.as_mut_ptr() as isize,
+            )
+        };
+        assert_eq!(
+            String::from_utf16_lossy(&observed[..length as usize]),
+            format!("old {corrected}{following} AFTER")
+        );
+        let session = processor.session_manager.active().unwrap();
+        assert_eq!(session.informative_context(), format!("old {corrected}"));
+        assert_eq!(session.editable_context(), following);
+        assert!(!session.pending_matches(id, original));
+        assert_eq!(session.undo_target().is_some(), original != corrected);
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let metadata: (String, String, String) = connection
+            .query_row(
+                "select trigger_type, result_reason, replacement_method from correction_metadata",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            metadata,
+            (
+                "word_count".into(),
+                if original != corrected {
+                    "correction_applied"
+                } else if original.starts_with("accomodate") {
+                    "confidence_below_configured_behavior"
+                } else {
+                    "no_correction_needed"
+                }
+                .into(),
+                if original != corrected {
+                    "send_input"
+                } else {
+                    "none"
+                }
+                .into(),
+            )
+        );
+        if original != corrected {
+            processor.process_shortcut(2);
+            let length = unsafe {
+                SendMessageW(
+                    edit as _,
+                    WM_GETTEXT,
+                    observed.len(),
+                    observed.as_mut_ptr() as isize,
+                )
+            };
+            assert_eq!(
+                String::from_utf16_lossy(&observed[..length as usize]),
+                initial
+            );
+            assert_eq!(
+                processor
+                    .session_manager
+                    .active()
+                    .unwrap()
+                    .editable_context(),
+                following
+            );
+            assert!(processor
+                .session_manager
+                .active()
+                .unwrap()
+                .undo_target()
+                .is_none());
+        }
+        drop(connection);
+        drop(processor);
+        std::fs::remove_file(path).unwrap();
+    }
     // Exercise the runtime shortcut owner, real security/policy gates, local
     // engine, native replacement, session commit, undo and metadata together.
     for (selected, arbitrary, allowed) in [
