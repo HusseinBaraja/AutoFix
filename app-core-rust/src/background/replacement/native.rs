@@ -58,12 +58,13 @@ struct PreparedRange {
     element: IUIAutomationElement,
     pattern: IUIAutomationTextPattern,
     original_caret: IUIAutomationTextRange,
+    original_selection: IUIAutomationTextRange,
     span: IUIAutomationTextRange,
 }
 
 #[cfg(windows)]
 impl PreparedRange {
-    /// Prove exact session text at a collapsed caret without modifying the document.
+    /// Prove exact session text before a collapsed caret or a verified selection end.
     fn new(plan: &ReplacementPlan<'_>) -> Result<Self, String> {
         if plan.original.contains('\0') || plan.replacement.contains('\0') {
             return Err("embedded NUL cannot be replaced safely".into());
@@ -89,7 +90,20 @@ impl PreparedRange {
                 }
                 let pattern: IUIAutomationTextPattern =
                     element.GetCurrentPatternAs(UIA_TextPatternId)?;
-                let caret = collapsed_selection(&pattern)?;
+                let selections = pattern.GetSelection()?;
+                if selections.Length()? != 1 {
+                    return Err(range_error("selection is not a single range"));
+                }
+                let original_selection = selections.GetElement(0)?;
+                let caret = if plan.selected_text {
+                    let selection = &original_selection;
+                    if selection.GetText(-1)? != plan.original || !plan.following.is_empty() {
+                        return Err(range_error("selection does not match executable text"));
+                    }
+                    super::super::context_capture::selected_caret(&element, selection)?
+                } else {
+                    collapsed_selection(&pattern)?
+                };
                 // Providers differ on supplementary Unicode character units.
                 // Resolve both known spans independently and require exact text.
                 let following = adjacent_range(&caret, plan.following, true)?;
@@ -99,6 +113,9 @@ impl PreparedRange {
                 if span.CompareEndpoints(START, &span, END)? > 0
                     || span.CompareEndpoints(END, &caret, END)? > 0
                     || span.GetText(-1)? != plan.original
+                    || (plan.selected_text
+                        && (span.CompareEndpoints(START, &original_selection, START)? != 0
+                            || span.CompareEndpoints(END, &original_selection, END)? != 0))
                 {
                     return Err(range_error("pre-caret text does not match"));
                 }
@@ -107,12 +124,13 @@ impl PreparedRange {
                     element,
                     pattern,
                     original_caret: caret,
+                    original_selection,
                     span,
                 })
             })()
         };
         // Provider error messages are untrusted and can contain document text.
-        let range = result.map_err(|_| "no reliable collapsed pre-caret range".to_owned())?;
+        let range = result.map_err(|_| "no reliable pre-caret range".to_owned())?;
         if !current(plan) || !range.focused() {
             return Err("focus or input changed while proving range".into());
         }
@@ -202,6 +220,8 @@ impl PreparedRange {
             if !current(plan) || !self.focused() {
                 return Err("target changed before selection".into());
             }
+            // Preparation must not silently replace a newer programmatic selection.
+            self.verify_original_selection(plan)?;
             selection_attempted = true;
             unsafe { self.span.Select() }.map_err(|_| "range selection failed")?;
             // Verify Select selected exactly the proven span, not a provider approximation.
@@ -275,13 +295,54 @@ impl PreparedRange {
             return false;
         }
         unsafe {
-            self.original_caret.Select().is_ok()
-                && collapsed_selection(&self.pattern).is_ok_and(|caret| {
-                    caret.CompareEndpoints(END, &self.original_caret, END).ok() == Some(0)
-                })
+            self.original_selection.Select().is_ok()
+                && self.verify_original_selection(plan).is_ok()
                 && current(plan)
                 && self.focused()
         }
+    }
+
+    /// Preserve the original selection and its active endpoint until mutation begins.
+    fn verify_original_selection(&self, plan: &ReplacementPlan<'_>) -> Result<(), String> {
+        unsafe {
+            let selections = self
+                .pattern
+                .GetSelection()
+                .map_err(|_| "selection unreadable")?;
+            if selections.Length().ok() != Some(1) {
+                return Err("selection changed during preparation".into());
+            }
+            let selection = selections
+                .GetElement(0)
+                .map_err(|_| "selection unreadable")?;
+            if selection
+                .CompareEndpoints(START, &self.original_selection, START)
+                .ok()
+                != Some(0)
+                || selection
+                    .CompareEndpoints(END, &self.original_selection, END)
+                    .ok()
+                    != Some(0)
+                || (plan.selected_text
+                    && selection
+                        .GetText(-1)
+                        .ok()
+                        .as_ref()
+                        .is_none_or(|text| *text != plan.original))
+            {
+                return Err("selection changed during preparation".into());
+            }
+            let caret = if plan.selected_text {
+                super::super::context_capture::selected_caret(&self.element, &selection)
+            } else {
+                collapsed_selection(&self.pattern)
+            }
+            .map_err(|_| "caret endpoint unavailable")?;
+            if caret.CompareEndpoints(END, &self.original_caret, END).ok() != Some(0) {
+                return Err("caret endpoint changed during preparation".into());
+            }
+        }
+        Ok(())
     }
 
     /// Reject approximate provider selections before publishing or injecting text.
@@ -304,6 +365,10 @@ impl PreparedRange {
                 || !self.focused()
             {
                 return Err("selected range or input changed".into());
+            }
+            if plan.selected_text {
+                super::super::context_capture::selected_caret(&self.element, &selected)
+                    .map_err(|_| "selected caret endpoint changed")?;
             }
         }
         Ok(())

@@ -468,8 +468,13 @@ impl InputProcessor {
                 SecurityDecision::Allowed { target } if config.correction.enabled => Some(target),
                 _ => None,
             },
-            |target, known_chars| {
-                context_capture::read_before_caret(target, &config.context, known_chars)
+            |target, request, known_chars| {
+                context_capture::read_correction_context(
+                    target,
+                    request,
+                    &config.context,
+                    known_chars,
+                )
             },
             |target, request, output| {
                 let Some(_policy_guard) = SecurityGate::authorize_correction_replacement(

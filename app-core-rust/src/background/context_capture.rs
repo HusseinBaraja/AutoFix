@@ -93,6 +93,7 @@ fn selected_executable_prefix<'a>(
     found
 }
 
+#[derive(Debug)]
 pub(super) enum SelectionCapture {
     NoSelection,
     Selected {
@@ -105,6 +106,100 @@ pub(super) enum SelectionCapture {
 }
 
 const MAX_SELECTED_CHARS: i32 = 4096;
+
+/// A selection is editable only when its active caret is at the range end.
+/// TextPattern's sorted endpoints alone cannot establish selection direction.
+#[cfg(windows)]
+pub(super) unsafe fn selected_caret(
+    element: &windows::Win32::UI::Accessibility::IUIAutomationElement,
+    selection: &windows::Win32::UI::Accessibility::IUIAutomationTextRange,
+) -> windows::core::Result<windows::Win32::UI::Accessibility::IUIAutomationTextRange> {
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationTextPattern2, TextPatternRangeEndpoint_End as END,
+        TextPatternRangeEndpoint_Start as START, UIA_TextPattern2Id,
+    };
+    let pattern: IUIAutomationTextPattern2 = element.GetCurrentPatternAs(UIA_TextPattern2Id)?;
+    let mut active = windows::core::BOOL::default();
+    let caret = pattern.GetCaretRange(&mut active)?;
+    // Some native Edit providers report the sorted selection end for either
+    // direction. Independently locate the real system caret in this control.
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetGUIThreadInfo, GetWindowThreadProcessId, GUITHREADINFO,
+    };
+    let window = element.CurrentNativeWindowHandle()?.0;
+    let mut process = 0;
+    let thread = GetWindowThreadProcessId(window as _, &mut process);
+    let mut info: GUITHREADINFO = std::mem::zeroed();
+    info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+    let unavailable =
+        || windows::core::Error::from_hresult(windows::core::HRESULT(0x80004005u32 as i32));
+    if window.is_null()
+        || thread == 0
+        || process != element.CurrentProcessId()? as u32
+        || GetGUIThreadInfo(thread, &mut info) == 0
+        || !std::ptr::eq(info.hwndFocus, window)
+        || !std::ptr::eq(info.hwndCaret, window)
+    {
+        return Err(unavailable());
+    }
+    let mut point = windows_sys::Win32::Foundation::POINT {
+        x: info.rcCaret.left,
+        y: info.rcCaret.top + (info.rcCaret.bottom - info.rcCaret.top) / 2,
+    };
+    if windows_sys::Win32::Graphics::Gdi::ClientToScreen(info.hwndCaret, &mut point) == 0 {
+        return Err(unavailable());
+    }
+    let native_caret = pattern.RangeFromPoint(windows::Win32::Foundation::POINT {
+        x: point.x,
+        y: point.y,
+    })?;
+    if !active.as_bool()
+        || caret.CompareEndpoints(START, &caret, END)? != 0
+        || caret.CompareEndpoints(END, selection, END)? != 0
+        || native_caret.CompareEndpoints(START, &native_caret, END)? != 0
+        || native_caret.CompareEndpoints(END, selection, END)? != 0
+    {
+        return Err(windows::core::Error::from_hresult(windows::core::HRESULT(
+            0x80004005u32 as i32,
+        )));
+    }
+    Ok(caret)
+}
+
+/// Completion rechecks the exact selected span and both read-only anchors.
+pub(super) fn read_correction_context(
+    target: &FocusedTarget,
+    request: &super::triggers::CorrectionRequest,
+    limits: &ContextConfig,
+    known_chars: usize,
+) -> Option<String> {
+    if !request.selected_text {
+        return read_before_caret(target, limits, known_chars);
+    }
+    let mut capture_limits = limits.clone();
+    capture_limits.informative_context_max_chars = capture_limits
+        .informative_context_max_chars
+        .max(request.following_context.chars().count() as u32);
+    match read_selection(
+        target,
+        &request.informative_context,
+        &request.executable_context,
+        &capture_limits,
+    ) {
+        SelectionCapture::Selected {
+            text,
+            preceding,
+            following,
+            ..
+        } if text == request.executable_context
+            && preceding.ends_with(&request.informative_context)
+            && following.starts_with(&request.following_context) =>
+        {
+            Some(format!("{preceding}{text}"))
+        }
+        _ => None,
+    }
+}
 
 fn capture_char_limit(limits: &ContextConfig, known_typed_chars: usize) -> i32 {
     (limits.informative_context_max_chars as usize)
@@ -262,6 +357,7 @@ pub(super) fn read_selection(
             if selected.is_empty() || selected.chars().count() > MAX_SELECTED_CHARS as usize {
                 return None;
             }
+            selected_caret(&element, &selection).ok()?;
             let selection_at_document_start =
                 pattern.DocumentRange().ok().is_some_and(|document| {
                     selection

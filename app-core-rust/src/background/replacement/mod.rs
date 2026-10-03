@@ -115,6 +115,7 @@ struct ReplacementPlan<'a> {
     original: &'a str,
     replacement: &'a str,
     following: &'a str,
+    selected_text: bool,
     stamp: InputStamp,
 }
 
@@ -195,9 +196,11 @@ impl ReplacementEngine {
     ) -> ReplacementResult {
         let reason = if target.correction_eligibility() != CorrectionEligibility::Allowed {
             Some("target is protected, unavailable or unsupported")
-        } else if request.selected_text {
-            // Even opt-in selections must prove the live caret end. V1 cannot do so.
-            Some("selected range has no verified pre-caret geometry")
+        } else if request.selected_text
+            && (request.trigger != super::security::TriggerKind::ManualShortcut
+                || !request.replacement_following_text.is_empty())
+        {
+            Some("selection must be a manual range ending at the caret")
         } else if request.executable_context.is_empty() {
             Some("executable context is empty")
         } else if request.executable_context.contains('\0')
@@ -229,6 +232,7 @@ impl ReplacementEngine {
             original: &request.executable_context,
             replacement: &output.corrected_executable_text,
             following: &request.replacement_following_text,
+            selected_text: request.selected_text,
             stamp,
         };
         Self::execute(&plan, clipboard_enabled)
@@ -247,6 +251,7 @@ impl ReplacementEngine {
                 original: &undo.corrected,
                 replacement: &undo.original,
                 following: &undo.following,
+                selected_text: false,
                 stamp,
             },
             clipboard_enabled,

@@ -227,7 +227,7 @@ fn finish_unchanged_dispatch(
             &processor.config.context,
             || stamp,
             |_| Some(target.clone()),
-            |_, _| Some(live_text.into()),
+            |_, _, _| Some(live_text.into()),
             |_, _, _| -> bool { panic!("unchanged text must not be replaced") },
         ) {
             return;

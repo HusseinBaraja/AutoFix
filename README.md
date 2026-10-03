@@ -72,8 +72,23 @@ runs. Editor automatic correction requires explicit trigger and prose opt-ins,
 and a whole segment of recognizable line-comment prose. Terminal automatic
 requests still skip because the shell context cannot be proven safe.
 Existing permissions survive migration; the new editor prose permission starts
-off. Selected results still skip native replacement until caret-end proof is
-available, and manual-only rules do not enable continuous typed-input capture.
+off. Selected correction requires both UI Automation and the native caret to
+prove the selection ends at the caret. Manual-only rules do not enable
+continuous typed-input capture.
+
+The manual correction shortcut (default **Ctrl+Alt+Space**) checks security,
+app rules, selection ownership and session validity before sending read-only
+informative context and editable executable context to the selected engine.
+Confidence policy controls whether the result applies, previews or skips.
+Successful replacement changes only the proved executable span before the caret,
+moves the corrected text into informative context, clears executable context,
+records app-level undo and writes metadata without document text.
+
+Selected text must belong to the current typed segment unless **Correct arbitrary
+selection** is enabled under **Shortcuts**. Even with that option, backward
+selections and selections without reliable caret proof skip correction. Text after
+the caret stays untouched. Unchanged or suppressed selections retain their context
+and selection; suggestion acceptance remains planned.
 
 ## Run App
 

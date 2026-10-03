@@ -193,6 +193,18 @@ impl CorrectionPipeline {
         config: &AppConfig,
         dictionary: Vec<String>,
     ) -> bool {
+        if request.selected_text
+            && (request.trigger != TriggerKind::ManualShortcut
+                || request.pending_segment_id.is_some()
+                || if request.temporary_selection {
+                    !config.shortcuts.correct_arbitrary_selection
+                } else {
+                    !session
+                        .owns_selection(&request.informative_context, &request.executable_context)
+                })
+        {
+            return false;
+        }
         // Check executable text before either local execution or API transmission.
         if let Some(path) = self.database_path.as_deref() {
             let allowed =
@@ -416,7 +428,7 @@ impl CorrectionPipeline {
         limits: &ContextConfig,
         current_stamp: impl Fn() -> InputStamp,
         check_target: impl FnOnce(TriggerKind) -> Option<FocusedTarget>,
-        read_before_caret: impl FnOnce(&FocusedTarget, usize) -> Option<String>,
+        read_before_caret: impl FnOnce(&FocusedTarget, &CorrectionRequest, usize) -> Option<String>,
         replace: impl FnOnce(&FocusedTarget, &CorrectionRequest, &CorrectionOutput) -> R,
     ) -> bool {
         self.timeout_notice = false;
@@ -472,11 +484,7 @@ impl CorrectionPipeline {
             };
             // Security/UIA calls can race with queued typing or focus changes.
             if target.correction_eligibility() != CorrectionEligibility::Allowed
-                || target.process_id != active.target.process_id
-                || target.process_name != active.target.process_name
-                || target.window_handle != active.target.window_handle
-                || target.focused_element_id != active.target.focused_element_id
-                || target.session_key() != active.target.session_key()
+                || target != active.target
                 || !manager.active_matches(&target)
                 || current_stamp() != validation_stamp
                 || manager
@@ -543,25 +551,31 @@ impl CorrectionPipeline {
                 self.feedback_event = Some((Event::Skipped(reason), manual));
                 return false;
             }
+            // An unchanged selection remains selected in the host app. Keep its
+            // ownership unchanged until typing or a later correction resolves it.
+            if active.request.selected_text && !output.changes_needed {
+                self.feedback_event =
+                    Some((Event::Skipped("AutoFix: no correction needed."), manual));
+                return false;
+            }
             if let Some(id) = segment_id {
                 let Some(following) = manager.active().unwrap().pending_following_text(id) else {
                     return false;
                 };
                 active.request.replacement_following_text = following;
             }
-            // A selection does not prove which end contains the live caret.
-            // V1 only completes corrections of collapsed, pre-caret ranges.
-            if active.request.selected_text {
-                return false;
-            }
             let session = manager.active().unwrap();
-            let known_before_caret = format!(
-                "{}{}",
-                session.informative_context(),
-                session.executable_context()
-            );
+            let known_before_caret = if active.request.selected_text {
+                format!("{}{}", active.request.informative_context, original)
+            } else {
+                format!(
+                    "{}{}",
+                    session.informative_context(),
+                    session.executable_context()
+                )
+            };
             let Some(live_before_caret) =
-                read_before_caret(&target, known_before_caret.chars().count())
+                read_before_caret(&target, &active.request, known_before_caret.chars().count())
             else {
                 return false;
             };
@@ -593,11 +607,13 @@ impl CorrectionPipeline {
                 return false;
             }
             let confirmation = if output.changes_needed {
-                if !session.can_complete_correction(
-                    segment_id,
-                    original,
-                    &output.corrected_executable_text,
-                ) {
+                if !active.request.selected_text
+                    && !session.can_complete_correction(
+                        segment_id,
+                        original,
+                        &output.corrected_executable_text,
+                    )
+                {
                     return false;
                 }
                 let confirmation = replace(&target, &active.request, &output).into();
@@ -615,7 +631,15 @@ impl CorrectionPipeline {
             let session = manager.active_mut().unwrap();
             let changed = output.changes_needed;
             let confidence = output.confidence;
-            let completed = if let Some(id) = segment_id {
+            let completed = if active.request.selected_text {
+                session.complete_selection(
+                    &active.request.informative_context,
+                    original,
+                    &output.corrected_executable_text,
+                    limits,
+                );
+                true
+            } else if let Some(id) = segment_id {
                 session.complete_pending(id, &output.corrected_executable_text, limits)
             } else if output.changes_needed {
                 session.queue_correction(original.clone(), output.corrected_executable_text)
@@ -626,11 +650,21 @@ impl CorrectionPipeline {
             };
             if completed && changed {
                 self.feedback_event = Some((Event::Applied, manual));
+                let confirmation = confirmation.unwrap();
+                let method = confirmation.method;
                 session.record_undo_metadata(
                     active.request.language_info.primary_language.clone(),
                     active.request.trigger,
                     confidence,
-                    confirmation.unwrap(),
+                    confirmation,
+                );
+                self.log_context_commit(
+                    &active.request,
+                    &active.target,
+                    confidence,
+                    "correction_applied",
+                    output.engine_latency_ms,
+                    method,
                 );
             } else if completed {
                 self.feedback_event = Some((
@@ -641,12 +675,13 @@ impl CorrectionPipeline {
                     }),
                     manual,
                 ));
-                self.log_no_change_commit(
+                self.log_context_commit(
                     &active.request,
                     &active.target,
                     confidence,
                     no_change_reason.unwrap(),
                     output.engine_latency_ms,
+                    None,
                 );
             }
             completed
@@ -673,14 +708,22 @@ impl CorrectionPipeline {
 
     /// Record accepted commits once without waiting on SQLite policy reservations.
     /// Metadata contains no document text, even in full-debug mode.
-    fn log_no_change_commit(
+    fn log_context_commit(
         &self,
         request: &CorrectionRequest,
         target: &FocusedTarget,
         confidence: ConfidenceTier,
         reason: &str,
         latency_ms: u64,
+        method: Option<super::replacement::ReplacementMethod>,
     ) {
+        let replacement_method = match method {
+            Some(super::replacement::ReplacementMethod::DirectTextApi) => "direct_text_api",
+            Some(super::replacement::ReplacementMethod::UiAutomation) => "ui_automation",
+            Some(super::replacement::ReplacementMethod::Clipboard) => "clipboard",
+            Some(super::replacement::ReplacementMethod::SendInput) => "send_input",
+            None => "none",
+        };
         tracing::info!(
             session_id = request.session_id,
             trigger = request.trigger.as_str(),
@@ -688,8 +731,8 @@ impl CorrectionPipeline {
             confidence = ?confidence,
             reason,
             latency_ms,
-            replacement_method = "none",
-            "no-change context committed"
+            replacement_method,
+            "correction context committed"
         );
         let Some(path) = self.database_path.as_deref() else {
             return;
@@ -711,14 +754,14 @@ impl CorrectionPipeline {
                 EngineKind::CustomApi => "custom_api",
             }
             .into(),
-            replacement_method: "none".into(),
+            replacement_method: replacement_method.into(),
             result_reason: reason.into(),
             latency_ms,
         };
         if crate::storage::Database::record_metadata_nowait(path, &metadata).is_err() {
             tracing::warn!(
                 session_id = request.session_id,
-                "no-change metadata unavailable"
+                "correction metadata unavailable"
             );
         }
     }

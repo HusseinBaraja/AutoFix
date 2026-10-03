@@ -7,6 +7,8 @@ use crate::background::{
 };
 use std::{cell::Cell, sync::mpsc, time::Instant};
 
+mod manual;
+
 const STAMP: InputStamp = InputStamp {
     position: 7,
     sequence: 12,
@@ -412,7 +414,7 @@ fn queued_api_job_is_denied_after_rule_revocation_and_releases_its_slot() {
         &config.context,
         || STAMP,
         |_| None,
-        |_, _| panic!("revoked target must not be captured"),
+        |_, _, _| panic!("revoked target must not be captured"),
         |_, _, _| -> bool { panic!("revoked target must not be edited") }
     ));
     // The rejected first segment restores the dependent queued request too.
@@ -531,7 +533,7 @@ fn stale_cancelled_or_secure_timeouts_cannot_show_notices() {
                 }
                 Some(live)
             },
-            |_, _| panic!("timeout must not read target text"),
+            |_, _, _| panic!("timeout must not read target text"),
             |_, _, _| -> bool { panic!("timeout must not replace text") },
         ));
         assert!(!pipeline.take_timeout_notice());
@@ -555,7 +557,7 @@ fn automatic_timeout_releases_frozen_slot_without_live_target_calls() {
         &config.context,
         || STAMP,
         |_| panic!("automatic timeout must skip live security/UIA calls"),
-        |_, _| panic!("automatic timeout must not capture text"),
+        |_, _, _| panic!("automatic timeout must not capture text"),
         |_, _, _| -> bool { panic!("automatic timeout must not replace text") },
     ));
     assert!(!pipeline.take_timeout_notice());
@@ -686,7 +688,7 @@ fn delayed_frozen_corrections_keep_all_results_and_preserve_newer_typing() {
         &config.context,
         || stamp,
         |_| Some(target()),
-        |_, _| Some(live),
+        |_, _, _| Some(live),
         |_, request, _| {
             assert_eq!(request.replacement_following_text, expected_tail);
             true
@@ -705,7 +707,7 @@ fn delayed_frozen_corrections_keep_all_results_and_preserve_newer_typing() {
         &config.context,
         || stamp,
         |_| Some(target()),
-        |_, _| Some(live),
+        |_, _, _| Some(live),
         |_, request, _| {
             assert_eq!(request.executable_context, " teh");
             assert_eq!(request.replacement_following_text, " 尾");
@@ -817,7 +819,7 @@ fn frozen_failures_release_capacity_without_committing_engine_output() {
             &config.context,
             || STAMP,
             |_| if failure == 4 { None } else { Some(target()) },
-            |_, _| Some(live),
+            |_, _, _| Some(live),
             |_, _, _| {
                 calls.set(calls.get() + 1);
                 false
@@ -1063,7 +1065,7 @@ fn frozen_result_revalidates_queued_position_and_input_during_security_check() {
                 });
                 Some(target())
             },
-            |_, _| panic!("raced input reached live range validation"),
+            |_, _, _| panic!("raced input reached live range validation"),
             |_, _, _| -> bool { panic!("raced input reached replacement") }
         ));
     }
@@ -1193,7 +1195,7 @@ fn finish(
         &config.context,
         || stamp,
         |_| Some(target()),
-        |_, _| Some(live),
+        |_, _, _| Some(live),
         |_, _, _| {
             replaced.set(replaced.get() + 1);
             success
@@ -1326,7 +1328,7 @@ fn input_race_after_native_success_drops_session_instead_of_restoring_stale_text
             &config.context,
             || current.get(),
             |_| Some(target()),
-            |_, _| Some(live),
+            |_, _, _| Some(live),
             |_, _, _| {
                 calls.set(calls.get() + 1);
                 current.set(InputStamp {
@@ -1412,7 +1414,7 @@ fn manual_failure_feedback_is_validated_and_contains_no_provider_text() {
                 target.is_password_or_protected = unsafe_target;
                 Some(target)
             },
-            |_, _| panic!("failure must not read document text"),
+            |_, _, _| panic!("failure must not read document text"),
             |_, _, _| -> bool { panic!("failure must not mutate") }
         ));
         assert_eq!(
@@ -1642,7 +1644,7 @@ fn unsafe_or_stale_suggestions_cannot_surface_a_preview() {
                 t.is_password_or_protected = failure == 2;
                 Some(t)
             },
-            |_, _| {
+            |_, _, _| {
                 if failure == 3 {
                     return None;
                 }
@@ -1747,7 +1749,7 @@ fn security_and_input_changes_during_live_validation_block_replacement() {
                 }
                 Some(target)
             },
-            |_, _| panic!("invalid result reached live range validation"),
+            |_, _, _| panic!("invalid result reached live range validation"),
             |_, _, _| -> bool { panic!("invalid result reached replacement") }
         ));
         assert_eq!(manager.active().unwrap().editable_context(), "teh");
@@ -1775,7 +1777,7 @@ fn live_range_must_match_exactly_before_caret() {
             &config.context,
             || STAMP,
             |_| Some(target()),
-            |_, _| live.map(str::to_owned),
+            |_, _, _| live.map(str::to_owned),
             |_, _, _| {
                 calls.set(calls.get() + 1);
                 true
@@ -1878,7 +1880,7 @@ fn unchanged_success_commits_only_after_validation() {
         &config.context,
         || STAMP,
         |_| Some(target()),
-        |_, _| Some(live),
+        |_, _, _| Some(live),
         |_, _, _| -> bool { panic!("unchanged text needs no replacement") }
     ));
     assert_eq!(manager.active().unwrap().informative_context(), "hello");
