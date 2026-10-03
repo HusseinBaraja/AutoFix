@@ -137,8 +137,8 @@ pub(super) unsafe fn selected_caret(
         || thread == 0
         || process != element.CurrentProcessId()? as u32
         || GetGUIThreadInfo(thread, &mut info) == 0
-        || info.hwndFocus != window as _
-        || info.hwndCaret != window as _
+        || !std::ptr::eq(info.hwndFocus, window)
+        || !std::ptr::eq(info.hwndCaret, window)
     {
         return Err(unavailable());
     }
