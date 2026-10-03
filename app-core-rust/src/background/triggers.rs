@@ -104,32 +104,25 @@ pub(super) fn automatic(
     if !config.correction.enabled || inserted.is_empty() || !after.ends_with(inserted) {
         return None;
     }
-    if config.triggers.character_trigger_enabled {
-        if let Some(boundary) = config
+    if config.triggers.character_trigger_enabled
+        && config
             .triggers
             .characters
             .iter()
             .filter(|boundary| !boundary.is_empty())
-            .find(|boundary| inserted.ends_with(boundary.as_str()))
-        {
-            let preceding = &after[..after.len() - boundary.len()];
-            let start = config
-                .triggers
-                .characters
-                .iter()
-                .filter(|character| !character.is_empty())
-                .filter_map(|character| preceding.rfind(character).map(|at| at + character.len()))
-                .max()
-                .unwrap_or(0);
-            return request(
-                session_id,
-                TriggerKind::Character,
-                informative,
-                &after[start..],
-                versions,
-                config,
-            );
-        }
+            .any(|boundary| after.ends_with(boundary.as_str()))
+    {
+        // A configured boundary can span multiple translated key events.
+        // Freeze the complete active segment, including any earlier skipped
+        // boundary, rather than dropping unchecked text from the request.
+        return request(
+            session_id,
+            TriggerKind::Character,
+            informative,
+            after,
+            versions,
+            config,
+        );
     }
     if config.triggers.word_count_enabled && config.triggers.word_count > 0 {
         let threshold = usize::from(config.triggers.word_count);
@@ -293,7 +286,7 @@ mod tests {
             automatic(1, "First. Next", "First. Next.", ".", "", v, &config)
                 .unwrap()
                 .executable_context,
-            " Next."
+            "First. Next."
         );
         config.triggers.character_trigger_enabled = false;
         config.triggers.word_count_enabled = false;
@@ -327,7 +320,7 @@ mod tests {
             &config,
         )
         .unwrap();
-        assert_eq!(request.executable_context, " Next?");
+        assert_eq!(request.executable_context, "First! Next?");
         assert!(!request.executable_context.contains("trailing"));
     }
 }

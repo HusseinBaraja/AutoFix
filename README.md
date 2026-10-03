@@ -28,6 +28,22 @@ context and clears its pending segment without an undo entry. Changed segments
 record app-level undo. Failed, timed-out, stale or unsafe work returns to executable
 context for a later trigger. Logs contain metadata only.
 
+**Character correction** is optional and defaults to `.`. Under **Triggers**,
+configure the character list (for example `.`, `?`, `!`, or `。`). Configured
+sequences can span keystrokes. Typing a configured boundary at the end of the
+active executable context freezes that completed segment for asynchronous
+correction; subsequent typing starts a new executable context. Earlier skipped
+boundaries remain in the active segment so unchecked text is preserved.
+
+Character results use the same conservative live validation, app rules, security
+blocks and confidence settings as word-count results. High confidence applies
+silently by default; medium confidence follows settings and low confidence never
+applies. A verified no-change or confidence skip commits the original. Corrected
+or unchanged text becomes informative context, which shrinks to its configured
+budget without editing the document. Failed or unsafe results stay executable.
+New typing and text after the caret remain untouched; changed text supports
+app-level undo, and logs contain metadata only.
+
 Local ML correction, suggestion acceptance, IME composition, and direct text API
 or UI Automation mutation remain planned. App-level undo restores only recorded
 corrections whose exact span and caret can still be verified.

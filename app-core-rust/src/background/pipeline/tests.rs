@@ -1,14 +1,58 @@
 use super::*;
 use crate::background::{
     context_capture::SelectionCapture,
+    security,
     target::FocusedElementId,
     triggers,
     typing::{MovementSignal, TypedInput},
+    InputProcessor, PendingTrigger,
 };
 use std::{cell::Cell, sync::mpsc, time::Instant};
 
+mod character;
 mod manual;
 mod word_count;
+
+/// Build the runtime input owner for automatic-trigger flow tests.
+fn processor(config: AppConfig, pipeline: CorrectionPipeline) -> InputProcessor {
+    let mut processor = InputProcessor {
+        feedback: crate::background::feedback::Feedback::default(),
+        learner: crate::dictionary::Learner::default(),
+        pipeline,
+        processed_input_sequence: STAMP.sequence,
+        session_manager: SessionManager::new(config.context.clone()),
+        config,
+        database: crate::storage::Database::open_memory().unwrap(),
+    };
+    processor.session_manager.focus(&target());
+    processor
+}
+
+/// Send translated keys individually, preserving the real trigger boundary.
+fn type_text(processor: &mut InputProcessor, text: &str) -> Vec<PendingTrigger> {
+    let mut pending = Vec::new();
+    for character in text.chars() {
+        processor.track_input(TypedInput::Text(character.to_string()), &mut pending);
+    }
+    pending
+}
+
+/// Dispatch with real app rules and a deterministic focused target.
+fn dispatch(processor: &mut InputProcessor, request: CorrectionRequest) -> bool {
+    processor.dispatch_trigger_with(
+        request,
+        STAMP,
+        || STAMP,
+        |trigger, config, database| {
+            security::check_detection(
+                trigger,
+                config,
+                &database.app_rules().list().unwrap(),
+                crate::background::target::TargetDetection::Available(target()),
+            )
+        },
+    )
+}
 
 const STAMP: InputStamp = InputStamp {
     position: 7,
@@ -957,11 +1001,12 @@ fn unchanged_commit_policy_preserves_skips_for_all_triggers() {
                 reason.clone(),
                 17,
             );
-            let accepted = matches!(
-                reason,
-                NoChangeReason::NoCorrectionNeeded | NoChangeReason::AllCandidatesProtected
-            ) || (trigger == TriggerKind::WordCount
-                && reason == NoChangeReason::ConfidenceBelowConfiguredBehavior);
+            let accepted =
+                matches!(
+                    reason,
+                    NoChangeReason::NoCorrectionNeeded | NoChangeReason::AllCandidatesProtected
+                ) || (matches!(trigger, TriggerKind::WordCount | TriggerKind::Character)
+                    && reason == NoChangeReason::ConfidenceBelowConfiguredBehavior);
             let calls = Cell::new(0);
             assert_eq!(
                 finish(&mut pipeline, &mut manager, &config, STAMP, &calls, false),

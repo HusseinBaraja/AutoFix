@@ -518,12 +518,14 @@ impl CorrectionPipeline {
             let no_change_reason = match output.no_change_reason {
                 Some(NoChangeReason::NoCorrectionNeeded) => Some("no_correction_needed"),
                 Some(NoChangeReason::AllCandidatesProtected) => Some("all_candidates_protected"),
-                // A completed word-count check may deliberately keep the original.
+                // A completed automatic check may deliberately keep the original.
                 // Retire it only after the same live range proof as an applied edit,
                 // and only when the admitted policy really suppresses this tier.
                 Some(NoChangeReason::ConfidenceBelowConfiguredBehavior)
-                    if active.request.trigger == TriggerKind::WordCount
-                        && segment_id.is_some()
+                    if matches!(
+                        active.request.trigger,
+                        TriggerKind::WordCount | TriggerKind::Character
+                    ) && segment_id.is_some()
                         && output.behavior == ConfidenceBehavior::DoNothing
                         && output.changes.as_ref().is_some_and(Vec::is_empty)
                         && active.request.confidence_behavior.behavior_for(

@@ -382,6 +382,19 @@ fn app_undo_refuses_partially_retained_correction() {
 #[test]
 #[ignore = "requires an interactive Windows desktop; briefly focuses an isolated test editor"]
 fn native_edit_replacement_smoke() {
+    native_editor_smoke(false);
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "requires an interactive Windows desktop; briefly focuses an isolated test editor"]
+fn native_automatic_trigger_smoke() {
+    native_editor_smoke(true);
+}
+
+/// Share the isolated editor while allowing affected automatic flows to run alone.
+#[cfg(windows)]
+fn native_editor_smoke(automatic_only: bool) {
     const EM_SETSEL: u32 = 0x00b1;
     use crate::background::security::TriggerKind;
     use std::{
@@ -485,167 +498,209 @@ fn native_edit_replacement_smoke() {
         );
         thread::sleep(std::time::Duration::from_millis(25));
     }
-    // Both correction and undo use this boundary. A title-only change must
-    // refuse every native method while the selection and typed span stay intact.
-    let super::super::target::TargetDetection::Available(authorized) =
-        super::super::target::detect_focused_target()
-    else {
-        panic!("test editor is not available")
-    };
-    let stale = ReplacementPlan {
-        target: &authorized,
-        original: "teh",
-        replacement: "the",
-        following: "",
-        selected_text: false,
-        stamp: InputStamp {
-            position: super::super::input_listener::current_position_generation(),
-            sequence: super::super::input_listener::current_input_sequence(),
-        },
-    };
-    unsafe {
-        let title = wide("Private document");
-        assert_ne!(
+    if !automatic_only {
+        // Both correction and undo use this boundary. A title-only change must
+        // refuse every native method while the selection and typed span stay intact.
+        let super::super::target::TargetDetection::Available(authorized) =
+            super::super::target::detect_focused_target()
+        else {
+            panic!("test editor is not available")
+        };
+        let stale = ReplacementPlan {
+            target: &authorized,
+            original: "teh",
+            replacement: "the",
+            following: "",
+            selected_text: false,
+            stamp: InputStamp {
+                position: super::super::input_listener::current_position_generation(),
+                sequence: super::super::input_listener::current_input_sequence(),
+            },
+        };
+        unsafe {
+            let title = wide("Private document");
+            assert_ne!(
+                SendMessageW(
+                    GetAncestor(edit as _, GA_ROOT),
+                    WM_SETTEXT,
+                    0,
+                    title.as_ptr() as isize
+                ),
+                0
+            );
+        }
+        for method in [ReplacementMethod::Clipboard, ReplacementMethod::SendInput] {
+            let refused = run_strategies(&stale, &mut [&mut native::NativeStrategy(method)], true);
+            assert!(!refused.success && !refused.may_have_changed);
+            assert!(refused.range.is_none());
+        }
+        unsafe {
+            let title = wide("AutoFix replacement test");
             SendMessageW(
                 GetAncestor(edit as _, GA_ROOT),
                 WM_SETTEXT,
                 0,
-                title.as_ptr() as isize
-            ),
-            0
-        );
-    }
-    for method in [ReplacementMethod::Clipboard, ReplacementMethod::SendInput] {
-        let refused = run_strategies(&stale, &mut [&mut native::NativeStrategy(method)], true);
-        assert!(!refused.success && !refused.may_have_changed);
-        assert!(refused.range.is_none());
-    }
-    unsafe {
-        let title = wide("AutoFix replacement test");
-        SendMessageW(
-            GetAncestor(edit as _, GA_ROOT),
-            WM_SETTEXT,
-            0,
-            title.as_ptr() as isize,
-        );
-    }
-    // Unchanged results use the real caret proof but never enter native replacement.
-    for trigger in [
-        TriggerKind::ManualShortcut,
-        TriggerKind::WordCount,
-        TriggerKind::Character,
-        TriggerKind::FinalFixBeforeReanchor,
-    ] {
-        let mut config = AppConfig::default();
-        config.context.informative_context_max_chars = 5;
-        let frozen = matches!(trigger, TriggerKind::WordCount | TriggerKind::Character);
-        let following = if frozen { " newer" } else { "" };
-        let initial = format!("old hello{following} AFTER");
-        let caret = format!("old hello{following}").encode_utf16().count();
-        unsafe {
-            SendMessageW(GetAncestor(edit as _, GA_ROOT), WM_APP + 2, 0, 0);
-            let text = wide(&initial);
-            SendMessageW(edit as _, WM_SETTEXT, 0, text.as_ptr() as isize);
-            SendMessageW(edit as _, EM_SETSEL, caret, caret as isize);
+                title.as_ptr() as isize,
+            );
         }
-        let super::super::target::TargetDetection::Available(target) =
-            super::super::target::detect_focused_target()
-        else {
-            panic!("test editor lost focus")
-        };
-        let mut manager = SessionManager::new(config.context.clone());
-        manager.focus(&target);
-        manager.set_informative_context("old ".into());
-        manager.input(TypedInput::Text("hello".into()));
-        let session = manager.active().unwrap();
-        let mut request = super::super::triggers::manual(
-            session.id(),
-            session.informative_context(),
-            &session.editable_context(),
-            session.versions(),
-            &super::super::context_capture::SelectionCapture::NoSelection,
-            &config,
-        )
-        .unwrap();
-        request.trigger = trigger;
-        request.language_info = crate::correction::LanguageInfo {
-            primary_language: Some("en".into()),
-            detected_languages: vec!["en".into()],
-        };
-        if frozen {
-            request.pending_segment_id = manager
-                .active_mut()
-                .unwrap()
-                .freeze_pending(&config.context)
-                .0;
-            manager.input(TypedInput::Text(following.into()));
-        }
-        let stamp = InputStamp {
-            position: super::super::input_listener::current_position_generation(),
-            sequence: super::super::input_listener::current_input_sequence(),
-        };
-        let mut pipeline = super::super::pipeline::CorrectionPipeline::new().unwrap();
-        assert!(pipeline.submit(
-            request,
-            manager.active().unwrap(),
-            target.clone(),
-            stamp,
-            &config,
-            vec![]
-        ));
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        loop {
-            pipeline.wait_manual();
-            if pipeline.finish(
-                &mut manager,
-                &config.context,
-                || stamp,
-                |_| Some(target.clone()),
-                |target, _, known| {
-                    super::super::context_capture::read_before_caret(target, &config.context, known)
-                },
-                |_, _, _| -> bool { panic!("unchanged result reached native replacement") },
-            ) {
-                break;
+        // Unchanged results use the real caret proof but never enter native replacement.
+        for trigger in [
+            TriggerKind::ManualShortcut,
+            TriggerKind::WordCount,
+            TriggerKind::Character,
+            TriggerKind::FinalFixBeforeReanchor,
+        ] {
+            let mut config = AppConfig::default();
+            config.context.informative_context_max_chars = 5;
+            let frozen = matches!(trigger, TriggerKind::WordCount | TriggerKind::Character);
+            let following = if frozen { " newer" } else { "" };
+            let initial = format!("old hello{following} AFTER");
+            let caret = format!("old hello{following}").encode_utf16().count();
+            unsafe {
+                SendMessageW(GetAncestor(edit as _, GA_ROOT), WM_APP + 2, 0, 0);
+                let text = wide(&initial);
+                SendMessageW(edit as _, WM_SETTEXT, 0, text.as_ptr() as isize);
+                SendMessageW(edit as _, EM_SETSEL, caret, caret as isize);
             }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "unchanged live result did not commit: {trigger:?}"
-            );
+            let super::super::target::TargetDetection::Available(target) =
+                super::super::target::detect_focused_target()
+            else {
+                panic!("test editor lost focus")
+            };
+            let mut manager = SessionManager::new(config.context.clone());
+            manager.focus(&target);
+            manager.set_informative_context("old ".into());
+            manager.input(TypedInput::Text("hello".into()));
+            let session = manager.active().unwrap();
+            let mut request = super::super::triggers::manual(
+                session.id(),
+                session.informative_context(),
+                &session.editable_context(),
+                session.versions(),
+                &super::super::context_capture::SelectionCapture::NoSelection,
+                &config,
+            )
+            .unwrap();
+            request.trigger = trigger;
+            request.language_info = crate::correction::LanguageInfo {
+                primary_language: Some("en".into()),
+                detected_languages: vec!["en".into()],
+            };
+            if frozen {
+                request.pending_segment_id = manager
+                    .active_mut()
+                    .unwrap()
+                    .freeze_pending(&config.context)
+                    .0;
+                manager.input(TypedInput::Text(following.into()));
+            }
+            let stamp = InputStamp {
+                position: super::super::input_listener::current_position_generation(),
+                sequence: super::super::input_listener::current_input_sequence(),
+            };
+            let mut pipeline = super::super::pipeline::CorrectionPipeline::new().unwrap();
+            assert!(pipeline.submit(
+                request,
+                manager.active().unwrap(),
+                target.clone(),
+                stamp,
+                &config,
+                vec![]
+            ));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                pipeline.wait_manual();
+                if pipeline.finish(
+                    &mut manager,
+                    &config.context,
+                    || stamp,
+                    |_| Some(target.clone()),
+                    |target, _, known| {
+                        super::super::context_capture::read_before_caret(
+                            target,
+                            &config.context,
+                            known,
+                        )
+                    },
+                    |_, _, _| -> bool { panic!("unchanged result reached native replacement") },
+                ) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "unchanged live result did not commit: {trigger:?}"
+                );
+            }
+            assert_eq!(manager.active().unwrap().informative_context(), "hello");
+            assert_eq!(manager.active().unwrap().editable_context(), following);
+            assert!(manager.active().unwrap().undo_target().is_none());
+            let mut observed = [0u16; 128];
+            let mut caret_start = 0u32;
+            let mut caret_end = 0u32;
+            unsafe {
+                let length = SendMessageW(
+                    edit as _,
+                    WM_GETTEXT,
+                    observed.len(),
+                    observed.as_mut_ptr() as isize,
+                );
+                assert_eq!(
+                    String::from_utf16_lossy(&observed[..length as usize]),
+                    initial
+                );
+                SendMessageW(
+                    edit as _,
+                    0x00b0,
+                    &mut caret_start as *mut u32 as usize,
+                    &mut caret_end as *mut u32 as isize,
+                );
+            }
+            assert_eq!((caret_start as usize, caret_end as usize), (caret, caret));
         }
-        assert_eq!(manager.active().unwrap().informative_context(), "hello");
-        assert_eq!(manager.active().unwrap().editable_context(), following);
-        assert!(manager.active().unwrap().undo_target().is_none());
-        let mut observed = [0u16; 128];
-        let mut caret_start = 0u32;
-        let mut caret_end = 0u32;
-        unsafe {
-            let length = SendMessageW(
-                edit as _,
-                WM_GETTEXT,
-                observed.len(),
-                observed.as_mut_ptr() as isize,
-            );
-            assert_eq!(
-                String::from_utf16_lossy(&observed[..length as usize]),
-                initial
-            );
-            SendMessageW(
-                edit as _,
-                0x00b0,
-                &mut caret_start as *mut u32 as usize,
-                &mut caret_end as *mut u32 as isize,
-            );
-        }
-        assert_eq!((caret_start as usize, caret_end as usize), (caret, caret));
     }
-    // Exercise configured word thresholds through the runtime owner, live gates,
+    // Exercise configured automatic triggers through the runtime owner, live gates,
     // real pre-caret proof, native replacement, metadata and app-level undo.
-    for (original, corrected, medium_silent) in [
-        ("teh word ", "the word ", false),
-        ("hello word ", "hello word ", false),
-        ("accomodate word ", "accomodate word ", false),
-        ("accomodate word ", "accommodate word ", true),
+    for (original, corrected, medium_silent, trigger, boundary) in [
+        ("teh word ", "the word ", false, TriggerKind::WordCount, "."),
+        (
+            "hello word ",
+            "hello word ",
+            false,
+            TriggerKind::WordCount,
+            ".",
+        ),
+        (
+            "accomodate word ",
+            "accomodate word ",
+            false,
+            TriggerKind::WordCount,
+            ".",
+        ),
+        (
+            "accomodate word ",
+            "accommodate word ",
+            true,
+            TriggerKind::WordCount,
+            ".",
+        ),
+        ("teh.", "the.", false, TriggerKind::Character, "."),
+        ("hello.", "hello.", false, TriggerKind::Character, "."),
+        (
+            "accomodate.",
+            "accomodate.",
+            false,
+            TriggerKind::Character,
+            ".",
+        ),
+        (
+            "accomodate.",
+            "accommodate.",
+            true,
+            TriggerKind::Character,
+            ".",
+        ),
+        ("teh?!", "the?!", false, TriggerKind::Character, "?!"),
+        ("teh。", "the。", false, TriggerKind::Character, "。"),
     ] {
         let following = "newer";
         let initial = format!("old {original}{following} AFTER");
@@ -662,7 +717,7 @@ fn native_edit_replacement_smoke() {
             panic!("test editor lost focus")
         };
         let path = std::env::temp_dir().join(format!(
-            "autofix-native-word-count-{}-{}.sqlite",
+            "autofix-native-automatic-{}-{}.sqlite",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -672,11 +727,16 @@ fn native_edit_replacement_smoke() {
         let database = crate::storage::Database::open(&path).unwrap();
         let mut config = AppConfig::default();
         config.correction.preferred_language = Some("en".into());
-        config.triggers.character_trigger_enabled = false;
+        config.triggers.word_count_enabled = trigger == TriggerKind::WordCount;
+        config.triggers.character_trigger_enabled = trigger == TriggerKind::Character;
+        config.triggers.characters = vec![boundary.into()];
         config.triggers.word_count = 2;
         config.correction.uncertain_language_policy =
             crate::correction::UncertainLanguagePolicy::CorrectNormally;
         config.replacement.clipboard_enabled = false;
+        if trigger == TriggerKind::Character {
+            config.context.informative_context_max_chars = corrected.chars().count() as u32;
+        }
         if medium_silent {
             config.correction.medium_confidence_behavior = ConfidenceBehavior::Silent;
         }
@@ -700,7 +760,7 @@ fn native_edit_replacement_smoke() {
         assert_eq!(pending.len(), 1);
         let request = pending.remove(0).request;
         let id = request.pending_segment_id.unwrap();
-        assert_eq!(request.trigger, TriggerKind::WordCount);
+        assert_eq!(request.trigger, trigger);
         processor.dispatch_trigger(request, super::super::InputProcessor::input_stamp());
         assert!(processor.pipeline.is_correcting());
         processor.track_input(TypedInput::Text(following.into()), &mut pending);
@@ -719,7 +779,7 @@ fn native_edit_replacement_smoke() {
             processor.finish_correction();
             assert!(
                 std::time::Instant::now() < deadline,
-                "word-count flow did not complete"
+                "automatic trigger flow did not complete: {trigger:?}"
             );
         }
         let mut observed = [0u16; 128];
@@ -736,7 +796,14 @@ fn native_edit_replacement_smoke() {
             format!("old {corrected}{following} AFTER")
         );
         let session = processor.session_manager.active().unwrap();
-        assert_eq!(session.informative_context(), format!("old {corrected}"));
+        assert_eq!(
+            session.informative_context(),
+            if trigger == TriggerKind::Character {
+                corrected.into()
+            } else {
+                format!("old {corrected}")
+            }
+        );
         assert_eq!(session.editable_context(), following);
         assert!(!session.pending_matches(id, original));
         assert_eq!(session.undo_target().is_some(), original != corrected);
@@ -751,7 +818,7 @@ fn native_edit_replacement_smoke() {
         assert_eq!(
             metadata,
             (
-                "word_count".into(),
+                trigger.as_str().into(),
                 if original != corrected {
                     "correction_applied"
                 } else if original.starts_with("accomodate") {
@@ -800,6 +867,9 @@ fn native_edit_replacement_smoke() {
         drop(connection);
         drop(processor);
         std::fs::remove_file(path).unwrap();
+    }
+    if automatic_only {
+        return;
     }
     // Exercise the runtime shortcut owner, real security/policy gates, local
     // engine, native replacement, session commit, undo and metadata together.

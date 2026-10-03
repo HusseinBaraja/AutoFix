@@ -1,44 +1,5 @@
 //! Word-count admission, continued typing, and conservative completion as one flow.
 use super::*;
-use crate::background::{security, InputProcessor, PendingTrigger};
-
-fn processor(config: AppConfig, pipeline: CorrectionPipeline) -> InputProcessor {
-    let mut processor = InputProcessor {
-        feedback: crate::background::feedback::Feedback::default(),
-        learner: crate::dictionary::Learner::default(),
-        pipeline,
-        processed_input_sequence: STAMP.sequence,
-        session_manager: SessionManager::new(config.context.clone()),
-        config,
-        database: crate::storage::Database::open_memory().unwrap(),
-    };
-    processor.session_manager.focus(&target());
-    processor
-}
-
-fn type_text(processor: &mut InputProcessor, text: &str) -> Vec<PendingTrigger> {
-    let mut pending = Vec::new();
-    for character in text.chars() {
-        processor.track_input(TypedInput::Text(character.to_string()), &mut pending);
-    }
-    pending
-}
-
-fn dispatch(processor: &mut InputProcessor, request: CorrectionRequest) -> bool {
-    processor.dispatch_trigger_with(
-        request,
-        STAMP,
-        || STAMP,
-        |trigger, config, database| {
-            security::check_detection(
-                trigger,
-                config,
-                &database.app_rules().list().unwrap(),
-                crate::background::target::TargetDetection::Available(target()),
-            )
-        },
-    )
-}
 
 /// Count only completed executable words; settings control freezing and admission.
 #[test]
