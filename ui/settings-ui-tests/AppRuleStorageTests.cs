@@ -1,3 +1,4 @@
+using AutoFix.SettingsUi.Ipc;
 using AutoFix.SettingsUi.Models;
 using AutoFix.SettingsUi.Settings;
 using Microsoft.Data.Sqlite;
@@ -7,6 +8,47 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class AppRuleStorageTests
 {
+    [DataTestMethod]
+    [DataRow("", "auto", false)]
+    [DataRow(",\"safety_mode\":null", "auto", false)]
+    [DataRow(",\"safety_mode\":\"terminal\"", "terminal", false)]
+    [DataRow(",\"safety_mode\":\"code_editor\",\"prose_context_allowed\":true", "code_editor", true)]
+    public void IpcSafetyFieldsRoundTripThroughStorage(string safetyFields, string expectedMode, bool expectedProse)
+    {
+        var json = """
+            {"type":"app_rules","payload":{"rules":[{"process_name":"code.exe","list_behavior":"allowlist","manual_shortcut_allowed":true,"word_count_trigger_allowed":true,"character_trigger_allowed":false,"local_engine_allowed":true,"api_engine_allowed":false
+            """ + safetyFields + "}]}}";
+        var envelope = System.Text.Json.JsonSerializer.Deserialize<IpcEnvelope>(json)!;
+        var response = envelope.ReadPayload<AppRulesResponse>("app_rules");
+        Assert.IsNull(response.Error);
+        var rule = AppRuleStorage.FromDto(response.Value!.Rules.Single());
+        AppRuleStorage.Validate(rule);
+
+        using var fixture = TempConfigFixture.Create();
+        var storage = new AppRuleStorage(Path.Combine(fixture.Root, "autofix.sqlite"));
+        storage.Upsert(rule);
+        var saved = storage.List().Single();
+        Assert.AreEqual(expectedMode, saved.SafetyMode);
+        Assert.AreEqual(expectedProse, saved.ProseContextAllowed);
+        Assert.IsTrue(saved.ManualShortcutAllowed);
+        Assert.IsTrue(saved.WordCountTriggerAllowed);
+        Assert.IsFalse(saved.CharacterTriggerAllowed);
+        Assert.IsTrue(saved.LocalEngineAllowed);
+        Assert.IsFalse(saved.ApiEngineAllowed);
+        Assert.AreEqual(AppRuleStorage.ToDto(rule), AppRuleStorage.ToDto(saved));
+    }
+
+    [DataTestMethod]
+    [DataRow("")]
+    [DataRow("unsafe")]
+    public void DtoMappingPreservesInvalidSafetyModesForValidation(string safetyMode)
+    {
+        var dto = new AppRuleDto("code.exe", null, "allowlist", true, false, false, true, true, safetyMode);
+        var rule = AppRuleStorage.FromDto(dto);
+        Assert.AreEqual(safetyMode, rule.SafetyMode);
+        Assert.ThrowsException<ArgumentException>(() => AppRuleStorage.Validate(rule));
+    }
+
     [TestMethod]
     public void UpsertListAndDeleteRoundTrip()
     {

@@ -224,6 +224,65 @@ fn safety_migration_preserves_existing_permissions_and_defaults_prose_to_off() {
 }
 
 #[test]
+fn safety_migration_rolls_back_columns_and_retries_after_marker_failure() {
+    for retained_column in [None, Some("safety_mode"), Some("prose_context_allowed")] {
+        let connection = Connection::open_in_memory().unwrap();
+        migrations::migrate(&connection).unwrap();
+        connection
+            .execute_batch(
+                "UPDATE app_rules SET safety_mode='code_editor', prose_context_allowed=1,
+                     manual_shortcut_allowed=1 WHERE process_name='code.exe';
+                 DELETE FROM schema_migrations WHERE version=5;
+                 CREATE TRIGGER reject_safety_version BEFORE INSERT ON schema_migrations
+                 WHEN NEW.version=5 BEGIN SELECT RAISE(ABORT, 'migration failure'); END;",
+            )
+            .unwrap();
+        for column in ["safety_mode", "prose_context_allowed"] {
+            if retained_column != Some(column) {
+                connection
+                    .execute_batch(&format!("ALTER TABLE app_rules DROP COLUMN {column}"))
+                    .unwrap();
+            }
+        }
+        let original_columns = table_columns(&connection, "app_rules");
+        let original_rows = row_count(&connection, "app_rules");
+
+        let error = migrations::migrate(&connection).unwrap_err();
+        assert!(error.to_string().contains("migration failure"));
+        assert_eq!(table_columns(&connection, "app_rules"), original_columns);
+        assert_eq!(schema_version(&connection), 4);
+        assert_eq!(row_count(&connection, "app_rules"), original_rows);
+        assert!(connection.is_autocommit());
+
+        connection
+            .execute_batch("DROP TRIGGER reject_safety_version")
+            .unwrap();
+        migrations::migrate(&connection).unwrap();
+        migrations::migrate(&connection).unwrap();
+        assert_eq!(schema_version(&connection), CURRENT_SCHEMA_VERSION);
+        let rule = super::repositories::AppRuleRepository::new(&connection)
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|rule| rule.process_name == "code.exe")
+            .unwrap();
+        assert!(rule.manual_shortcut_allowed);
+        assert_eq!(
+            rule.safety_mode,
+            if retained_column == Some("safety_mode") {
+                "code_editor"
+            } else {
+                "auto"
+            }
+        );
+        assert_eq!(
+            rule.prose_context_allowed,
+            retained_column == Some("prose_context_allowed")
+        );
+    }
+}
+
+#[test]
 fn deletes_app_rules_by_process_and_title_pattern() {
     let database = Database::open_memory().unwrap();
     let rule = AppRule {

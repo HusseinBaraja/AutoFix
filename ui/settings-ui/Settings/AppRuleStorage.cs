@@ -148,7 +148,7 @@ public sealed class AppRuleStorage
         CharacterTriggerAllowed = rule.CharacterTriggerAllowed,
         LocalEngineAllowed = rule.LocalEngineAllowed,
         ApiEngineAllowed = rule.ApiEngineAllowed,
-        SafetyMode = rule.SafetyMode,
+        SafetyMode = rule.SafetyMode ?? "auto",
         ProseContextAllowed = rule.ProseContextAllowed,
     };
 

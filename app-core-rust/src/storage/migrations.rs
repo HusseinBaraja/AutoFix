@@ -127,20 +127,23 @@ pub(super) fn migrate(connection: &Connection) -> Result<()> {
         migrate_to_v2(connection)?;
         connection.execute("insert into schema_migrations (version) values (2)", [])?;
     }
-    migrate_app_safety(connection)?;
+    // Safety columns are needed by v3 seeding. Commit them with the remaining
+    // migrations and their version markers so a failed step cannot leave v5 partial.
+    let transaction = connection.unchecked_transaction()?;
+    migrate_app_safety(&transaction)?;
     if version < 3 {
-        seed_default_app_rules(connection)?;
-        connection.execute("insert into schema_migrations (version) values (3)", [])?;
+        seed_default_app_rules(&transaction)?;
+        transaction.execute("insert into schema_migrations (version) values (3)", [])?;
     }
     if version < 4 {
-        migrate_to_v4(connection)?;
-        connection.execute("insert into schema_migrations (version) values (4)", [])?;
+        migrate_to_v4(&transaction)?;
+        transaction.execute("insert into schema_migrations (version) values (4)", [])?;
     }
 
     if version < 5 {
-        connection.execute("insert into schema_migrations (version) values (5)", [])?;
+        transaction.execute("insert into schema_migrations (version) values (5)", [])?;
     }
-    Ok(())
+    transaction.commit()
 }
 
 pub(super) fn seed_default_app_rules(connection: &Connection) -> Result<()> {

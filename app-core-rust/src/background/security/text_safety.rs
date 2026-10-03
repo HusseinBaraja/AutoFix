@@ -433,9 +433,9 @@ mod tests {
                 TriggerKind::FinalFixBeforeReanchor,
             ] {
                 assert!(!trigger_allowed(&[], &target, trigger));
-                let rules = [rule.clone()];
+                let rules = std::slice::from_ref(&rule);
                 assert_eq!(
-                    trigger_allowed(&rules, &target, trigger),
+                    trigger_allowed(rules, &target, trigger),
                     trigger == TriggerKind::ManualShortcut
                 );
                 assert_eq!(
@@ -443,7 +443,7 @@ mod tests {
                         check_detection(
                             trigger,
                             &AppConfig::default(),
-                            &rules,
+                            rules,
                             TargetDetection::Available(target.clone())
                         ),
                         SecurityDecision::Allowed { .. }
@@ -459,16 +459,36 @@ mod tests {
         let target = target("code.exe");
         let mut rule = rule("code.exe");
         let mut request = request("This is teh sentence.");
-        assert!(!request_allowed(&[rule.clone()], &target, &request));
+        assert!(!request_allowed(
+            std::slice::from_ref(&rule),
+            &target,
+            &request
+        ));
         rule.prose_context_allowed = true;
-        assert!(request_allowed(&[rule.clone()], &target, &request));
+        assert!(request_allowed(
+            std::slice::from_ref(&rule),
+            &target,
+            &request
+        ));
         request.selected_text = false;
-        assert!(!request_allowed(&[rule.clone()], &target, &request));
+        assert!(!request_allowed(
+            std::slice::from_ref(&rule),
+            &target,
+            &request
+        ));
         request.selected_text = true;
         request.informative_context = "let message = \"".into();
-        assert!(!request_allowed(&[rule.clone()], &target, &request));
+        assert!(!request_allowed(
+            std::slice::from_ref(&rule),
+            &target,
+            &request
+        ));
         request.informative_context = "code();\n// ".into();
-        assert!(request_allowed(&[rule.clone()], &target, &request));
+        assert!(request_allowed(
+            std::slice::from_ref(&rule),
+            &target,
+            &request
+        ));
         request.executable_context = "This is user_name.".into();
         assert!(!request_allowed(&[rule], &target, &request));
     }
@@ -480,11 +500,23 @@ mod tests {
         let mut request = request("// This is teh comment.");
         request.trigger = TriggerKind::Character;
         request.selected_text = false;
-        assert!(!request_allowed(&[rule.clone()], &target, &request));
+        assert!(!request_allowed(
+            std::slice::from_ref(&rule),
+            &target,
+            &request
+        ));
         rule.character_trigger_allowed = true;
-        assert!(!request_allowed(&[rule.clone()], &target, &request));
+        assert!(!request_allowed(
+            std::slice::from_ref(&rule),
+            &target,
+            &request
+        ));
         rule.prose_context_allowed = true;
-        assert!(request_allowed(&[rule.clone()], &target, &request));
+        assert!(request_allowed(
+            std::slice::from_ref(&rule),
+            &target,
+            &request
+        ));
         for text in [
             "This is teh sentence.",
             "// This is user_name.",
@@ -494,7 +526,7 @@ mod tests {
         ] {
             request.executable_context = text.into();
             assert!(
-                !request_allowed(&[rule.clone()], &target, &request),
+                !request_allowed(std::slice::from_ref(&rule), &target, &request),
                 "admitted {text}"
             );
         }
@@ -505,9 +537,17 @@ mod tests {
         let target = target("cmd.exe");
         let rule = rule("cmd.exe");
         let mut request = request("This is teh sentence.");
-        assert!(request_allowed(&[rule.clone()], &target, &request));
+        assert!(request_allowed(
+            std::slice::from_ref(&rule),
+            &target,
+            &request
+        ));
         request.selected_text = false;
-        assert!(!request_allowed(&[rule.clone()], &target, &request));
+        assert!(!request_allowed(
+            std::slice::from_ref(&rule),
+            &target,
+            &request
+        ));
         request.selected_text = true;
         for text in [
             "Git commit the changes.",
@@ -522,7 +562,7 @@ mod tests {
         ] {
             request.executable_context = text.into();
             assert!(
-                !request_allowed(&[rule.clone()], &target, &request),
+                !request_allowed(std::slice::from_ref(&rule), &target, &request),
                 "admitted {text}"
             );
         }
@@ -533,9 +573,15 @@ mod tests {
         let mut target = target("custom.exe");
         let mut rule = rule("custom.exe");
         rule.safety_mode = "code_editor".into();
-        assert_eq!(mode(&[rule.clone()], &target), SafetyMode::CodeEditor);
+        assert_eq!(
+            mode(std::slice::from_ref(&rule), &target),
+            SafetyMode::CodeEditor
+        );
         rule.safety_mode = "terminal".into();
-        assert_eq!(mode(&[rule.clone()], &target), SafetyMode::Terminal);
+        assert_eq!(
+            mode(std::slice::from_ref(&rule), &target),
+            SafetyMode::Terminal
+        );
         let mut editor_rule = self::rule("code.exe");
         editor_rule.safety_mode = "terminal".into();
         assert_eq!(
@@ -544,7 +590,7 @@ mod tests {
         );
         rule.safety_mode = "invalid".into();
         assert!(!request_allowed(
-            &[rule.clone()],
+            std::slice::from_ref(&rule),
             &target,
             &request("This is teh text.")
         ));
