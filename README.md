@@ -44,6 +44,17 @@ budget without editing the document. Failed or unsafe results stay executable.
 New typing and text after the caret remain untouched; changed text supports
 app-level undo, and logs contain metadata only.
 
+Caret uncertainty waits for typing to resume. Backward movement within known
+typing keeps the context. Forward movement of up to
+`context.forward_movement_word_limit` words (default **5**) retains that context
+and adds skipped text as read-only information. Corrections target each typed
+span separately and preserve the skipped text. Longer moves run a final check
+on eligible old typing, then continue with a fresh segment at the new caret.
+Moving away from pending work cancels its old result and permits one final check
+when the old span is still proved before the caret. A different field or an
+unproved range re-anchors safely. Final checks use the configured engine, mode,
+language, confidence, and app rules; text after the caret is never changed.
+
 Local ML correction, suggestion acceptance, IME composition, and direct text API
 or UI Automation mutation remain planned. App-level undo restores only recorded
 corrections whose exact span and caret can still be verified.

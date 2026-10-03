@@ -240,14 +240,31 @@ configured character budget, prefers configured sentence boundaries, and
 preserves the configured minimum number of recent words when they fit. It never
 edits or deletes target-application text. Backward movement within known typed
 text keeps the executable context. Forward movement of at most the configured
-word limit (five by default) keeps the context, adds skipped text to informative
-context, and starts a fresh executable segment at the new caret. The old typed
-suffix is discarded because it has not been verified at the new position.
-Longer forward movement and
-unmatched positions re-anchor at the new caret. A longer forward move requests
-the final-fix security gate for the old executable text. Final fix remains
-unavailable because the old caret cannot be safely targeted after movement. Pending
-corrections are invalidated on movement. Runtime ticks delete sessions when
+word limit (`context.forward_movement_word_limit`, five by default) retains the
+same unchecked typing context. Read-only gaps stay separate from executable
+text in `src/background/session/movement.rs`. A later character, word-count or
+manual trigger checks the retained typed spans individually, in document order;
+skipped text only informs those checks. Word thresholds exclude skipped words.
+Retained span ownership is capped at 16 spans, and running requests obey the
+configured pending queue size, including the default single slot. Capacity
+refusal re-anchors rather than importing a gap into executable text.
+
+Position uncertainty preserves the old context until nonempty typing resumes.
+A longer forward move queues one final check per owned contiguous old span,
+then starts a fresh active segment. Moving away before pending work applies
+cancels its stale result and takes the same final-check route, even for a short
+forward move. The existing pipeline validates policy, session ownership, input
+generations, exact old text, skipped gaps and newer typing at the live caret.
+Native replacement offsets the old span by that verified following text and
+preserves gaps, new typing, the document suffix, clipboard and app-level undo.
+Accepted corrected or no-change results retire old typing into informative
+context. A failed or blocked final attempt preserves the original read-only
+without another attempt or an undo record; failed ordinary retained work waits
+for a later trigger. Final checks honor the configured engine, correction mode,
+language and confidence policy. A different field, backward move into pending
+text, ambiguous anchor or failed capture makes the complete old range ineligible
+when it cannot be proved before the current caret; it re-anchors without mutation.
+Runtime ticks delete sessions when
 their owning process exits. All session state disappears on engine exit or
 termination and is never written to disk. Session completion methods do not
 themselves change target text; the replacement engine must confirm mutation first.

@@ -11,6 +11,7 @@ use std::{cell::Cell, sync::mpsc, time::Instant};
 
 mod character;
 mod manual;
+mod movement;
 mod word_count;
 
 /// Build the runtime input owner for automatic-trigger flow tests.
@@ -742,11 +743,7 @@ fn delayed_frozen_corrections_keep_all_results_and_preserve_newer_typing() {
     started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     release_tx.send(()).unwrap();
     wait_completion(&pipeline);
-    let live = format!(
-        "{}{}",
-        manager.active().unwrap().informative_context(),
-        manager.active().unwrap().executable_context()
-    );
+    let live = manager.active().unwrap().known_before_caret();
     assert!(pipeline.finish(
         &mut manager,
         &config.context,
@@ -1226,11 +1223,7 @@ fn finish(
     replaced: &Cell<usize>,
     success: bool,
 ) -> bool {
-    let live = format!(
-        "{}{}",
-        manager.active().unwrap().informative_context(),
-        manager.active().unwrap().executable_context()
-    );
+    let live = manager.active().unwrap().known_before_caret();
     pipeline.finish(
         manager,
         &config.context,

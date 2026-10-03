@@ -3,9 +3,16 @@ use super::{ContextConfig, Session};
 use crate::settings::PendingQueueFullBehavior;
 
 pub(super) struct FrozenSegment {
-    id: u64,
-    original: String,
-    caret_anchor: u64,
+    pub(super) id: u64,
+    pub(super) original: String,
+    pub(super) caret_anchor: u64,
+    // Captured text between owned typed spans is informative, never executable.
+    pub(super) gap: String,
+    pub(super) movement: bool,
+    pub(super) final_fix: bool,
+    pub(super) submitted: bool,
+    pub(super) queued_trigger: Option<crate::background::security::TriggerKind>,
+    pub(super) retire: bool,
 }
 
 impl FrozenSegment {
@@ -25,6 +32,7 @@ impl Session {
         let mut context = self.informative_context.clone();
         for segment in &self.frozen_segments {
             context.push_str(&segment.original);
+            context.push_str(&segment.gap);
         }
         context
     }
@@ -37,6 +45,7 @@ impl Session {
                 return Some((informative, segment.original.clone()));
             }
             informative.push_str(&segment.original);
+            informative.push_str(&segment.gap);
         }
         None
     }
@@ -49,6 +58,9 @@ impl Session {
         }
         let mut cancelled = Vec::new();
         if self.frozen_segments.len() >= usize::from(limits.pending_queue_size.clamp(1, 16)) {
+            if self.frozen_segments.iter().any(|segment| segment.movement) {
+                return (None, Vec::new());
+            }
             match limits.pending_queue_full_behavior {
                 PendingQueueFullBehavior::SkipNew => return (None, Vec::new()),
                 PendingQueueFullBehavior::CancelOldest => {
@@ -75,8 +87,21 @@ impl Session {
             id,
             original,
             caret_anchor: self.versions.caret_anchor,
+            gap: String::new(),
+            movement: false,
+            final_fix: false,
+            submitted: true,
+            queued_trigger: None,
+            retire: false,
         });
         (Some(id), cancelled)
+    }
+
+    /// Verify that a frozen range still belongs to the known pre-caret typed prefix.
+    pub(crate) fn pending_submitted(&self, id: u64) -> bool {
+        self.frozen_segments
+            .iter()
+            .any(|segment| segment.id == id && segment.submitted)
     }
 
     /// Verify that a frozen range still belongs to the known pre-caret typed prefix.
@@ -98,14 +123,20 @@ impl Session {
 
     /// Return known typed text after a frozen segment that replacement must preserve.
     pub(crate) fn pending_following_text(&self, id: u64) -> Option<String> {
-        let mut chars = 0;
+        let mut following: Option<String> = None;
         for segment in &self.frozen_segments {
-            chars += segment.original.chars().count();
+            if let Some(text) = &mut following {
+                text.push_str(&segment.original);
+                text.push_str(&segment.gap);
+            }
             if segment.id == id {
-                return Some(self.executable_context().chars().skip(chars).collect());
+                following = Some(segment.gap.clone());
             }
         }
-        None
+        following.map(|mut text| {
+            text.push_str(&self.editable_context());
+            text
+        })
     }
 
     /// Commit only checked text, in document order. The caller confirms native
@@ -139,14 +170,31 @@ impl Session {
                 limits,
             );
         }
+        self.append_informative(&segment.gap, limits);
         true
     }
 
     /// Manual correction overrides pending work without importing field text.
     pub(crate) fn restore_pending(&mut self) {
         if !self.frozen_segments.is_empty() {
-            self.frozen_segments.clear();
-            self.correction_floor = 0;
+            self.frozen_segments.retain(|segment| segment.movement);
+            while self
+                .frozen_segments
+                .back()
+                .is_some_and(|segment| segment.gap.is_empty() && !segment.final_fix)
+            {
+                self.frozen_segments.pop_back();
+            }
+            for segment in &mut self.frozen_segments {
+                if !segment.final_fix {
+                    segment.submitted = false;
+                }
+            }
+            self.correction_floor = self
+                .frozen_segments
+                .iter()
+                .map(|segment| segment.original.chars().count())
+                .sum();
             self.versions.executable = self.versions.executable.wrapping_add(1);
         }
     }
@@ -161,6 +209,19 @@ impl Session {
         else {
             return Vec::new();
         };
+        if self.frozen_segments[index].movement {
+            // A moved range cannot be merged across read-only gaps. Final work
+            // gets one attempt; rejected work retires its original without mutation.
+            let mut cancelled = Vec::new();
+            for segment in self.frozen_segments.iter_mut().skip(index) {
+                cancelled.push(segment.id);
+                if !segment.final_fix {
+                    segment.submitted = false;
+                    segment.queued_trigger = None;
+                }
+            }
+            return cancelled;
+        }
         let restored = self.frozen_segments.split_off(index);
         self.correction_floor -= restored
             .iter()
