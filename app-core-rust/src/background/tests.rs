@@ -496,6 +496,82 @@ fn slow_input_worker_discards_stale_batches_at_queue_limit() {
 }
 
 #[test]
+fn config_write_during_reload_is_loaded_on_the_next_tick() {
+    let root = unique_temp_dir();
+    let path = root.join("settings.toml");
+    load_or_create_config(&path).unwrap();
+    let before = UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    let after = before + std::time::Duration::from_secs(10);
+    let set_modified = |time| {
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(time))
+            .unwrap();
+    };
+    set_modified(before);
+    let mut last_modified_at = None;
+    let mut newer = AppConfig::default();
+    newer.triggers.word_count = 20;
+
+    let loaded = super::load_changed_config(&path, &mut last_modified_at, |path| {
+        let config = crate::settings::load_config(path)?;
+        crate::settings::save_config(path, &newer)?;
+        set_modified(after);
+        Ok(config)
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(loaded.triggers.word_count, 10);
+    assert_eq!(last_modified_at, Some(before));
+
+    let loaded = super::load_changed_config(&path, &mut last_modified_at, |path| {
+        crate::settings::load_config(path)
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(loaded, newer);
+    assert_eq!(last_modified_at, Some(after));
+    assert!(
+        super::load_changed_config(&path, &mut last_modified_at, |_| {
+            panic!("unchanged config must not be loaded")
+        })
+        .unwrap()
+        .is_none()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn failed_config_reload_is_retried_without_another_write() {
+    let root = unique_temp_dir();
+    let path = root.join("settings.toml");
+    load_or_create_config(&path).unwrap();
+    let mut last_modified_at = None;
+
+    assert!(
+        super::load_changed_config(&path, &mut last_modified_at, |path| {
+            Err(crate::settings::ConfigIoError::Read {
+                path: path.into(),
+                source: std::io::Error::other("transient load failure"),
+            })
+        })
+        .is_err()
+    );
+    assert_eq!(last_modified_at, None);
+    assert!(
+        super::load_changed_config(&path, &mut last_modified_at, |path| {
+            crate::settings::load_config(path)
+        })
+        .unwrap()
+        .is_some()
+    );
+    assert_eq!(last_modified_at, super::modified_at(&path));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn creates_default_config_when_missing() {
     let root = unique_temp_dir();
     let config_path = root.join("settings.toml");
@@ -526,7 +602,14 @@ fn background_runtime_respects_elevation_and_initializes_files() {
             assert!(!root.exists());
         }
         Ok(()) => {
-            let runtime = result.unwrap();
+            let mut runtime = result.unwrap();
+            // Startup must retain the timestamp from before default-file creation.
+            assert_eq!(runtime.components.config_modified_at, None);
+            runtime.components.reload_shortcuts_if_config_changed();
+            assert_eq!(
+                runtime.components.config_modified_at,
+                super::modified_at(&config_path)
+            );
             #[cfg(windows)]
             assert_ne!(runtime.components.input_listener.hook_thread_id(), unsafe {
                 windows_sys::Win32::System::Threading::GetCurrentThreadId()
