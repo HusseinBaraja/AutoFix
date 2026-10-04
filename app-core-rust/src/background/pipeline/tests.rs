@@ -10,6 +10,7 @@ use crate::background::{
 use std::{cell::Cell, sync::mpsc, time::Instant};
 
 mod character;
+mod context_versions;
 mod manual;
 mod movement;
 mod word_count;
