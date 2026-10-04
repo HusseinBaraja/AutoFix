@@ -169,7 +169,7 @@ public static class SettingsSkeleton
         ]),
         Section("Advanced", "Config import/export",
         [
-            ConfigTransfer("Settings import/export", "Import a saved AutoFix config or export the current one."),
+            ConfigTransfer("Settings import/export", "Preview and import settings, app rules, dictionary and language overrides. Export a ZIP bundle without API keys, logs or session data."),
         ]),
     ];
 

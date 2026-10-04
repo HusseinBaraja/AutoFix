@@ -51,71 +51,16 @@ public sealed partial class MainWindowViewModel
         }
     }
 
-    private async Task ImportConfigAsync()
-    {
-        var path = fileDialog.PickImportPath();
-        if (path is null)
-        {
-            return;
-        }
-
-        try
-        {
-            var config = configStorage.Load(path);
-            if (config.Logging.FullTextDebugModeEnabled && !settingsConsent.ConfirmFullTextDebug())
-            {
-                StatusTitle = "Import cancelled.";
-                StatusDetail = "Full-text debug logging was not authorized. Settings are unchanged.";
-                return;
-            }
-            configStorage.Save(config);
-            ApplyStartupRegistration(config);
-            ApplyConfig(config, false);
-            await LoadAppRulesAsync();
-            var reloadDetail = await NotifyReloadAsync();
-            StatusTitle = "Settings imported.";
-            StatusDetail = $"{path} | {reloadDetail}";
-        }
-        catch (Exception error) when (IsConfigError(error))
-        {
-            StatusTitle = "Import failed.";
-            StatusDetail = error.Message;
-        }
-    }
-
-    private Task ExportConfigAsync()
-    {
-        var path = fileDialog.PickExportPath();
-        if (path is null)
-        {
-            return Task.CompletedTask;
-        }
-
-        try
-        {
-            var config = ConfigFormMapper.BuildConfig(Sections);
-            configStorage.Export(path, config);
-            StatusTitle = "Settings exported.";
-            StatusDetail = path;
-        }
-        catch (Exception error) when (IsConfigError(error))
-        {
-            StatusTitle = "Export failed.";
-            StatusDetail = error.Message;
-        }
-
-        return Task.CompletedTask;
-    }
-
     private async Task<string> NotifyReloadAsync()
     {
         try
         {
             var result = await ipcClient.ReloadConfigAsync();
-            if (!result.Available || result.Error is not null)
+            if (!result.Available)
             {
-                return result.Error ?? "Background process unavailable; settings will load on next start.";
+                return $"{result.Error ?? "Background process unavailable."} Settings will load on next start.";
             }
+            if (result.Error is not null) return $"Background reload failed: {result.Error}";
 
             return "Background reload requested.";
         }

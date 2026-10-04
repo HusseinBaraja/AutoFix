@@ -10,14 +10,14 @@ public interface IConfigFileDialog
 
 public sealed class ConfigFileDialog : IConfigFileDialog
 {
-    private const string Filter = "TOML config (*.toml)|*.toml|All files (*.*)|*.*";
+    private const string ImportFilter = "AutoFix bundle (*.zip)|*.zip|TOML settings (*.toml)|*.toml";
 
     public string? PickImportPath()
     {
         var dialog = new OpenFileDialog
         {
-            Filter = Filter,
-            Title = "Import AutoFix config",
+            Filter = ImportFilter,
+            Title = "Preview AutoFix import",
             CheckFileExists = true,
         };
 
@@ -28,9 +28,11 @@ public sealed class ConfigFileDialog : IConfigFileDialog
     {
         var dialog = new SaveFileDialog
         {
-            Filter = Filter,
-            Title = "Export AutoFix config",
-            FileName = "settings.toml",
+            Filter = "AutoFix bundle (*.zip)|*.zip",
+            Title = "Export AutoFix settings and rules",
+            FileName = "AutoFix-settings.zip",
+            DefaultExt = ".zip",
+            AddExtension = true,
             OverwritePrompt = true,
         };
 

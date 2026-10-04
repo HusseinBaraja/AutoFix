@@ -471,6 +471,7 @@ public sealed partial class MainWindowViewModelTests
     private sealed class FakeBackgroundIpcClient : IBackgroundIpcClient
     {
         public int ReloadCount { get; private set; }
+        public bool ReloadUnavailable { get; set; }
         public int StatusCheckCount { get; private set; }
         public List<AppRuleDto> AppRules { get; } = [];
         public List<AppRuleDto> UpsertedRules { get; } = [];
@@ -488,7 +489,7 @@ public sealed partial class MainWindowViewModelTests
         public Task<IpcResult<AppStatusResponse>> ReloadConfigAsync()
         {
             ReloadCount++;
-            return GetStatusAsync();
+            return ReloadUnavailable ? Task.FromResult(IpcResult<AppStatusResponse>.Unavailable()) : GetStatusAsync();
         }
 
         public Task<IpcResult<SettingUpdatedResponse>> UpdateSettingAsync(string path, string value) =>
@@ -555,10 +556,12 @@ public sealed partial class MainWindowViewModelTests
     {
         public int ApplyCount { get; private set; }
         public bool StartWithWindows { get; private set; }
+        public bool FailApplication { get; set; }
 
         public void Apply(bool startWithWindows)
         {
             ApplyCount++;
+            if (FailApplication) throw new InvalidOperationException("Test startup registration failure.");
             StartWithWindows = startWithWindows;
         }
     }

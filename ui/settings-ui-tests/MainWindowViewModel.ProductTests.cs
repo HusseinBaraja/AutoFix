@@ -56,11 +56,15 @@ public sealed partial class MainWindowViewModelTests
         await vm.LoadSettingsAsync();
         var before = File.ReadAllText(fixture.Path);
         vm.ImportConfigCommand.Execute(null);
+        Assert.IsTrue(vm.IsImportPreviewVisible);
+        Assert.AreEqual(0, consent.FullTextRequests);
+        vm.ConfirmImportCommand.Execute(null);
         await WaitForAsync(() => consent.FullTextRequests == 1);
         Assert.AreEqual(before, File.ReadAllText(fixture.Path));
         Assert.IsFalse(Card(vm, "logging.full_text_debug_mode_enabled").IsEnabled);
         consent.AllowFullText = true;
         vm.ImportConfigCommand.Execute(null);
+        vm.ConfirmImportCommand.Execute(null);
         await WaitForAsync(() => vm.StatusTitle == "Settings imported.");
         Assert.IsTrue(fixture.Storage.Load(fixture.Path).Logging.FullTextDebugModeEnabled);
         Assert.AreEqual("notepad.exe", vm.Sections.Single(s => s.ShowsAppRules).AppRules.Single().ProcessName);

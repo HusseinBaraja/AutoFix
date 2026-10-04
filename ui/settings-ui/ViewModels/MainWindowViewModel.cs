@@ -94,6 +94,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         LaunchBackgroundCommand = new RelayCommand(_ => ShowLaunchPlaceholder());
         ImportConfigCommand = new AsyncRelayCommand(ImportConfigAsync);
         ExportConfigCommand = new AsyncRelayCommand(ExportConfigAsync);
+        transferStorage = new(configStorage, appRuleStorage);
+        ConfirmImportCommand = new AsyncRelayCommand(ConfirmImportAsync);
+        CancelImportCommand = new RelayCommand(_ => CancelImport());
         AddAppRuleCommand = new AsyncRelayCommand(AddAppRuleAsync);
         DeleteAppRuleCommand = new AsyncRelayCommand(DeleteSelectedAppRuleAsync);
         ResetAppRulesCommand = new AsyncRelayCommand(ResetAppRulesAsync);

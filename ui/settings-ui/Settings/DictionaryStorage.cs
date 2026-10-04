@@ -35,15 +35,7 @@ public sealed class DictionaryStorage(string databasePath)
     /// <summary>Replaces an entry atomically; duplicate scopes remain a single exclusion.</summary>
     public void Save(DictionaryItem entry, DictionaryItem? previous = null)
     {
-        if (string.IsNullOrWhiteSpace(entry.Word) || entry.Word.Length > 4096 || entry.Word.Any(char.IsControl))
-            throw new ArgumentException("Enter a word or phrase without control characters (up to 4096 characters).");
-        if (!ConfigValidator.ValidLanguageTag(entry.Language.Trim()))
-            throw new ArgumentException("Enter a BCP 47 language tag, or und for all languages.");
-        if (entry.Source is not ("dictionary" or "pair")) throw new ArgumentException("Choose a dictionary entry or pair rule.");
-        if (entry.App.Trim().Length > 260 || entry.App.Any(char.IsControl) || entry.App.IndexOfAny(['/', '\\', ':']) >= 0)
-            throw new ArgumentException("App scope must be a process name, such as notepad.exe, or empty for all apps.");
-        if (entry.Source == "pair" && (entry.Replacement.Length > 4096 || entry.Replacement.Any(char.IsControl) || entry.Word == entry.Replacement))
-            throw new ArgumentException("Pair rules need a different replacement without control characters.");
+        Validate(entry);
         using var connection = Open();
         using var transaction = connection.BeginTransaction();
         if (previous is not null) Delete(connection, transaction, previous);
@@ -69,6 +61,19 @@ public sealed class DictionaryStorage(string databasePath)
         if (entry.Source == "pair") command.Parameters.AddWithValue("$replacement", entry.Replacement);
         command.ExecuteNonQuery();
         transaction.Commit();
+    }
+
+    public static void Validate(DictionaryItem entry)
+    {
+        if (string.IsNullOrWhiteSpace(entry.Word) || entry.Word.Length > 4096 || entry.Word.Any(char.IsControl))
+            throw new ArgumentException("Enter a word or phrase without control characters (up to 4096 characters).");
+        if (!ConfigValidator.ValidLanguageTag(entry.Language.Trim()))
+            throw new ArgumentException("Enter a BCP 47 language tag, or und for all languages.");
+        if (entry.Source is not ("dictionary" or "pair")) throw new ArgumentException("Choose a dictionary entry or pair rule.");
+        if (entry.App.Trim().Length > 260 || entry.App.Any(char.IsControl) || entry.App.IndexOfAny(['/', '\\', ':']) >= 0)
+            throw new ArgumentException("App scope must be a process name, such as notepad.exe, or empty for all apps.");
+        if (entry.Source == "pair" && (entry.Replacement.Length > 4096 || entry.Replacement.Any(char.IsControl) || entry.Word == entry.Replacement))
+            throw new ArgumentException("Pair rules need a different replacement without control characters.");
     }
 
     /// <summary>Removes the selected exclusion from its source table by persistent identity.</summary>

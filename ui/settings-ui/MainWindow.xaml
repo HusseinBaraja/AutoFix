@@ -43,7 +43,7 @@
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <StackPanel Grid.ColumnSpan="2" Margin="20,12,20,10">
+        <StackPanel Grid.ColumnSpan="2" Margin="20,12,20,10" IsEnabled="{Binding CanEditSettings}">
             <DockPanel>
                 <Button Content="Clear search" Command="{Binding ClearSearchCommand}" DockPanel.Dock="Right" Margin="12,0,0,0"
                         Visibility="{Binding HasSearchQuery, Converter={StaticResource BoolToVisibility}}" />
@@ -72,6 +72,7 @@
         </StackPanel>
 
         <Border Grid.Row="1" Background="#FFFFFF"
+                IsEnabled="{Binding CanEditSettings}"
                 BorderBrush="#E5E8F0"
                 BorderThickness="0,0,1,0">
             <DockPanel>
@@ -106,7 +107,7 @@
             </DockPanel>
         </Border>
 
-        <Grid Grid.Column="1" Grid.Row="1" Margin="28">
+        <Grid Grid.Column="1" Grid.Row="1" Margin="28" IsEnabled="{Binding CanEditSettings}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="18" />
@@ -331,14 +332,22 @@
                                                     </Border>
                                                 </StackPanel>
 
-                                                <StackPanel Orientation="Horizontal"
+                                                <StackPanel Width="320"
                                                             HorizontalAlignment="Right"
                                                             Visibility="{Binding IsConfigTransfer, Converter={StaticResource BoolToVisibility}}">
-                                                    <Button Content="Import"
-                                                            Command="{Binding DataContext.ImportConfigCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                            Margin="0,0,8,0" />
-                                                    <Button Content="Export"
-                                                            Command="{Binding DataContext.ExportConfigCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                    <CheckBox Content="Include learned rules in export"
+                                                              DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                              IsChecked="{Binding IncludeLearnedRules}"
+                                                              AutomationProperties.Name="Include learned rules in export" />
+                                                    <TextBlock Text="Optional: includes saved rejected text pairs."
+                                                               TextWrapping="Wrap" Foreground="#667085" FontSize="12" Margin="0,4,0,12" />
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                        <Button Content="Import…"
+                                                                Command="{Binding DataContext.ImportConfigCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                Margin="0,0,8,0" />
+                                                        <Button Content="Export…"
+                                                                Command="{Binding DataContext.ExportConfigCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                    </StackPanel>
                                                 </StackPanel>
                                             </Grid>
                                         </Grid>
@@ -595,6 +604,51 @@
                                 Command="{Binding FinishCommand}" />
                     </StackPanel>
                 </StackPanel>
+            </Border>
+        </Border>
+        <Border x:Name="ImportPreviewPanel" Grid.ColumnSpan="2" Grid.RowSpan="2" Background="#CCF6F7FB"
+                KeyboardNavigation.TabNavigation="Cycle"
+                Visibility="{Binding IsImportPreviewVisible, Converter={StaticResource BoolToVisibility}}">
+            <Border Margin="32" Padding="24" MaxWidth="980" MaxHeight="630" Background="White"
+                    BorderBrush="#DCE2EE" BorderThickness="1" CornerRadius="8">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Preview import" FontSize="24" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding ImportPreview.SourceName}" FontWeight="SemiBold" Margin="0,6,0,6" />
+                        <TextBlock Text="{Binding ImportPreview.Summary}" TextWrapping="Wrap" Foreground="#667085" />
+                        <TextBlock Text="API keys, logs, session data and correction history are excluded. Existing secure keys stay on this device."
+                                   TextWrapping="Wrap" Margin="0,8,0,16" />
+                    </StackPanel>
+                    <DataGrid x:Name="ImportChangesGrid" Grid.Row="1" ItemsSource="{Binding ImportPreview.Changes}"
+                              IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False"
+                              CanUserDeleteRows="False" CanUserReorderColumns="False" EnableRowVirtualization="True"
+                              AutomationProperties.Name="Import changes">
+                        <DataGrid.Resources>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            </Style>
+                        </DataGrid.Resources>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Section" Binding="{Binding Area}" Width="95" />
+                            <DataGridTextColumn Header="Setting or rule" Binding="{Binding Name}" Width="2*" />
+                            <DataGridTextColumn Header="Current" Binding="{Binding Before}" Width="*" />
+                            <DataGridTextColumn Header="Imported" Binding="{Binding After}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <DockPanel Grid.Row="2" Margin="0,16,0,0">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button x:Name="CancelImportButton" Content="Cancel" Command="{Binding CancelImportCommand}" Margin="0,0,8,0" />
+                            <Button Content="Apply import" Command="{Binding ConfirmImportCommand}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding ImportPreview.ChangeSummary}"
+                                   VerticalAlignment="Center" />
+                    </DockPanel>
+                </Grid>
             </Border>
         </Border>
     </Grid>

@@ -44,9 +44,21 @@ public sealed class ConfigStorage
     /// <summary>Loads TOML, normalizes legacy grammar categories and retry counts, and rejects invalid settings.</summary>
     public AppConfig Load(string path)
     {
-        var text = File.ReadAllText(path);
-        var config = TomlSerializer.Deserialize<AppConfig>(text, TomlOptions)
-            ?? throw new InvalidDataException("Config file was empty.");
+        return Parse(File.ReadAllText(path));
+    }
+
+    internal static AppConfig Parse(string text)
+    {
+        AppConfig config;
+        try
+        {
+            config = TomlSerializer.Deserialize<AppConfig>(text, TomlOptions)
+                ?? throw new InvalidDataException("Config file was empty.");
+        }
+        catch (TomlException error)
+        {
+            throw new InvalidDataException($"Invalid settings TOML: {error.Message}", error);
+        }
         config.Correction.EnabledGrammarCategories = config.Correction.EnabledGrammarCategories
             .Select(category => category == "punctuation" ? "spacing" : category)
             .Distinct()

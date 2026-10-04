@@ -27,13 +27,19 @@ public partial class MainWindow : Window
     {
         if (e.PropertyName is nameof(MainWindowViewModel.SearchText) or nameof(MainWindowViewModel.SelectedSection))
             Dispatcher.BeginInvoke(new Action(() => SettingsScrollViewer.ScrollToTop()));
+        if (e.PropertyName == nameof(MainWindowViewModel.IsImportPreviewVisible))
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (viewModel.IsImportPreviewVisible) CancelImportButton.Focus();
+                else SearchBox.Focus();
+            }));
     }
 
     private void Window_Closed(object? sender, EventArgs e) => viewModel.PropertyChanged -= SettingsNavigationChanged;
 
     private void FocusSearch_CanExecute(object sender, CanExecuteRoutedEventArgs e)
     {
-        e.CanExecute = recordingHotkey is null;
+        e.CanExecute = recordingHotkey is null && viewModel.CanEditSettings;
         e.Handled = true;
     }
 
@@ -45,6 +51,10 @@ public partial class MainWindow : Window
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (recordingHotkey is not null) return;
+        if (e.Key == Key.Escape && viewModel.IsImportPreviewVisible)
+        {
+            viewModel.CancelImportCommand.Execute(null); e.Handled = true; return;
+        }
         if (e.Key == Key.Escape && SearchBox.IsKeyboardFocusWithin)
         {
             viewModel.ClearSearchCommand.Execute(null); e.Handled = true;

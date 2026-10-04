@@ -153,6 +153,14 @@ Matching settings are filtered and highlighted. Clear search or press Escape in
 the search box to browse again. Keys, typed text and saved dictionary contents
 are excluded from the search index.
 
+**Advanced → Settings import/export** exports a ZIP containing `settings.toml`,
+app rules, the custom dictionary and language overrides. Learned pair rules are
+optional and excluded by default. Import validates a ZIP bundle or legacy TOML
+file, previews the replacements, and applies only after confirmation. Successful
+imports reload the background process. Bundles exclude API keys, logs, typed
+session data and correction-history text; keys remain in Windows Credential
+Manager on the current device.
+
 From the repository root, build and run AutoFix:
 
 ```powershell

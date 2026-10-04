@@ -63,6 +63,60 @@ requires explicit acceptance of a privacy warning, including when importing a
 config that enables it. Declining import preserves existing settings. These
 controls configure the existing engine logging policy; they add no text capture.
 
+**Advanced → Settings import/export** creates a portable ZIP bundle. It always
+includes `settings.toml`, app rules (including trigger and engine permissions),
+custom protected words/phrases with language/app scopes, and effective per-app
+language overrides. TOML overrides take priority over legacy SQLite language
+overrides; export puts the effective list in both TOML and the language file.
+**Include learned rules in export** defaults off. Enabling it includes the
+separate learned-rule table, including disabled rules and saved rejected text
+pairs. Protected originals saved by dictionary-style learning already live in
+the custom dictionary, which has no manual/learned provenance; these remain
+dictionary entries in the bundle. The checkbox controls pair-rule storage.
+
+Export serializes only typed settings and explicitly selected product columns.
+It never copies SQLite files, credentials, logs, session buffers, undo records or
+correction-history text. Unknown fields from legacy TOML are not retained. API
+endpoint validation rejects embedded credentials, query strings and fragments.
+Secure provider keys remain in Windows Credential Manager and must be configured
+separately on another device. Export cannot overwrite the live config or database.
+
+Import accepts a ZIP bundle or a legacy settings-only TOML file. It validates
+every imported setting, row, language and scope before displaying a read-only
+preview with current/imported values and additions/removals. Long cell values
+are available in tooltips; learned-pair text is hidden in the preview. ZIP imports
+replace settings, app rules, dictionary and language overrides. An included
+learned-rule file replaces those rules; omission preserves them. TOML imports
+leave all SQLite product rows intact. Cancel or Escape makes no changes. Full-text
+debug imports require the separate explicit privacy warning after Apply import.
+
+The reviewed payload stays in memory, so changes to the source file cannot alter
+the confirmed import. If saved settings or participating product data change
+after preview, import rejects the stale preview. SQLite replacements use one
+transaction; handled file/database failures roll back rows and restore replaced
+settings. This compensation is not a cross-file guarantee against process crashes
+or power loss. After success the UI refreshes and requests an engine config reload,
+even if Windows startup registration fails. With the engine stopped, settings
+take effect on its next start. Existing credentials and diagnostic/history tables
+are untouched. Engine migration versions remain owned by the engine.
+
+Bundle format version 1 contains exactly these files (UTF-8):
+
+| File | Payload |
+| --- | --- |
+| `manifest.json` | `format_version: 1`, `learned_rules_included: bool` |
+| `settings.toml` | Validated settings contract |
+| `app-rules.json` | Array of app-rule IPC fields; no IDs or timestamps |
+| `dictionary.json` | Array of `word`, `language`, nullable `app` |
+| `language-overrides.json` | Array of `process`, `language`; agrees with TOML |
+| `learned-rules.json` (optional) | Array of `enabled`, `original`, nullable `replacement`, `rule_type`, nullable `language` and `app` |
+
+Import rejects unknown archive members/JSON fields, duplicate files/scopes,
+unsupported versions, inconsistent manifests, malformed entries and invalid
+settings. It reads members without extracting paths. Files are limited to 8 MiB
+each, and every rule list to 10,000 entries. Export uses the same limits and writes
+the destination only after the complete bundle succeeds.
+
 **App Rules** offers **Safety** (`auto`, `terminal`, `code_editor`) and
 **Editor prose**. New rules and terminal/editor defaults disable all triggers.
 Enable Manual and, for editors, Editor prose to admit selected prose. Known app
