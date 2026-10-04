@@ -13,6 +13,7 @@ mod character;
 mod context_versions;
 mod manual;
 mod movement;
+mod windows_targets;
 mod word_count;
 
 /// Build the runtime input owner for automatic-trigger flow tests.

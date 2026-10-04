@@ -32,6 +32,12 @@ survive newer typing while their owned range remains valid. Completion tests
 provide ready in-memory results and fake capture/replacement callbacks. No UI
 tests are included. Run `cargo test` for the full Rust suite.
 
+For common Windows target policy matrices, opt-in native integration runs and
+manual application scenarios, see
+[Windows text-target integration](../docs/windows-text-target-integration.md).
+Run `scripts/test-windows-integration.ps1` from the repository root for the
+deterministic suite; `-NativeDesktop` and `-IsolatedClipboard` opt into native tests.
+
 ## Runtime behavior
 
 The correction engine contract is defined in `src/correction`. It keeps

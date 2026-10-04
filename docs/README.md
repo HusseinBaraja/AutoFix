@@ -12,3 +12,6 @@ Use this area for decisions that affect more than one component:
 - Native Windows integration decisions.
 
 Prefer short, durable notes over speculative design documents.
+
+[Windows text-target integration scenarios](windows-text-target-integration.md)
+defines manual app coverage, browser/WPF fixtures, and the automated test runner.

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>AutoFix browser text fixture</title>
+<style>
+body { font: 16px system-ui; max-width: 760px; margin: 32px auto; padding: 0 20px; }
+label { display: block; margin: 20px 0; }
+input, textarea, [contenteditable] { display: block; box-sizing: border-box; width: 100%; padding: 10px; border: 1px solid #777; font: inherit; }
+textarea, [contenteditable] { min-height: 90px; }
+</style>
+<h1>AutoFix browser text fixture</h1>
+<p>Local test fields. Nothing is submitted. Type test text using the keyboard; pasted text is not current-session typing.</p>
+<p>For context tests, preload <code>Earlier teh words:  AFTER teh suffix</code>, move the caret between the two spaces, then switch focus away and back before typing. See the manual scenarios.</p>
+<label>Single-line input <input id="text" type="text" autocomplete="off" spellcheck="false"></label>
+<label>Multiline textarea <textarea id="textarea" autocomplete="off" spellcheck="false"></textarea></label>
+<label>Contenteditable <span id="editable" contenteditable="true" role="textbox" aria-multiline="true" spellcheck="false"></span></label>
+<label>Password — synthetic text only <input id="password" type="password" autocomplete="off"></label>
+<label>Read-only input <input id="readonly" type="text" readonly value="Read-only teh text"></label>
+<p>Reload to reset all editable fields. Test the browser address bar separately; never press Enter with the test text.</p>
+</html>
