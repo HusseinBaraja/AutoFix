@@ -124,6 +124,20 @@ public partial class MainWindow : Window
         Keyboard.ClearFocus();
     }
 
+    private void SaveApiKey_Click(object sender, RoutedEventArgs e)
+    {
+        using var key = ApiKeyBox.SecurePassword;
+        try { viewModel.SaveApiKey(key); }
+        finally { ApiKeyBox.Clear(); }
+    }
+
+    private void ApiKeyBox_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is false) ApiKeyBox.Clear();
+    }
+
+    private void ApiProvider_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApiKeyBox?.Clear();
+
     private void HotkeyClear_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: SettingCardViewModel vm })

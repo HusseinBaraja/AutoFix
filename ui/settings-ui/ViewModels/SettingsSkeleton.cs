@@ -74,7 +74,6 @@ public static class SettingsSkeleton
         [
             BackgroundStatus(),
             Toggle("Start with Windows", "Launch background mode after sign-in.", "general.start_with_windows", config.General.StartWithWindows),
-            Dropdown("Run mode", "Block listed apps or run only in allowed apps.", "general.run_mode", config.General.RunMode, RunModes()),
         ]),
         Section("Shortcuts", "Hotkeys for correction and undo",
         [
@@ -95,10 +94,6 @@ public static class SettingsSkeleton
             Toggle("Correction enabled", "Allow AutoFix to apply corrections.", "correction.enabled", config.Correction.Enabled),
             Toggle("Use clipboard for correction", "Temporarily paste corrections through the clipboard and restore its previous contents. Turn off to use other replacement methods.", "replacement.clipboard_enabled", config.Replacement.ClipboardEnabled),
             Dropdown("Correction mode", "Choose typos only or grammar-aware correction.", "correction.mode", config.Correction.Mode, Modes()),
-            Text("Preferred language", "Optional BCP 47 tag, such as en-US. Empty uses automatic detection.", "correction.preferred_language", config.Correction.PreferredLanguage ?? ""),
-            Text("App language overrides", "Comma-separated process.exe=language-tag entries.", "correction.app_language_overrides", ConfigValue.Join(config.Correction.AppLanguageOverrides)),
-            Dropdown("Unknown language", "How to handle text whose language is unclear.", "correction.uncertain_language_policy", config.Correction.UncertainLanguagePolicy, UncertainLanguagePolicies()),
-            Dropdown("Mixed-language text", "Disable correction, use the dominant language, or correct each token with the API engine.", "correction.mixed_language_policy", config.Correction.MixedLanguagePolicy, MixedLanguagePolicies()),
             ..GrammarCategorySettings(config),
             Dropdown("High confidence behavior", "Default: apply silently for manual and automatic triggers.", "correction.high_confidence_behavior", config.Correction.HighConfidenceBehavior, ConfidenceBehaviors()),
             Dropdown("Medium confidence behavior", "Default: do nothing. Enable read-only manual suggestion previews under Feedback, or choose Apply silently for manual and automatic corrections. Suggestion acceptance is not available in v1.", "correction.medium_confidence_behavior", config.Correction.MediumConfidenceBehavior, ConfidenceBehaviors()),
@@ -112,6 +107,13 @@ public static class SettingsSkeleton
                 Options = [new("Do nothing", "do_nothing")],
                 IsAvailable = false,
             },
+        ]),
+        Section("Languages", "Automatic detection, preferred language, and per-app overrides",
+        [
+            Text("Preferred language", "Optional BCP 47 tag, such as en-US. Empty uses automatic detection. App overrides take priority.", "correction.preferred_language", config.Correction.PreferredLanguage ?? ""),
+            Text("App language overrides", "Comma-separated process.exe=language-tag entries, for example notepad.exe=en-US, winword.exe=ar. Apps without an override use the global preference or automatic detection.", "correction.app_language_overrides", ConfigValue.Join(config.Correction.AppLanguageOverrides)),
+            Dropdown("Unknown language", "How to handle text whose language is unclear.", "correction.uncertain_language_policy", config.Correction.UncertainLanguagePolicy, UncertainLanguagePolicies()),
+            Dropdown("Mixed-language text", "Disable correction, use the dominant language, or correct each token with the API engine.", "correction.mixed_language_policy", config.Correction.MixedLanguagePolicy, MixedLanguagePolicies()),
         ]),
         DictionarySection(config),
         Section("Engines", "Local and API correction providers",
@@ -148,13 +150,13 @@ public static class SettingsSkeleton
             Toggle("Show timeout notice", "Show a small notice when a manual API correction times out. Automatic timeouts stay silent.", "feedback.show_timeout_notice", config.Feedback.ShowTimeoutNotice),
             Toggle("Show near-caret overlay", "Place enabled notices near the caret when Windows exposes its position; otherwise use the screen corner. Does not enable extra notices.", "feedback.show_near_caret_overlay", config.Feedback.ShowNearCaretOverlay),
         ]),
-        AppRulesSection(),
+        AppRulesSection(config),
         Section("Logs / Debug", "Diagnostics and troubleshooting",
         [
             Toggle("Metadata-only logs enabled", "Keep logs free of typed content.", "logging.metadata_only_logs_enabled", config.Logging.MetadataOnlyLogsEnabled),
             Toggle("Debug mode enabled", "Enable diagnostic logging.", "logging.debug_mode_enabled", config.Logging.DebugModeEnabled),
             Toggle("Redacted debug mode enabled", "Allow redacted debug details.", "logging.redacted_debug_mode_enabled", config.Logging.RedactedDebugModeEnabled),
-            Toggle("Full-text debug mode enabled", "Developer-only unsafe diagnostic mode.", "logging.full_text_debug_mode_enabled", config.Logging.FullTextDebugModeEnabled),
+            Toggle("Full-text debug mode enabled", "May store private typed text on this computer. Requires explicit consent. Disable after troubleshooting and clear logs.", "logging.full_text_debug_mode_enabled", config.Logging.FullTextDebugModeEnabled),
             Text("Log retention days", "Empty disables retention cleanup.", "logging.log_retention_days", config.Logging.LogRetentionDays?.ToString(CultureInfo.InvariantCulture) ?? ""),
         ]),
         Section("Advanced", "Config import/export",
@@ -168,7 +170,8 @@ public static class SettingsSkeleton
         string description,
         IEnumerable<SettingCardViewModel> settings)
     {
-        var section = new SettingsSectionViewModel { Name = name, Description = description };
+        var section = new SettingsSectionViewModel { Name = name, Description = description,
+            ShowsEngines = name == "Engines", ShowsLogs = name == "Logs / Debug", ShowsLanguages = name == "Languages" };
         foreach (var setting in settings)
         {
             section.Settings.Add(setting);
@@ -219,13 +222,13 @@ public static class SettingsSkeleton
     private static SettingCardViewModel BackgroundStatus() =>
         new() { Title = "Background process status", Kind = "BackgroundStatus" };
 
-    private static SettingsSectionViewModel AppRulesSection() =>
-        new()
-        {
-            Name = "App Rules",
-            Description = "Per-app correction scope, triggers, and engine permissions",
-            ShowsAppRules = true,
-        };
+    private static SettingsSectionViewModel AppRulesSection(AppConfig config)
+    {
+        var section = new SettingsSectionViewModel { Name = "App Rules",
+            Description = "Per-app correction scope, triggers, and engine permissions", ShowsAppRules = true };
+        section.Settings.Add(Dropdown("Run mode", "Blocklist runs in unlisted apps. Allowlist runs only in apps explicitly allowed below. Secure fields remain blocked in both modes.", "general.run_mode", config.General.RunMode, RunModes()));
+        return section;
+    }
 
     private static SettingsSectionViewModel DictionarySection(AppConfig config)
     {

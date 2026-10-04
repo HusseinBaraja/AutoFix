@@ -15,6 +15,9 @@ public sealed class SettingsSectionViewModel : ObservableObject
     public string Description { get; init; } = "";
     public bool ShowsAppRules { get; init; }
     public bool ShowsDictionary { get; init; }
+    public bool ShowsEngines { get; init; }
+    public bool ShowsLogs { get; init; }
+    public bool ShowsLanguages { get; init; }
     public ObservableCollection<SettingCardViewModel> Settings { get; } = [];
     public ObservableCollection<AppRuleItem> AppRules { get; } = [];
     public ObservableCollection<DictionaryItem> Dictionary { get; } = [];

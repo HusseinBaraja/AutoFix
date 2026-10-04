@@ -215,7 +215,7 @@ public sealed class ConfigFormMapperTests
     public void BuildConfigRejectsMissingRequiredPath()
     {
         var sections = SettingsSkeleton.CreateSections();
-        sections[0].Settings.Remove(Card(sections, "general.run_mode"));
+        sections.Single(section => section.Name == "App Rules").Settings.Remove(Card(sections, "general.run_mode"));
 
         var error = Assert.ThrowsException<InvalidOperationException>(() => ConfigFormMapper.BuildConfig(sections));
 

@@ -5,7 +5,7 @@ using AutoFix.SettingsUi.ViewModels;
 namespace AutoFix.SettingsUi.Tests;
 
 [TestClass]
-public sealed class MainWindowViewModelTests
+public sealed partial class MainWindowViewModelTests
 {
     [TestMethod]
     public void FeedbackWindowRendersQuietDefaultsAndSavesChangedToggle()
@@ -361,6 +361,8 @@ public sealed class MainWindowViewModelTests
         var ipcClient = new FakeBackgroundIpcClient();
         var viewModel = new MainWindowViewModel(ipcClient, fixture.Storage, new NullConfigFileDialog());
         await viewModel.LoadSettingsAsync();
+
+        viewModel.NewAppProcess = "app.exe";
 
         viewModel.AddAppRuleCommand.Execute(null);
 

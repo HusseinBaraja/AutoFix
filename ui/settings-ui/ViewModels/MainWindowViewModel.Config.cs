@@ -61,10 +61,17 @@ public sealed partial class MainWindowViewModel
 
         try
         {
-            configStorage.Import(path);
-            var config = configStorage.LoadOrCreate();
+            var config = configStorage.Load(path);
+            if (config.Logging.FullTextDebugModeEnabled && !settingsConsent.ConfirmFullTextDebug())
+            {
+                StatusTitle = "Import cancelled.";
+                StatusDetail = "Full-text debug logging was not authorized. Settings are unchanged.";
+                return;
+            }
+            configStorage.Save(config);
             ApplyStartupRegistration(config);
             ApplyConfig(config, false);
+            await LoadAppRulesAsync();
             var reloadDetail = await NotifyReloadAsync();
             StatusTitle = "Settings imported.";
             StatusDetail = $"{path} | {reloadDetail}";
@@ -157,6 +164,8 @@ public sealed partial class MainWindowViewModel
         SectionView.Refresh();
         ConfigFormMapper.ClearValidation(Sections);
         IsDirty = dirty;
+        RefreshApiKeyStatus();
+        OnPropertyChanged(nameof(LanguageDetectionSummary));
     }
 
     private void ShowOnboardingIfNeeded()
@@ -198,7 +207,7 @@ public sealed partial class MainWindowViewModel
         Onboarding = null;
         SelectedSection = Sections.FirstOrDefault(section => section.Name == "Engines");
         StatusTitle = "Add API key.";
-        StatusDetail = "Add an API key through the configured secret store, then choose API again.";
+        StatusDetail = "Enter the provider key below and save it in Windows Credential Manager, then choose API again.";
     }
 
     private void ApplyStartupRegistration(AppConfig config)
@@ -269,7 +278,16 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
-        var rule = new AppRuleItem { ProcessName = "app.exe" };
+        var rule = new AppRuleItem { ProcessName = NewAppProcess.Trim(), WindowTitlePattern = NewAppWindowTitle.Trim() };
+        try { AppRuleStorage.Validate(rule); }
+        catch (ArgumentException error) { StatusTitle = "App rule not added."; StatusDetail = error.Message; return; }
+        if (section.AppRules.Any(existing => existing.ProcessName.Equals(rule.ProcessName, StringComparison.OrdinalIgnoreCase)
+            && existing.WindowTitlePattern == rule.WindowTitlePattern))
+        {
+            StatusTitle = "App rule already exists.";
+            StatusDetail = "Select the existing rule to edit its permissions.";
+            return;
+        }
         section.AppRules.Add(rule);
         rule.PropertyChanged += AppRuleChanged;
         SelectedAppRule = rule;
@@ -420,6 +438,12 @@ public sealed partial class MainWindowViewModel
     /// <summary>Updates grammar availability on mode changes and autosaves edited setting values.</summary>
     private void SettingChanged(object? sender, PropertyChangedEventArgs args)
     {
+        if (updatingRelatedSettings) return;
+        if (sender is SettingCardViewModel card && args.PropertyName is nameof(SettingCardViewModel.IsEnabled)
+            or nameof(SettingCardViewModel.SelectedValue) or nameof(SettingCardViewModel.TextValue))
+        {
+            if (!UpdateRelatedSettings(card)) return;
+        }
         if (sender is SettingCardViewModel { Path: "correction.mode" } mode
             && args.PropertyName == nameof(SettingCardViewModel.SelectedValue))
         {

@@ -73,7 +73,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         AppRuleStorage appRuleStorage,
         IConfigFileDialog fileDialog,
         IApiKeyStatus apiKeyStatus,
-        IStartupRegistration startupRegistration)
+        IStartupRegistration startupRegistration,
+        ISettingsConsent? settingsConsent = null)
     {
         this.ipcClient = ipcClient;
         this.configStorage = configStorage;
@@ -81,6 +82,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         this.fileDialog = fileDialog;
         this.apiKeyStatus = apiKeyStatus;
         this.startupRegistration = startupRegistration;
+        this.settingsConsent = settingsConsent ?? new SettingsConsent();
+        logStorage = new LogStorage(appRuleStorage.DatabasePath);
         Sections = SettingsSkeleton.CreateSections();
         SubscribeToSettings();
         SelectedSection = Sections.FirstOrDefault();
@@ -99,6 +102,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         SaveDictionaryCommand = new RelayCommand(_ => SaveDictionary());
         DeleteDictionaryCommand = new RelayCommand(_ => DeleteDictionary());
         RefreshDictionaryCommand = new RelayCommand(_ => LoadDictionary());
+        RefreshLogsCommand = new RelayCommand(_ => LoadLogs());
+        ClearLogsCommand = new RelayCommand(_ => ClearLogs());
+        DeleteApiKeyCommand = new RelayCommand(_ => DeleteApiKey());
+        RefreshApiKeyCommand = new RelayCommand(_ => RefreshApiKeyStatus());
+        AutoDetectLanguageCommand = new RelayCommand(_ => Setting("correction.preferred_language").TextValue = "");
     }
 
     public ObservableCollection<SettingsSectionViewModel> Sections { get; }
@@ -130,7 +138,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public SettingsSectionViewModel? SelectedSection
     {
         get => selectedSection;
-        set => SetProperty(ref selectedSection, value);
+        set
+        {
+            if (!SetProperty(ref selectedSection, value)) return;
+            if (value?.ShowsLogs == true) LoadLogs();
+            if (value?.ShowsEngines == true) RefreshApiKeyStatus();
+        }
     }
 
     public AppRuleItem? SelectedAppRule

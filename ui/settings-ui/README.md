@@ -2,6 +2,44 @@
 
 WPF settings application for AutoFix.
 
+The completed product pages autosave validated config and notify the background
+engine. Save and validation results appear below every page. Invalid config edits
+remain visible without replacing the last saved config.
+
+**App Rules** owns the global blocklist/allowlist run mode. Its table exposes each
+app's list behavior, three trigger permissions, local/API permissions and prose
+safety. Add a process name and optional window-title pattern; identity columns are
+read-only to prevent edits from leaving old rules behind. Delete and recreate a
+rule to change its scope. New offline databases receive terminal/editor and
+sensitive-app safety defaults once. Reset defaults restores the complete list.
+Existing choices and deletions are preserved on later settings loads.
+
+**Engines** configures local/API selection, provider preset, optional
+OpenAI-compatible base URL, model, manual/automatic timeouts, retries, temperature
+and local fallback. Selecting a named provider clears a previous custom endpoint
+so it cannot silently override that provider. Keys can be saved, replaced or
+removed through a masked editor backed by Windows Credential Manager, using the
+same profile targets and UTF-8 bytes as the engine. Keys never enter TOML, SQLite,
+IPC or export. The editor clears after save, on provider changes and when hidden;
+saved keys are never revealed.
+
+**Languages** owns the global preference, per-app language overrides, uncertain
+language policy and mixed-language policy. Empty preference uses automatic
+detection by default; Use automatic detection clears it. Per-app overrides take
+priority and are preserved when returning to automatic detection. Language tags
+and duplicate app scopes are validated using the shared config contract.
+
+**Logs / Debug** reads the latest 500 correction metadata rows from SQLite,
+newest first, with UTC timestamps. It never selects debug messages or typed-text
+payloads. Refresh works while the engine is stopped. Clear logs requires
+confirmation and atomically deletes correction metadata and debug events while
+preserving dictionary entries and app rules. New events may arrive while the
+engine is running. Enabling redacted or full-text diagnostics enables the parent
+debug switch; turning that switch off disables both. Enabling full-text debug
+requires explicit acceptance of a privacy warning, including when importing a
+config that enables it. Declining import preserves existing settings. These
+controls configure the existing engine logging policy; they add no text capture.
+
 **App Rules** offers **Safety** (`auto`, `terminal`, `code_editor`) and
 **Editor prose**. New rules and terminal/editor defaults disable all triggers.
 Enable Manual and, for editors, Editor prose to admit selected prose. Known app

@@ -72,6 +72,15 @@ plus specific pairs such as `teh` → `the` that must never be applied. Entries 
 in `%LOCALAPPDATA%\AutoFix\autofix.sqlite`, with a language tag and optional app
 process scope. `und` protects all languages; an empty app scope applies everywhere.
 
+**Languages** defaults to automatic detection. Set a global preferred BCP 47
+language tag, optional app overrides, and policies for uncertain or mixed text.
+App overrides take priority. **Engines** configures local/API routing, provider,
+custom endpoint, model, timeouts and local fallback. Manage provider keys through
+the masked Windows Credential Manager editor; keys are excluded from config
+exports. **Logs / Debug** displays the latest 500 metadata events and can clear
+metadata and debug logs. Full-text debug requires an explicit privacy warning,
+including through config import; redacted debug remains available separately.
+
 Learning defaults to **Off — undo only**. App-level undo only restores the
 correction unless you choose **Ask after undo** or **Automatically learn**.
 Ask shows “Don't correct this again?” after a successful undo; only Yes saves an
