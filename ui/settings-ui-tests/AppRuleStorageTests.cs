@@ -8,6 +8,20 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class AppRuleStorageTests
 {
+    [TestMethod]
+    public void FirstOfflineLoadSeedsDefaultsOnlyOnceAndPreservesDeletedRules()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var storage = new AppRuleStorage(Path.Combine(fixture.Root, "autofix.sqlite"));
+        var rules = storage.List();
+        Assert.IsTrue(rules.Any(r => r.SafetyMode == "terminal" && !r.ManualShortcutAllowed));
+        Assert.IsTrue(rules.Any(r => r.SafetyMode == "code_editor" && !r.WordCountTriggerAllowed && !r.ProseContextAllowed));
+        Assert.IsTrue(rules.Any(r => r.ProcessName == "Bitwarden.exe" && !r.LocalEngineAllowed && !r.ApiEngineAllowed));
+        Assert.IsTrue(storage.Delete("code.exe", null));
+        Assert.IsFalse(storage.List().Any(r => r.ProcessName == "code.exe"));
+        Assert.IsTrue(storage.ResetDefaults().Any(r => r.ProcessName == "code.exe"));
+    }
+
     [DataTestMethod]
     [DataRow("", "auto", false)]
     [DataRow(",\"safety_mode\":null", "auto", false)]
@@ -27,7 +41,7 @@ public sealed class AppRuleStorageTests
         using var fixture = TempConfigFixture.Create();
         var storage = new AppRuleStorage(Path.Combine(fixture.Root, "autofix.sqlite"));
         storage.Upsert(rule);
-        var saved = storage.List().Single();
+        var saved = storage.List().Single(item => item.ProcessName == rule.ProcessName);
         Assert.AreEqual(expectedMode, saved.SafetyMode);
         Assert.AreEqual(expectedProse, saved.ProseContextAllowed);
         Assert.IsTrue(saved.ManualShortcutAllowed);
@@ -72,8 +86,8 @@ public sealed class AppRuleStorageTests
         var listed = storage.List();
 
         Assert.IsTrue(listed.Any(item => item.ProcessName == "word.exe" && item.WindowTitlePattern == "*admin*"));
-        Assert.AreEqual("code_editor", listed[0].SafetyMode);
-        Assert.IsTrue(listed[0].ProseContextAllowed);
+        Assert.AreEqual("code_editor", listed.Single(item => item.ProcessName == "word.exe").SafetyMode);
+        Assert.IsTrue(listed.Single(item => item.ProcessName == "word.exe").ProseContextAllowed);
         Assert.IsTrue(storage.Delete("word.exe", "*admin*"));
     }
 

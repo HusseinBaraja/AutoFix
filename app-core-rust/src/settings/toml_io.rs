@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use super::import_recovery;
 use super::{validation::ConfigValidationError, AppConfig, ValidateConfig};
 
 #[derive(Debug)]
@@ -44,7 +45,8 @@ impl Error for ConfigIoError {
 
 /// Normalize previously supported retry counts on read; writes remain strict.
 pub(crate) fn parse_config(input: &str) -> Result<AppConfig, ConfigIoError> {
-    let mut config = toml::from_str::<AppConfig>(input).map_err(ConfigIoError::Parse)?;
+    let mut config = toml::from_str::<AppConfig>(input.trim_start_matches('\u{feff}'))
+        .map_err(ConfigIoError::Parse)?;
     if config.api.retry_count > 1 {
         tracing::warn!(
             retry_count = config.api.retry_count,
@@ -64,6 +66,14 @@ pub(crate) fn config_to_toml(config: &AppConfig) -> Result<String, ConfigIoError
 
 pub(crate) fn load_config(path: impl AsRef<Path>) -> Result<AppConfig, ConfigIoError> {
     let path = path.as_ref();
+    let _access = import_recovery::acquire(path).map_err(|source| ConfigIoError::Read {
+        path: path.into(),
+        source,
+    })?;
+    import_recovery::recover(path).map_err(|source| ConfigIoError::Read {
+        path: path.into(),
+        source,
+    })?;
     let input = fs::read_to_string(path).map_err(|source| ConfigIoError::Read {
         path: path.to_path_buf(),
         source,
@@ -72,13 +82,49 @@ pub(crate) fn load_config(path: impl AsRef<Path>) -> Result<AppConfig, ConfigIoE
     parse_config(&input)
 }
 
-pub(crate) fn save_config(path: impl AsRef<Path>, config: &AppConfig) -> Result<(), ConfigIoError> {
-    let path = path.as_ref();
-    let output = config_to_toml(config)?;
-    fs::write(path, output).map_err(|source| ConfigIoError::Write {
-        path: path.to_path_buf(),
+/// Initializes missing settings only after recovery, holding the lock between read and creation.
+pub(crate) fn load_or_create_config(path: &Path) -> Result<AppConfig, ConfigIoError> {
+    let _access = import_recovery::acquire(path).map_err(|source| ConfigIoError::Read {
+        path: path.into(),
         source,
-    })
+    })?;
+    import_recovery::recover(path).map_err(|source| ConfigIoError::Read {
+        path: path.into(),
+        source,
+    })?;
+    match fs::read_to_string(path) {
+        Ok(input) => parse_config(&input),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            let config = AppConfig::default();
+            let output = config_to_toml(&config)?;
+            import_recovery::write_atomic(path, output.as_bytes()).map_err(|source| {
+                ConfigIoError::Write {
+                    path: path.into(),
+                    source,
+                }
+            })?;
+            Ok(config)
+        }
+        Err(source) => Err(ConfigIoError::Read {
+            path: path.into(),
+            source,
+        }),
+    }
+}
+
+/// IPC edits start from the latest recovered config and hold the import lock through the durable write.
+pub(crate) fn edit_config(
+    path: &Path,
+    edit: impl FnOnce(&mut AppConfig) -> Result<(), String>,
+) -> Result<AppConfig, String> {
+    let _access = import_recovery::acquire(path).map_err(|error| error.to_string())?;
+    import_recovery::recover(path).map_err(|error| error.to_string())?;
+    let input = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let mut config = parse_config(&input).map_err(|error| error.to_string())?;
+    edit(&mut config)?;
+    let output = config_to_toml(&config).map_err(|error| error.to_string())?;
+    import_recovery::write_atomic(path, output.as_bytes()).map_err(|error| error.to_string())?;
+    Ok(config)
 }
 
 /// Describe configuration boundaries and queue defaults without serializing credentials.

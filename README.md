@@ -72,6 +72,15 @@ plus specific pairs such as `teh` → `the` that must never be applied. Entries 
 in `%LOCALAPPDATA%\AutoFix\autofix.sqlite`, with a language tag and optional app
 process scope. `und` protects all languages; an empty app scope applies everywhere.
 
+**Languages** defaults to automatic detection. Set a global preferred BCP 47
+language tag, optional app overrides, and policies for uncertain or mixed text.
+App overrides take priority. **Engines** configures local/API routing, provider,
+custom endpoint, model, timeouts and local fallback. Manage provider keys through
+the masked Windows Credential Manager editor; keys are excluded from config
+exports. **Logs / Debug** displays the latest 500 metadata events and can clear
+metadata and debug logs. Full-text debug requires an explicit privacy warning,
+including through config import; redacted debug remains available separately.
+
 Learning defaults to **Off — undo only**. App-level undo only restores the
 correction unless you choose **Ask after undo** or **Automatically learn**.
 Ask shows “Don't correct this again?” after a successful undo; only Yes saves an
@@ -81,7 +90,7 @@ active when learning is off. Native Ctrl+Z and suggestion rejection are not trac
 use AutoFix's undo shortcut to reject an applied correction.
 
 Native clipboard replacement preserves all readable formats and restores them
-before reporting success. Disable it under **Correction > Use clipboard for
+before reporting success. Disable it under **Privacy & Security > Use clipboard for
 correction** or set `replacement.clipboard_enabled = false` in settings TOML.
 See [the engine documentation](app-core-rust/README.md) for runtime boundaries.
 
@@ -130,12 +139,34 @@ moves the corrected text into informative context, clears executable context,
 records app-level undo and writes metadata without document text.
 
 Selected text must belong to the current typed segment unless **Correct arbitrary
-selection** is enabled under **Shortcuts**. Even with that option, backward
+selection** is enabled under **Privacy & Security**. Even with that option, backward
 selections and selections without reliable caret proof skip correction. Text after
 the caret stays untouched. Unchanged or suppressed selections retain their context
 and selection; suggestion acceptance remains planned.
 
 ## Run App
+
+The settings search bar finds names, descriptions, choices and config paths
+across every page, including Privacy & Security and nested Context limits.
+Use Ctrl+F, then try `word count threshold`, `timeout` or `cancel oldest`.
+Matching settings are filtered and highlighted. Clear search or press Escape in
+the search box to browse again. Keys, typed text and saved dictionary contents
+are excluded from the search index.
+
+**Advanced → Settings import/export** exports a ZIP containing `settings.toml`,
+app rules, the custom dictionary and language overrides. Learned pair rules are
+optional and excluded by default. Import validates a ZIP bundle or legacy TOML
+file, previews the replacements, and applies only after confirmation. Successful
+imports reload the background process. Bundles exclude API keys, logs, typed
+session data and correction-history text; keys remain in Windows Credential
+Manager on the current device.
+
+Interrupted imports recover automatically before settings are loaded: SQLite
+durably records whether to restore the old settings or finish the committed
+import. Correction remains blocked while recovery is pending. Settings and rule
+data therefore resume from the same committed import, even if the settings file
+did not survive shutdown. See [the settings documentation](ui/settings-ui/README.md)
+for the recovery protocol and failure reporting.
 
 From the repository root, build and run AutoFix:
 

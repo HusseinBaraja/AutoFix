@@ -1,3 +1,4 @@
+pub(crate) mod import_recovery;
 mod model;
 mod shortcuts;
 #[cfg(test)]
@@ -11,5 +12,7 @@ pub(crate) use model::{
     LearningRule, PendingQueueFullBehavior, RunMode,
 };
 pub(crate) use shortcuts::{Shortcut, ShortcutKey};
-pub(crate) use toml_io::{load_config, save_config, ConfigIoError};
+#[cfg(test)]
+pub(crate) use tests::save_config;
+pub(crate) use toml_io::{edit_config, load_config, load_or_create_config, ConfigIoError};
 pub(crate) use validation::ValidateConfig;

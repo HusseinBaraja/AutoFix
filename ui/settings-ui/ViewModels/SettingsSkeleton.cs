@@ -70,35 +70,28 @@ public static class SettingsSkeleton
     /// <summary>Builds editable cards from saved settings and fixes low confidence to no action.</summary>
     public static ObservableCollection<SettingsSectionViewModel> CreateSections(AppConfig config) =>
     [
-        Section("General", "Startup and app run scope",
+        Section("General", "Startup and background status",
         [
             BackgroundStatus(),
             Toggle("Start with Windows", "Launch background mode after sign-in.", "general.start_with_windows", config.General.StartWithWindows),
-            Dropdown("Run mode", "Block listed apps or run only in allowed apps.", "general.run_mode", config.General.RunMode, RunModes()),
         ]),
         Section("Shortcuts", "Hotkeys for correction and undo",
         [
             Hotkey("Correction shortcut", "Manual correction shortcut.", "shortcuts.correct", config.Shortcuts.Correct, DefaultShortcuts.Correct),
             Hotkey("Undo shortcut", "App-level undo shortcut.", "shortcuts.undo", config.Shortcuts.Undo, DefaultShortcuts.Undo),
             Text("Undo history entries", "Corrections kept per session in memory (1–1000). Deleted with the session.", "context.undo_history_size", config.Context.UndoHistorySize.ToString(CultureInfo.InvariantCulture)),
-            Toggle("Correct arbitrary selection", "Allow the manual shortcut to correct selected text outside text typed in this session.", "shortcuts.correct_arbitrary_selection", config.Shortcuts.CorrectArbitrarySelection),
         ]),
         Section("Triggers", "Word-count and character-triggered correction",
         [
             Toggle("Word-count trigger enabled", "Correct after a configured word count.", "triggers.word_count_enabled", config.Triggers.WordCountEnabled),
-            Text("Word-count value", "Words before automatic correction.", "triggers.word_count", config.Triggers.WordCount.ToString(CultureInfo.InvariantCulture)),
+            Text("Word-count value", "Completed-word threshold before automatic correction.", "triggers.word_count", config.Triggers.WordCount.ToString(CultureInfo.InvariantCulture)),
             Toggle("Character trigger enabled", "Correct after configured characters.", "triggers.character_trigger_enabled", config.Triggers.CharacterTriggerEnabled),
             Text("Trigger characters", "Comma-separated trigger characters.", "triggers.characters", ConfigValue.Join(config.Triggers.Characters)),
         ]),
         Section("Correction", "Mode and confidence behavior",
         [
             Toggle("Correction enabled", "Allow AutoFix to apply corrections.", "correction.enabled", config.Correction.Enabled),
-            Toggle("Use clipboard for correction", "Temporarily paste corrections through the clipboard and restore its previous contents. Turn off to use other replacement methods.", "replacement.clipboard_enabled", config.Replacement.ClipboardEnabled),
             Dropdown("Correction mode", "Choose typos only or grammar-aware correction.", "correction.mode", config.Correction.Mode, Modes()),
-            Text("Preferred language", "Optional BCP 47 tag, such as en-US. Empty uses automatic detection.", "correction.preferred_language", config.Correction.PreferredLanguage ?? ""),
-            Text("App language overrides", "Comma-separated process.exe=language-tag entries.", "correction.app_language_overrides", ConfigValue.Join(config.Correction.AppLanguageOverrides)),
-            Dropdown("Unknown language", "How to handle text whose language is unclear.", "correction.uncertain_language_policy", config.Correction.UncertainLanguagePolicy, UncertainLanguagePolicies()),
-            Dropdown("Mixed-language text", "Disable correction, use the dominant language, or correct each token with the API engine.", "correction.mixed_language_policy", config.Correction.MixedLanguagePolicy, MixedLanguagePolicies()),
             ..GrammarCategorySettings(config),
             Dropdown("High confidence behavior", "Default: apply silently for manual and automatic triggers.", "correction.high_confidence_behavior", config.Correction.HighConfidenceBehavior, ConfidenceBehaviors()),
             Dropdown("Medium confidence behavior", "Default: do nothing. Enable read-only manual suggestion previews under Feedback, or choose Apply silently for manual and automatic corrections. Suggestion acceptance is not available in v1.", "correction.medium_confidence_behavior", config.Correction.MediumConfidenceBehavior, ConfidenceBehaviors()),
@@ -113,6 +106,14 @@ public static class SettingsSkeleton
                 IsAvailable = false,
             },
         ]),
+        Section("Languages", "Automatic detection, preferred language, and per-app overrides",
+        [
+            Text("Preferred language", "Optional BCP 47 tag, such as en-US. Empty uses automatic detection. App overrides take priority.", "correction.preferred_language", config.Correction.PreferredLanguage ?? ""),
+            Text("App language overrides", "Comma-separated process.exe=language-tag entries, for example notepad.exe=en-US, winword.exe=ar. Apps without an override use the global preference or automatic detection.", "correction.app_language_overrides", ConfigValue.Join(config.Correction.AppLanguageOverrides)),
+            Dropdown("Unknown language", "How to handle text whose language is unclear.", "correction.uncertain_language_policy", config.Correction.UncertainLanguagePolicy, UncertainLanguagePolicies()),
+            Dropdown("Mixed-language text", "Disable correction, use the dominant language, or correct each token with the API engine.", "correction.mixed_language_policy", config.Correction.MixedLanguagePolicy, MixedLanguagePolicies()),
+            Feature("Automatic language detection", "Use automatic detection to clear the global preferred language. Per-app language overrides still take priority.", "language_detection"),
+        ]),
         DictionarySection(config),
         Section("Engines", "Local and API correction providers",
         [
@@ -125,6 +126,7 @@ public static class SettingsSkeleton
             Text("API retry count", "0 or 1 retry within the same timeout budget.", "api.retry_count", config.Api.RetryCount.ToString(CultureInfo.InvariantCulture)),
             Toggle("Fallback to local engine", "Use local correction when API is unavailable.", "api.fallback_to_local", config.Api.FallbackToLocal),
             Text("API temperature", "Must be between 0 and 2.", "api.temperature", config.Api.Temperature.ToString("0.###", CultureInfo.InvariantCulture)),
+            Feature("API key management", "Save, replace or remove a provider key through a masked editor backed by Windows Credential Manager secure storage. Keys are never revealed or included in config exports.", "api_key"),
         ]),
         Section("Context", "Editable and informative context limits",
         [
@@ -138,6 +140,13 @@ public static class SettingsSkeleton
             Dropdown("When the pending queue is full", "Skip the new trigger; cancel the oldest; or merge the newest pending segment with current typing and wait for the next trigger.", "context.pending_queue_full_behavior", config.Context.PendingQueueFullBehavior,
                 [new("Skip new correction", "skip_new"), new("Cancel oldest correction", "cancel_oldest"), new("Merge newest and wait", "merge_newest")]),
         ]),
+        Section("Privacy & Security", "Secure fields, correction scope, and clipboard privacy",
+        [
+            Information("Password and secure fields", "Password fields and secure controls are always blocked. This protection cannot be disabled."),
+            Information("Typed text and caret safety", "AutoFix corrects text typed in the current session by default. Informative context is read-only. Text after the caret is never changed. App-level undo is preserved."),
+            Toggle("Correct arbitrary selection", "Allow the manual shortcut to correct selected text outside text typed in this session. Secure-field blocking and pre-caret selection validation still apply.", "shortcuts.correct_arbitrary_selection", config.Shortcuts.CorrectArbitrarySelection),
+            Toggle("Use clipboard for correction", "Temporarily paste corrections through the clipboard and restore its previous contents. Turn off to use other replacement methods.", "replacement.clipboard_enabled", config.Replacement.ClipboardEnabled),
+        ]),
         Section("Feedback", "Tray notices and correction feedback",
         [
             Toggle("Tray state enabled", "Show idle, active, correcting, blocked and error states. The tray icon always remains available.", "feedback.tray_state_enabled", config.Feedback.TrayStateEnabled),
@@ -148,18 +157,19 @@ public static class SettingsSkeleton
             Toggle("Show timeout notice", "Show a small notice when a manual API correction times out. Automatic timeouts stay silent.", "feedback.show_timeout_notice", config.Feedback.ShowTimeoutNotice),
             Toggle("Show near-caret overlay", "Place enabled notices near the caret when Windows exposes its position; otherwise use the screen corner. Does not enable extra notices.", "feedback.show_near_caret_overlay", config.Feedback.ShowNearCaretOverlay),
         ]),
-        AppRulesSection(),
+        AppRulesSection(config),
         Section("Logs / Debug", "Diagnostics and troubleshooting",
         [
             Toggle("Metadata-only logs enabled", "Keep logs free of typed content.", "logging.metadata_only_logs_enabled", config.Logging.MetadataOnlyLogsEnabled),
             Toggle("Debug mode enabled", "Enable diagnostic logging.", "logging.debug_mode_enabled", config.Logging.DebugModeEnabled),
             Toggle("Redacted debug mode enabled", "Allow redacted debug details.", "logging.redacted_debug_mode_enabled", config.Logging.RedactedDebugModeEnabled),
-            Toggle("Full-text debug mode enabled", "Developer-only unsafe diagnostic mode.", "logging.full_text_debug_mode_enabled", config.Logging.FullTextDebugModeEnabled),
+            Toggle("Full-text debug mode enabled", "May store private typed text on this computer. Requires explicit consent. Disable after troubleshooting and clear logs.", "logging.full_text_debug_mode_enabled", config.Logging.FullTextDebugModeEnabled),
             Text("Log retention days", "Empty disables retention cleanup.", "logging.log_retention_days", config.Logging.LogRetentionDays?.ToString(CultureInfo.InvariantCulture) ?? ""),
+            Feature("Correction metadata log viewer", "View or refresh the latest metadata events and clear logs. The viewer never reads typed text or debug payloads. Clear logs removes metadata and debug events after confirmation.", "metadata_logs"),
         ]),
         Section("Advanced", "Config import/export",
         [
-            ConfigTransfer("Settings import/export", "Import a saved AutoFix config or export the current one."),
+            ConfigTransfer("Settings import/export", "Preview and import settings, app rules, dictionary and language overrides. Export a ZIP bundle without API keys, logs or session data."),
         ]),
     ];
 
@@ -168,7 +178,8 @@ public static class SettingsSkeleton
         string description,
         IEnumerable<SettingCardViewModel> settings)
     {
-        var section = new SettingsSectionViewModel { Name = name, Description = description };
+        var section = new SettingsSectionViewModel { Name = name, Description = description,
+            ShowsEngines = name == "Engines", ShowsLogs = name == "Logs / Debug", ShowsLanguages = name == "Languages" };
         foreach (var setting in settings)
         {
             section.Settings.Add(setting);
@@ -219,13 +230,20 @@ public static class SettingsSkeleton
     private static SettingCardViewModel BackgroundStatus() =>
         new() { Title = "Background process status", Kind = "BackgroundStatus" };
 
-    private static SettingsSectionViewModel AppRulesSection() =>
-        new()
-        {
-            Name = "App Rules",
-            Description = "Per-app correction scope, triggers, and engine permissions",
-            ShowsAppRules = true,
-        };
+    private static SettingCardViewModel Feature(string title, string description, string target) =>
+        new() { Title = title, Description = description, Kind = "Feature", SearchTarget = target };
+
+    private static SettingCardViewModel Information(string title, string description) =>
+        new() { Title = title, Description = description, Kind = "Information" };
+
+    private static SettingsSectionViewModel AppRulesSection(AppConfig config)
+    {
+        var section = new SettingsSectionViewModel { Name = "App Rules",
+            Description = "Per-app correction scope, triggers, and engine permissions", ShowsAppRules = true };
+        section.Settings.Add(Dropdown("Run mode", "Blocklist runs in unlisted apps. Allowlist runs only in apps explicitly allowed below. Secure fields remain blocked in both modes.", "general.run_mode", config.General.RunMode, RunModes()));
+        section.Settings.Add(Feature("App rule table and per-trigger overrides", "Add or remove apps by process and window title pattern. Configure blocklist or allowlist, manual shortcut, word-count and character triggers, local/API permissions and editor prose. Defaults disable terminal/editor triggers and block sensitive apps. Manual correction requires selected prose; editors also require Editor prose. Commands and code are skipped. Delete and add a rule to change its scope.", "app_rules"));
+        return section;
+    }
 
     private static SettingsSectionViewModel DictionarySection(AppConfig config)
     {
@@ -235,6 +253,7 @@ public static class SettingsSkeleton
         section.Settings.Add(Dropdown("Learned exclusion", "Protect the original word or phrase, or block only the rejected replacement.", "learning.rule", config.Learning.Rule,
             [new("Never change this to that", "pair"), new("Never correct the original", "dictionary")]));
         section.Settings.Add(Toggle("Learn for this app only", "Limit new learned entries to the app where you undid the correction.", "learning.per_app", config.Learning.PerApp));
+        section.Settings.Add(Feature("Protected words and phrases", "Add, edit or remove protected dictionary words, phrases and rejected correction pairs. Choose per-language BCP 47 tags (en, en-US); und protects all languages. Optional per-app process scopes limit exclusions to one app; empty scope applies everywhere. Refresh saved exclusions.", "dictionary"));
         return section;
     }
 }

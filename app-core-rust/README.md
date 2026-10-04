@@ -506,3 +506,21 @@ interactive Windows desktop. It safely refuses unsupported clipboard formats.
 Feature code should be organized by product behavior, not technical layer. Keep modules small, private by default, and colocate tests with the behavior they verify.
 
 Do not implement optional helper mode here until it becomes a committed product requirement.
+
+## Interrupted settings imports
+
+The WPF importer and native settings reader share `settings.toml.lock` and the
+SQLite `settings_import_recovery` protocol. Before replacing settings, the UI
+durably stores original and imported TOML bytes with `committed = 0`. The product
+replacement transaction sets `committed = 1` atomically with its rule changes.
+Settings loads reconcile a surviving record: zero restores the original bytes,
+one finishes the imported bytes. They flush and atomically replace the file
+before clearing the record using SQLite synchronous FULL. This operation is
+idempotent across another interruption. Existing databases without the recovery
+table retain their normal behavior; engine migration versions are unchanged.
+
+Correction policy guards refuse any surviving recovery record, including during
+an active import. Settings reads/writes share the Windows lock, whose ownership
+ends with the process. IPC edits start from the latest settings under that lock.
+Failed reloads are retried rather than marking the new timestamp as loaded.
+The recovery table and temporary backups are excluded from config bundles.

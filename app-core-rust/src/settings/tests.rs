@@ -5,10 +5,30 @@ use crate::correction::{ConfidenceBehavior, CorrectionMode, GrammarCategory};
 use super::{
     load_config,
     model::{CorrectionEngine, RunMode},
-    save_config,
     toml_io::config_to_toml,
     AppConfig, ValidateConfig,
 };
+
+/// Persists fixture configurations through the same initialization and edit path used by the native runtime.
+pub(crate) fn save_config(
+    path: impl AsRef<std::path::Path>,
+    config: &AppConfig,
+) -> Result<(), super::ConfigIoError> {
+    let path = path.as_ref();
+    config
+        .validate()
+        .map_err(super::ConfigIoError::Validation)?;
+    super::load_or_create_config(path)?;
+    super::edit_config(path, |current| {
+        *current = config.clone();
+        Ok(())
+    })
+    .map(|_| ())
+    .map_err(|error| super::ConfigIoError::Write {
+        path: path.into(),
+        source: std::io::Error::other(error),
+    })
+}
 
 /// Undo capacity round-trips through TOML and defaults to ten for legacy files.
 #[test]

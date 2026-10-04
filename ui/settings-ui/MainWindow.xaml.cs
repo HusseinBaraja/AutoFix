@@ -20,6 +20,45 @@ public partial class MainWindow : Window
         this.viewModel = viewModel;
         InitializeComponent();
         DataContext = viewModel;
+        viewModel.PropertyChanged += SettingsNavigationChanged;
+    }
+
+    private void SettingsNavigationChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(MainWindowViewModel.SearchText) or nameof(MainWindowViewModel.SelectedSection))
+            Dispatcher.BeginInvoke(new Action(() => SettingsScrollViewer.ScrollToTop()));
+        if (e.PropertyName == nameof(MainWindowViewModel.IsImportPreviewVisible))
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (viewModel.IsImportPreviewVisible) CancelImportButton.Focus();
+                else SearchBox.Focus();
+            }));
+    }
+
+    private void Window_Closed(object? sender, EventArgs e) => viewModel.PropertyChanged -= SettingsNavigationChanged;
+
+    private void FocusSearch_CanExecute(object sender, CanExecuteRoutedEventArgs e)
+    {
+        e.CanExecute = recordingHotkey is null && viewModel.CanEditSettings;
+        e.Handled = true;
+    }
+
+    private void FocusSearch_Executed(object sender, ExecutedRoutedEventArgs e)
+    {
+        SearchBox.Focus(); SearchBox.SelectAll(); e.Handled = true;
+    }
+
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (recordingHotkey is not null) return;
+        if (e.Key == Key.Escape && viewModel.IsImportPreviewVisible)
+        {
+            viewModel.CancelImportCommand.Execute(null); e.Handled = true; return;
+        }
+        if (e.Key == Key.Escape && SearchBox.IsKeyboardFocusWithin)
+        {
+            viewModel.ClearSearchCommand.Execute(null); e.Handled = true;
+        }
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -123,6 +162,20 @@ public partial class MainWindow : Window
 
         Keyboard.ClearFocus();
     }
+
+    private void SaveApiKey_Click(object sender, RoutedEventArgs e)
+    {
+        using var key = ApiKeyBox.SecurePassword;
+        try { viewModel.SaveApiKey(key); }
+        finally { ApiKeyBox.Clear(); }
+    }
+
+    private void ApiKeyBox_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is false) ApiKeyBox.Clear();
+    }
+
+    private void ApiProvider_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApiKeyBox?.Clear();
 
     private void HotkeyClear_Click(object sender, RoutedEventArgs e)
     {

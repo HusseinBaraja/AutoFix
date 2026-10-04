@@ -5,7 +5,7 @@ using AutoFix.SettingsUi.ViewModels;
 namespace AutoFix.SettingsUi.Tests;
 
 [TestClass]
-public sealed class MainWindowViewModelTests
+public sealed partial class MainWindowViewModelTests
 {
     [TestMethod]
     public void FeedbackWindowRendersQuietDefaultsAndSavesChangedToggle()
@@ -362,6 +362,8 @@ public sealed class MainWindowViewModelTests
         var viewModel = new MainWindowViewModel(ipcClient, fixture.Storage, new NullConfigFileDialog());
         await viewModel.LoadSettingsAsync();
 
+        viewModel.NewAppProcess = "app.exe";
+
         viewModel.AddAppRuleCommand.Execute(null);
 
         await WaitForAsync(() => ipcClient.UpsertedRules.Count > 0);
@@ -437,7 +439,7 @@ public sealed class MainWindowViewModelTests
     }
 
     [TestMethod]
-    public void SearchTextTrimsInputBeforeFilteringAndScoring()
+    public void SearchTextPreservesInputWhileIgnoringSurroundingWhitespaceForMatching()
     {
         var viewModel = new MainWindowViewModel(
             new FakeBackgroundIpcClient(),
@@ -448,7 +450,7 @@ public sealed class MainWindowViewModelTests
 
         var visibleSections = viewModel.SectionView.Cast<SettingsSectionViewModel>().Select(section => section.Name).ToArray();
 
-        Assert.AreEqual("fallback_to_local", viewModel.SearchText);
+        Assert.AreEqual("  fallback_to_local  ", viewModel.SearchText);
         CollectionAssert.AreEqual(new[] { "Engines" }, visibleSections);
         Assert.AreEqual("Engines", viewModel.SelectedSection?.Name);
     }
@@ -469,6 +471,7 @@ public sealed class MainWindowViewModelTests
     private sealed class FakeBackgroundIpcClient : IBackgroundIpcClient
     {
         public int ReloadCount { get; private set; }
+        public bool ReloadUnavailable { get; set; }
         public int StatusCheckCount { get; private set; }
         public List<AppRuleDto> AppRules { get; } = [];
         public List<AppRuleDto> UpsertedRules { get; } = [];
@@ -486,7 +489,7 @@ public sealed class MainWindowViewModelTests
         public Task<IpcResult<AppStatusResponse>> ReloadConfigAsync()
         {
             ReloadCount++;
-            return GetStatusAsync();
+            return ReloadUnavailable ? Task.FromResult(IpcResult<AppStatusResponse>.Unavailable()) : GetStatusAsync();
         }
 
         public Task<IpcResult<SettingUpdatedResponse>> UpdateSettingAsync(string path, string value) =>
@@ -553,10 +556,12 @@ public sealed class MainWindowViewModelTests
     {
         public int ApplyCount { get; private set; }
         public bool StartWithWindows { get; private set; }
+        public bool FailApplication { get; set; }
 
         public void Apply(bool startWithWindows)
         {
             ApplyCount++;
+            if (FailApplication) throw new InvalidOperationException("Test startup registration failure.");
             StartWithWindows = startWithWindows;
         }
     }

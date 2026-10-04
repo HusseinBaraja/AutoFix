@@ -11,7 +11,15 @@
         MinHeight="620"
         Background="#F6F7FB"
         Loaded="Window_Loaded"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        Closed="Window_Closed"
         Deactivated="Window_Deactivated">
+    <Window.CommandBindings>
+        <CommandBinding Command="ApplicationCommands.Find" Executed="FocusSearch_Executed" CanExecute="FocusSearch_CanExecute" />
+    </Window.CommandBindings>
+    <Window.InputBindings>
+        <KeyBinding Command="ApplicationCommands.Find" Key="F" Modifiers="Control" />
+    </Window.InputBindings>
     <Window.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
@@ -26,12 +34,45 @@
     </Window.Resources>
 
     <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="260" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <Border Background="#FFFFFF"
+        <StackPanel Grid.ColumnSpan="2" Margin="20,12,20,10" IsEnabled="{Binding CanEditSettings}">
+            <DockPanel>
+                <Button Content="Clear search" Command="{Binding ClearSearchCommand}" DockPanel.Dock="Right" Margin="12,0,0,0"
+                        Visibility="{Binding HasSearchQuery, Converter={StaticResource BoolToVisibility}}" />
+                <Border Style="{StaticResource InputShell}">
+                    <Grid>
+                        <TextBox x:Name="SearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                 AutomationProperties.Name="Search settings" Height="40" />
+                        <TextBlock Text="Search settings — try word threshold, timeout, or queue behavior" Margin="13,0"
+                                   Foreground="{StaticResource MutedTextBrush}" IsHitTestVisible="False" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource BodyText}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasSearchQuery}" Value="False">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                </Border>
+            </DockPanel>
+            <TextBlock Text="{Binding SearchSummary}" Margin="2,6,0,0" Foreground="{StaticResource MutedTextBrush}"
+                       AutomationProperties.Name="Settings search results" AutomationProperties.LiveSetting="Polite" />
+        </StackPanel>
+
+        <Border Grid.Row="1" Background="#FFFFFF"
+                IsEnabled="{Binding CanEditSettings}"
                 BorderBrush="#E5E8F0"
                 BorderThickness="0,0,1,0">
             <DockPanel>
@@ -46,31 +87,6 @@
                                    FontWeight="SemiBold"
                                    VerticalAlignment="Center" />
                     </StackPanel>
-                    <Border Style="{StaticResource InputShell}"
-                            Margin="0,18,0,0">
-                        <Grid>
-                            <TextBox x:Name="SearchBox"
-                                     Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                                     AutomationProperties.Name="Search settings"
-                                     Height="40" />
-                            <TextBlock Text="Search settings"
-                                       Margin="13,0"
-                                       Foreground="{StaticResource MutedTextBrush}"
-                                       IsHitTestVisible="False"
-                                       VerticalAlignment="Center">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock" BasedOn="{StaticResource BodyText}">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
-                                                <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                        </Grid>
-                    </Border>
                 </StackPanel>
 
                 <ListBox ItemsSource="{Binding SectionView}"
@@ -81,7 +97,8 @@
                          Background="Transparent">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <TextBlock Text="{Binding Name}"
+                            <controls:HighlightTextBlock HighlightText="{Binding Name}"
+                                       Query="{Binding DataContext.SearchText, RelativeSource={RelativeSource AncestorType=Window}}"
                                        FontSize="14"
                                        FontWeight="SemiBold" />
                         </DataTemplate>
@@ -90,21 +107,22 @@
             </DockPanel>
         </Border>
 
-        <Grid Grid.Column="1" Margin="28">
+        <Grid Grid.Column="1" Grid.Row="1" Margin="28" IsEnabled="{Binding CanEditSettings}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="18" />
                 <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <DockPanel LastChildFill="True">
+            <DockPanel LastChildFill="True" Visibility="{Binding HasSelectedSection, Converter={StaticResource BoolToVisibility}}">
                 <StackPanel Margin="0,0,16,0">
                     <StackPanel Orientation="Horizontal">
                         <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.Name}"
                                                      Query="{Binding SearchText}"
                                                      FontSize="28"
                                                      FontWeight="SemiBold" />
-                        <TextBlock Text="Saving..."
+                        <TextBlock Text="Unsaved changes"
                                    Margin="14,7,0,0"
                                    Foreground="#667085"
                                    Visibility="{Binding IsDirty, Converter={StaticResource BoolToVisibility}}" />
@@ -117,6 +135,7 @@
             </DockPanel>
 
             <ScrollViewer x:Name="SettingsScrollViewer"
+                          Visibility="{Binding HasSelectedSection, Converter={StaticResource BoolToVisibility}}"
                           Grid.Row="2"
                           HorizontalScrollBarVisibility="Disabled"
                           VerticalScrollBarVisibility="Auto">
@@ -126,6 +145,7 @@
                         <ItemsControl.ItemContainerStyle>
                             <Style TargetType="ContentPresenter">
                                 <Setter Property="HorizontalAlignment" Value="Stretch" />
+                                <Setter Property="Visibility" Value="{Binding IsSearchVisible, Converter={StaticResource BoolToVisibility}}" />
                             </Style>
                         </ItemsControl.ItemContainerStyle>
                         <ItemsControl.ItemTemplate>
@@ -177,19 +197,23 @@
                                                           HorizontalAlignment="Right"
                                                           IsChecked="{Binding IsEnabled}"
                                                           IsEnabled="{Binding IsAvailable}"
+                                                          AutomationProperties.Name="{Binding Title}"
                                                           Visibility="{Binding IsToggle, Converter={StaticResource BoolToVisibility}}" />
                                                 <ComboBox Width="320"
+                                                          SelectionChanged="ApiProvider_SelectionChanged"
                                                           ItemsSource="{Binding Options}"
                                                           DisplayMemberPath="Label"
                                                           SelectedValuePath="Value"
                                                           SelectedValue="{Binding SelectedValue}"
                                                           IsEnabled="{Binding IsAvailable}"
+                                                          AutomationProperties.Name="{Binding Title}"
                                                           Visibility="{Binding IsDropdown, Converter={StaticResource BoolToVisibility}}" />
                                                 <Border Style="{StaticResource InputShell}"
                                                         Width="320"
                                                         Visibility="{Binding IsText, Converter={StaticResource BoolToVisibility}}">
                                                     <Grid>
                                                         <TextBox Width="320"
+                                                                 AutomationProperties.Name="{Binding Title}"
                                                                  Text="{Binding TextValue, UpdateSourceTrigger=PropertyChanged}" />
                                                         <TextBlock Text="{Binding Description}"
                                                                    Margin="13,0"
@@ -308,14 +332,22 @@
                                                     </Border>
                                                 </StackPanel>
 
-                                                <StackPanel Orientation="Horizontal"
+                                                <StackPanel Width="320"
                                                             HorizontalAlignment="Right"
                                                             Visibility="{Binding IsConfigTransfer, Converter={StaticResource BoolToVisibility}}">
-                                                    <Button Content="Import"
-                                                            Command="{Binding DataContext.ImportConfigCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                            Margin="0,0,8,0" />
-                                                    <Button Content="Export"
-                                                            Command="{Binding DataContext.ExportConfigCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                    <CheckBox Content="Include learned rules in export"
+                                                              DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                              IsChecked="{Binding IncludeLearnedRules}"
+                                                              AutomationProperties.Name="Include learned rules in export" />
+                                                    <TextBlock Text="Optional: includes saved rejected text pairs."
+                                                               TextWrapping="Wrap" Foreground="#667085" FontSize="12" Margin="0,4,0,12" />
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                        <Button Content="Import…"
+                                                                Command="{Binding DataContext.ImportConfigCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                Margin="0,0,8,0" />
+                                                        <Button Content="Export…"
+                                                                Command="{Binding DataContext.ExportConfigCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                    </StackPanel>
                                                 </StackPanel>
                                             </Grid>
                                         </Grid>
@@ -325,11 +357,65 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
+                    <Border Style="{StaticResource SettingsCard}" Visibility="{Binding SelectedSection.ShowLanguageResults, Converter={StaticResource BoolToVisibility}}">
+                        <StackPanel>
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.LanguageSearchCard.Title}" Query="{Binding SearchText}" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <TextBlock Text="{Binding LanguageDetectionSummary}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.LanguageSearchCard.Description}" Query="{Binding SearchText}" TextWrapping="Wrap" Margin="0,6,0,12" />
+                            <Button Content="Use automatic detection" Command="{Binding AutoDetectLanguageCommand}" HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource SettingsCard}" Visibility="{Binding SelectedSection.ShowApiKeyResults, Converter={StaticResource BoolToVisibility}}">
+                        <StackPanel>
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.ApiKeySearchCard.Title}" Query="{Binding SearchText}" FontWeight="SemiBold" />
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.ApiKeySearchCard.Description}" Query="{Binding SearchText}" TextWrapping="Wrap" Margin="0,6,0,12" />
+                            <Border Style="{StaticResource InputShell}" Margin="0,0,0,12">
+                                <PasswordBox x:Name="ApiKeyBox" AutomationProperties.Name="API key" IsVisibleChanged="ApiKeyBox_IsVisibleChanged" BorderThickness="0" Background="Transparent" Padding="12" MinHeight="40" />
+                            </Border>
+                            <WrapPanel>
+                                <Button Content="Save key securely" Click="SaveApiKey_Click" Margin="0,0,8,0" />
+                                <Button Content="Remove saved key" Command="{Binding DeleteApiKeyCommand}" Margin="0,0,8,0" />
+                                <Button Content="Refresh key status" Command="{Binding RefreshApiKeyCommand}" />
+                            </WrapPanel>
+                            <TextBlock Text="{Binding ApiKeyMessage}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource TableShell}" Visibility="{Binding SelectedSection.ShowLogResults, Converter={StaticResource BoolToVisibility}}">
+                        <StackPanel Margin="16">
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.LogSearchCard.Title}" Query="{Binding SearchText}" FontWeight="SemiBold" />
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.LogSearchCard.Description}" Query="{Binding SearchText}" TextWrapping="Wrap" Margin="0,6,0,12" />
+                            <WrapPanel Margin="0,0,0,12">
+                                <Button Content="Refresh logs" Command="{Binding RefreshLogsCommand}" Margin="0,0,8,0" />
+                                <Button Content="Clear logs" Command="{Binding ClearLogsCommand}" />
+                            </WrapPanel>
+                            <DataGrid ItemsSource="{Binding MetadataLogs}" AutomationProperties.Name="Correction metadata logs" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False" MaxHeight="300">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Time (UTC)" Binding="{Binding OccurredAt}" Width="170" />
+                                    <DataGridTextColumn Header="App" Binding="{Binding App}" Width="130" />
+                                    <DataGridTextColumn Header="Trigger" Binding="{Binding Trigger}" Width="100" />
+                                    <DataGridTextColumn Header="Confidence" Binding="{Binding Confidence}" Width="100" />
+                                    <DataGridTextColumn Header="Engine" Binding="{Binding Engine}" Width="80" />
+                                    <DataGridTextColumn Header="Replacement" Binding="{Binding ReplacementMethod}" Width="130" />
+                                    <DataGridTextColumn Header="Result" Binding="{Binding Result}" Width="180" />
+                                    <DataGridTextColumn Header="Latency (ms)" Binding="{Binding LatencyMs}" Width="100" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock Text="{Binding LogsMessage}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                        </StackPanel>
+                    </Border>
+
                     <Border Style="{StaticResource TableShell}"
                             Margin="0,0,0,10"
-                            Visibility="{Binding SelectedSection.HasAppRules, Converter={StaticResource BoolToVisibility}}">
-                        <DockPanel LastChildFill="True">
-                            <TextBlock DockPanel.Dock="Top" Text="Safety auto detects known terminals and editors. Manual correction requires selected prose; editors also require Editor prose. Commands, code and uncertain text are skipped." TextWrapping="Wrap" Margin="0,0,0,10" />
+                            Visibility="{Binding SelectedSection.ShowAppRulesResults, Converter={StaticResource BoolToVisibility}}">
+                        <DockPanel LastChildFill="True" Margin="16">
+                            <controls:HighlightTextBlock DockPanel.Dock="Top" HighlightText="{Binding SelectedSection.AppRulesSearchCard.Title}" Query="{Binding SearchText}" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <controls:HighlightTextBlock DockPanel.Dock="Top" HighlightText="{Binding SelectedSection.AppRulesSearchCard.Description}" Query="{Binding SearchText}" TextWrapping="Wrap" Margin="0,0,0,10" />
+                            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                                <TextBlock Text="New app process (for example notepad.exe)" />
+                                <Border Style="{StaticResource InputShell}" Margin="0,4,0,8"><TextBox Text="{Binding NewAppProcess, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="New app process" /></Border>
+                                <TextBlock Text="Window title pattern (optional)" />
+                                <Border Style="{StaticResource InputShell}" Margin="0,4,0,0"><TextBox Text="{Binding NewAppWindowTitle, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="New app window title" /></Border>
+                            </StackPanel>
                             <StackPanel DockPanel.Dock="Top"
                                         Orientation="Horizontal"
                                         HorizontalAlignment="Right"
@@ -348,10 +434,11 @@
                                       AutomationProperties.Name="App Rules"
                                       AutoGenerateColumns="False"
                                       CanUserAddRows="False"
+                                      MaxHeight="350"
                                       HeadersVisibility="Column">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Process" Binding="{Binding ProcessName, UpdateSourceTrigger=PropertyChanged}" Width="170" />
-                                    <DataGridTextColumn Header="Window title" Binding="{Binding WindowTitlePattern, UpdateSourceTrigger=PropertyChanged}" Width="170" />
+                                    <DataGridTextColumn Header="Process" IsReadOnly="True" Binding="{Binding ProcessName}" Width="170" />
+                                    <DataGridTextColumn Header="Window title" IsReadOnly="True" Binding="{Binding WindowTitlePattern}" Width="170" />
                                     <DataGridComboBoxColumn Header="Mode"
                                                             SelectedValueBinding="{Binding ListBehavior, UpdateSourceTrigger=PropertyChanged}"
                                                             Width="110">
@@ -385,10 +472,10 @@
                     </Border>
 
                     <Border Style="{StaticResource TableShell}"
-                            Visibility="{Binding SelectedSection.HasDictionary, Converter={StaticResource BoolToVisibility}}">
+                            Visibility="{Binding SelectedSection.ShowDictionaryResults, Converter={StaticResource BoolToVisibility}}">
                         <StackPanel Margin="16">
-                            <TextBlock Text="Custom dictionary and pair rules" FontWeight="SemiBold" Margin="0,0,0,8" />
-                            <TextBlock Text="Select an entry to edit. Language: BCP 47 tag (en, en-US); und protects all languages. Empty app scope applies everywhere." TextWrapping="Wrap" Margin="0,0,0,12" />
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.DictionarySearchCard.Title}" Query="{Binding SearchText}" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.DictionarySearchCard.Description}" Query="{Binding SearchText}" TextWrapping="Wrap" Margin="0,0,0,12" />
                             <WrapPanel Margin="0,0,0,12">
                                 <Button Content="New entry" Command="{Binding NewDictionaryCommand}" Margin="0,0,8,0" />
                                 <Button Content="Refresh" Command="{Binding RefreshDictionaryCommand}" Margin="0,0,8,0" />
@@ -425,9 +512,22 @@
                     </Border>
                 </StackPanel>
             </ScrollViewer>
+            <Border Grid.Row="2" Style="{StaticResource SettingsCard}" VerticalAlignment="Top"
+                    Visibility="{Binding HasNoSearchResults, Converter={StaticResource BoolToVisibility}}">
+                <StackPanel>
+                    <TextBlock Text="No matching settings" FontSize="20" FontWeight="SemiBold" />
+                    <TextBlock Text="Try a setting name, part of its description, or a behavior such as cancel oldest. Clear the search to browse all sections." TextWrapping="Wrap" Margin="0,8,0,12" />
+                    <Button Content="Show all settings" Command="{Binding ClearSearchCommand}" HorizontalAlignment="Left" />
+                </StackPanel>
+            </Border>
+            <StackPanel Grid.Row="3" Margin="0,12,0,0">
+                <TextBlock Text="{Binding StatusTitle}" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding StatusDetail}" TextWrapping="Wrap" Foreground="#667085" MaxHeight="60" />
+            </StackPanel>
         </Grid>
 
         <Border Grid.ColumnSpan="2"
+                Grid.RowSpan="2"
                 Background="#CCF6F7FB"
                 Visibility="{Binding IsOnboardingVisible, Converter={StaticResource BoolToVisibility}}">
             <Border Width="620"
@@ -504,6 +604,51 @@
                                 Command="{Binding FinishCommand}" />
                     </StackPanel>
                 </StackPanel>
+            </Border>
+        </Border>
+        <Border x:Name="ImportPreviewPanel" Grid.ColumnSpan="2" Grid.RowSpan="2" Background="#CCF6F7FB"
+                KeyboardNavigation.TabNavigation="Cycle"
+                Visibility="{Binding IsImportPreviewVisible, Converter={StaticResource BoolToVisibility}}">
+            <Border Margin="32" Padding="24" MaxWidth="980" MaxHeight="630" Background="White"
+                    BorderBrush="#DCE2EE" BorderThickness="1" CornerRadius="8">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Preview import" FontSize="24" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding ImportPreview.SourceName}" FontWeight="SemiBold" Margin="0,6,0,6" />
+                        <TextBlock Text="{Binding ImportPreview.Summary}" TextWrapping="Wrap" Foreground="#667085" />
+                        <TextBlock Text="API keys, logs, session data and correction history are excluded. Existing secure keys stay on this device."
+                                   TextWrapping="Wrap" Margin="0,8,0,16" />
+                    </StackPanel>
+                    <DataGrid x:Name="ImportChangesGrid" Grid.Row="1" ItemsSource="{Binding ImportPreview.Changes}"
+                              IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False"
+                              CanUserDeleteRows="False" CanUserReorderColumns="False" EnableRowVirtualization="True"
+                              AutomationProperties.Name="Import changes">
+                        <DataGrid.Resources>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            </Style>
+                        </DataGrid.Resources>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Section" Binding="{Binding Area}" Width="95" />
+                            <DataGridTextColumn Header="Setting or rule" Binding="{Binding Name}" Width="2*" />
+                            <DataGridTextColumn Header="Current" Binding="{Binding Before}" Width="*" />
+                            <DataGridTextColumn Header="Imported" Binding="{Binding After}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <DockPanel Grid.Row="2" Margin="0,16,0,0">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button x:Name="CancelImportButton" Content="Cancel" Command="{Binding CancelImportCommand}" Margin="0,0,8,0" />
+                            <Button Content="Apply import" Command="{Binding ConfirmImportCommand}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding ImportPreview.ChangeSummary}"
+                                   VerticalAlignment="Center" />
+                    </DockPanel>
+                </Grid>
             </Border>
         </Border>
     </Grid>

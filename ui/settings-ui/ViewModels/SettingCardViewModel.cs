@@ -7,6 +7,7 @@ public sealed class SettingCardViewModel : ObservableObject
 {
     private bool isEnabled;
     private bool isAvailable = true;
+    private bool isSearchMatch = true;
     private string selectedValue = "";
     private string hotkey = "";
     private string textValue = "";
@@ -18,8 +19,17 @@ public sealed class SettingCardViewModel : ObservableObject
     public string Description { get; init; } = "";
     public string Kind { get; init; } = "";
     public string Path { get; init; } = "";
+    public string SearchTarget { get; init; } = "";
     public string DefaultHotkey { get; init; } = "";
     public ObservableCollection<OptionItem> Options { get; init; } = [];
+
+    public bool IsSearchMatch
+    {
+        get => isSearchMatch;
+        set { if (SetProperty(ref isSearchMatch, value)) OnPropertyChanged(nameof(IsSearchVisible)); }
+    }
+
+    public bool IsSearchVisible => IsSearchMatch && Kind != "Feature";
 
     public bool IsEnabled
     {

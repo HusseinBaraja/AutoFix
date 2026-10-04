@@ -10,6 +10,9 @@ This component owns stable contracts between:
 
 Keep schemas explicit, versioned, and documented. Avoid storing executable runtime state here; this area is for contracts, structured settings, and compatibility notes.
 
+The [settings import recovery protocol](import-recovery.md) defines the durable
+SQLite decision and Windows settings lock shared by WPF and the native engine.
+
 `[learning]` is optional in TOML. `mode` accepts `off` (default), `ask`, or
 `automatic`; `rule` accepts `pair` (default) or `dictionary`; `per_app` defaults
 to false. Rust and WPF use the same defaults and reject unknown choices.

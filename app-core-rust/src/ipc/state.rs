@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crate::{
-    settings::{save_config, AppConfig, CorrectionEngine, CorrectionMode, ValidateConfig},
+    settings::{edit_config, AppConfig, CorrectionEngine, CorrectionMode},
     storage::{AppRule, Database},
 };
 
@@ -158,13 +158,10 @@ impl IpcServerState {
     }
 
     fn update_setting(&mut self, path: String, value: serde_json::Value) -> IpcResponse {
-        let mut next = self.config.clone();
-        let result = apply_setting(&mut next, &path, value)
-            .and_then(|_| next.validate().map_err(|error| error.to_string()))
-            .and_then(|_| save_config(&self.config_path, &next).map_err(|error| error.to_string()));
+        let result = edit_config(&self.config_path, |next| apply_setting(next, &path, value));
 
         match result {
-            Ok(()) => {
+            Ok(next) => {
                 self.config = next;
                 IpcResponse::SettingUpdated(SettingUpdatedResponse { path })
             }

@@ -8,6 +8,8 @@
 
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <OutputType>Exe</OutputType>
+    <StartupObject>AutoFix.SettingsUi.Tests.ImportCrashHost</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>

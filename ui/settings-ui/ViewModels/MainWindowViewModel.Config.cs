@@ -51,64 +51,16 @@ public sealed partial class MainWindowViewModel
         }
     }
 
-    private async Task ImportConfigAsync()
-    {
-        var path = fileDialog.PickImportPath();
-        if (path is null)
-        {
-            return;
-        }
-
-        try
-        {
-            configStorage.Import(path);
-            var config = configStorage.LoadOrCreate();
-            ApplyStartupRegistration(config);
-            ApplyConfig(config, false);
-            var reloadDetail = await NotifyReloadAsync();
-            StatusTitle = "Settings imported.";
-            StatusDetail = $"{path} | {reloadDetail}";
-        }
-        catch (Exception error) when (IsConfigError(error))
-        {
-            StatusTitle = "Import failed.";
-            StatusDetail = error.Message;
-        }
-    }
-
-    private Task ExportConfigAsync()
-    {
-        var path = fileDialog.PickExportPath();
-        if (path is null)
-        {
-            return Task.CompletedTask;
-        }
-
-        try
-        {
-            var config = ConfigFormMapper.BuildConfig(Sections);
-            configStorage.Export(path, config);
-            StatusTitle = "Settings exported.";
-            StatusDetail = path;
-        }
-        catch (Exception error) when (IsConfigError(error))
-        {
-            StatusTitle = "Export failed.";
-            StatusDetail = error.Message;
-        }
-
-        return Task.CompletedTask;
-    }
-
     private async Task<string> NotifyReloadAsync()
     {
         try
         {
             var result = await ipcClient.ReloadConfigAsync();
-            if (!result.Available || result.Error is not null)
+            if (!result.Available)
             {
-                return result.Error ?? "Background process unavailable; settings will load on next start.";
+                return $"{result.Error ?? "Background process unavailable."} Settings will load on next start.";
             }
+            if (result.Error is not null) return $"Background reload failed: {result.Error}";
 
             return "Background reload requested.";
         }
@@ -154,9 +106,11 @@ public sealed partial class MainWindowViewModel
         SubscribeToSettings();
         LoadDictionary();
         SelectedSection = Sections.FirstOrDefault();
-        SectionView.Refresh();
+        UpdateSearch();
         ConfigFormMapper.ClearValidation(Sections);
         IsDirty = dirty;
+        RefreshApiKeyStatus();
+        OnPropertyChanged(nameof(LanguageDetectionSummary));
     }
 
     private void ShowOnboardingIfNeeded()
@@ -198,7 +152,7 @@ public sealed partial class MainWindowViewModel
         Onboarding = null;
         SelectedSection = Sections.FirstOrDefault(section => section.Name == "Engines");
         StatusTitle = "Add API key.";
-        StatusDetail = "Add an API key through the configured secret store, then choose API again.";
+        StatusDetail = "Enter the provider key below and save it in Windows Credential Manager, then choose API again.";
     }
 
     private void ApplyStartupRegistration(AppConfig config)
@@ -269,7 +223,16 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
-        var rule = new AppRuleItem { ProcessName = "app.exe" };
+        var rule = new AppRuleItem { ProcessName = NewAppProcess.Trim(), WindowTitlePattern = NewAppWindowTitle.Trim() };
+        try { AppRuleStorage.Validate(rule); }
+        catch (ArgumentException error) { StatusTitle = "App rule not added."; StatusDetail = error.Message; return; }
+        if (section.AppRules.Any(existing => existing.ProcessName.Equals(rule.ProcessName, StringComparison.OrdinalIgnoreCase)
+            && existing.WindowTitlePattern == rule.WindowTitlePattern))
+        {
+            StatusTitle = "App rule already exists.";
+            StatusDetail = "Select the existing rule to edit its permissions.";
+            return;
+        }
         section.AppRules.Add(rule);
         rule.PropertyChanged += AppRuleChanged;
         SelectedAppRule = rule;
@@ -420,6 +383,12 @@ public sealed partial class MainWindowViewModel
     /// <summary>Updates grammar availability on mode changes and autosaves edited setting values.</summary>
     private void SettingChanged(object? sender, PropertyChangedEventArgs args)
     {
+        if (updatingRelatedSettings) return;
+        if (sender is SettingCardViewModel card && args.PropertyName is nameof(SettingCardViewModel.IsEnabled)
+            or nameof(SettingCardViewModel.SelectedValue) or nameof(SettingCardViewModel.TextValue))
+        {
+            if (!UpdateRelatedSettings(card)) return;
+        }
         if (sender is SettingCardViewModel { Path: "correction.mode" } mode
             && args.PropertyName == nameof(SettingCardViewModel.SelectedValue))
         {

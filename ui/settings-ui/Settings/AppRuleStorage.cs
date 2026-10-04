@@ -158,6 +158,11 @@ public sealed class AppRuleStorage
         {
             throw new ArgumentException("process_name must not be empty");
         }
+        if (rule.ProcessName.Trim().Length > 260 || rule.ProcessName.Any(char.IsControl)
+            || rule.ProcessName.IndexOfAny(['/', '\\', ':']) >= 0)
+            throw new ArgumentException("Use an app process name, such as notepad.exe, without paths or control characters.");
+        if (rule.WindowTitlePattern.Length > 1024 || rule.WindowTitlePattern.Any(char.IsControl))
+            throw new ArgumentException("Window title pattern must be at most 1024 characters without control characters.");
 
         if (rule.SafetyMode is not ("auto" or "terminal" or "code_editor"))
         {
@@ -178,9 +183,11 @@ public sealed class AppRuleStorage
             Directory.CreateDirectory(directory);
         }
 
-        var connection = new SqliteConnection($"Data Source={DatabasePath}");
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DatabasePath }.ToString());
         connection.Open();
         using var command = connection.CreateCommand();
+        command.CommandText = "select count(*) from sqlite_master where type = 'table' and name = 'app_rules'";
+        var isNewTable = (long)command.ExecuteScalar()! == 0;
         command.CommandText =
             """
             create table if not exists app_rules (
@@ -201,6 +208,24 @@ public sealed class AppRuleStorage
         command.ExecuteNonQuery();
         MigrateSafetyColumns(connection);
         NormalizeProcessOnlyRules(connection);
+        if (isNewTable)
+        {
+            using var transaction = connection.BeginTransaction();
+            foreach (var rule in DefaultRules())
+            {
+                using var insert = connection.CreateCommand();
+                insert.Transaction = transaction;
+                insert.CommandText = """
+                    insert or ignore into app_rules (process_name, window_title_pattern, list_behavior,
+                        manual_shortcut_allowed, word_count_trigger_allowed, character_trigger_allowed,
+                        local_engine_allowed, api_engine_allowed, safety_mode, prose_context_allowed)
+                    values ($process_name, $window_title_pattern, $list_behavior, $manual, $word_count, $character, $local, $api, $safety, $prose)
+                    """;
+                BindRule(insert, rule);
+                insert.ExecuteNonQuery();
+            }
+            transaction.Commit();
+        }
         return connection;
     }
 

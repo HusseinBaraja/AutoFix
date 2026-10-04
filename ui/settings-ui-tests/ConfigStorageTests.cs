@@ -5,6 +5,25 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class ConfigStorageTests
 {
+    /// <summary>Snapshot config and retained bytes agree, including BOM and legacy normalization, after the live file changes.</summary>
+    [TestMethod]
+    public void SnapshotRetainsTheBytesUsedToParseAndCreatesMissingDefaults()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var defaults = fixture.Storage.LoadSnapshot();
+        Assert.IsTrue(fixture.Storage.LastLoadCreatedConfig);
+        CollectionAssert.AreEqual(File.ReadAllBytes(fixture.Path), defaults.Bytes);
+        File.WriteAllText(fixture.Path, "[api]\nretry_count = 255\n[triggers]\nword_count = 18\n", new System.Text.UTF8Encoding(true));
+        var snapshot = fixture.Storage.LoadSnapshot();
+        Assert.IsFalse(fixture.Storage.LastLoadCreatedConfig);
+        CollectionAssert.AreEqual(File.ReadAllBytes(fixture.Path), snapshot.Bytes);
+        fixture.Storage.Save(AppConfig.Default());
+        using var reader = new StreamReader(new MemoryStream(snapshot.Bytes));
+        StringAssert.Contains(reader.ReadToEnd(), "word_count = 18");
+        Assert.AreEqual(18, snapshot.Config.Triggers.WordCount);
+        Assert.AreEqual(1, snapshot.Config.Api.RetryCount);
+    }
+
     /// <summary>Old retry counts load and import safely without relaxing save validation.</summary>
     [TestMethod]
     public void LegacyApiRetryCountsAreMigratedOnLoadAndImport()

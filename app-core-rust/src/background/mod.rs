@@ -32,10 +32,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use crate::{
-    settings::{save_config, AppConfig},
-    storage::Database,
-};
+use crate::{settings::AppConfig, storage::Database};
 
 use self::{
     admin::reject_elevated_process,
@@ -193,10 +190,17 @@ impl BackgroundRuntime {
         ensure_parent_directory(paths.config_path())?;
         ensure_parent_directory(paths.database_path())?;
 
+        let config_modified_at = modified_at(paths.config_path());
         let config = load_or_create_config(paths.config_path())?;
         let database = Database::open(paths.database_path()).map_err(BackgroundError::Database)?;
         let shutdown_requested = Arc::new(AtomicBool::new(false));
-        let components = RuntimeComponents::start(&config, &paths, shutdown_requested, database)?;
+        let components = RuntimeComponents::start(
+            &config,
+            config_modified_at,
+            &paths,
+            shutdown_requested,
+            database,
+        )?;
 
         tracing::info!("AutoFix background process started");
         Ok(Self { components })
@@ -219,6 +223,7 @@ impl BackgroundRuntime {
 impl RuntimeComponents {
     fn start(
         config: &AppConfig,
+        config_modified_at: Option<SystemTime>,
         paths: &RuntimePaths,
         shutdown_requested: Arc<AtomicBool>,
         database: Database,
@@ -229,7 +234,7 @@ impl RuntimeComponents {
         let input_worker = InputWorker::start(config.clone(), database)?;
         Ok(Self {
             config_path: paths.config_path().to_path_buf(),
-            config_modified_at: modified_at(paths.config_path()),
+            config_modified_at,
             config: config.clone(),
             ipc_server: NamedPipeIpcServer::initialize(
                 config,
@@ -284,14 +289,10 @@ impl RuntimeComponents {
     }
 
     fn reload_shortcuts_if_config_changed(&mut self) {
-        let modified_at = modified_at(&self.config_path);
-        if modified_at == self.config_modified_at {
-            return;
-        }
-
-        self.config_modified_at = modified_at;
-        match crate::settings::load_config(&self.config_path) {
-            Ok(config) => {
+        match load_changed_config(&self.config_path, &mut self.config_modified_at, |path| {
+            crate::settings::load_config(path)
+        }) {
+            Ok(Some(config)) => {
                 if shortcuts::detect_conflict(&config) {
                     tracing::warn!("shortcut conflict detected while reloading config");
                 }
@@ -299,6 +300,7 @@ impl RuntimeComponents {
                 self.global_shortcut.reload(&config);
                 self.input_worker.send(InputWork::Config(Box::new(config)));
             }
+            Ok(None) => {}
             Err(error) => tracing::warn!("failed to reload shortcuts from config: {}", error),
         }
     }
@@ -1266,12 +1268,22 @@ fn ensure_parent_directory(path: &Path) -> Result<(), BackgroundError> {
 
 fn load_or_create_config(path: &Path) -> Result<AppConfig, BackgroundError> {
     ensure_parent_directory(path)?;
+    crate::settings::load_or_create_config(path).map_err(BackgroundError::Config)
+}
 
-    if !path.exists() {
-        save_config(path, &AppConfig::default()).map_err(BackgroundError::Config)?;
+/// Cache the pre-load timestamp so writes during loading remain visible on the next tick.
+fn load_changed_config(
+    path: &Path,
+    last_modified_at: &mut Option<SystemTime>,
+    load: impl FnOnce(&Path) -> Result<AppConfig, crate::settings::ConfigIoError>,
+) -> Result<Option<AppConfig>, crate::settings::ConfigIoError> {
+    let current_modified_at = modified_at(path);
+    if current_modified_at == *last_modified_at {
+        return Ok(None);
     }
-
-    crate::settings::load_config(path).map_err(BackgroundError::Config)
+    let config = load(path)?;
+    *last_modified_at = current_modified_at;
+    Ok(Some(config))
 }
 
 fn modified_at(path: &Path) -> Option<SystemTime> {
