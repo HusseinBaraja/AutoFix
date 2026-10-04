@@ -161,6 +161,13 @@ imports reload the background process. Bundles exclude API keys, logs, typed
 session data and correction-history text; keys remain in Windows Credential
 Manager on the current device.
 
+Interrupted imports recover automatically before settings are loaded: SQLite
+durably records whether to restore the old settings or finish the committed
+import. Correction remains blocked while recovery is pending. Settings and rule
+data therefore resume from the same committed import, even if the settings file
+did not survive shutdown. See [the settings documentation](ui/settings-ui/README.md)
+for the recovery protocol and failure reporting.
+
 From the repository root, build and run AutoFix:
 
 ```powershell

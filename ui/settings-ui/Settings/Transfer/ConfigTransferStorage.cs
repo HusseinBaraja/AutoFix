@@ -28,6 +28,8 @@ public sealed partial class ConfigTransferStorage(ConfigStorage configStorage, A
             || Path.GetFullPath(destination).Equals(Path.GetFullPath(appRuleStorage.DatabasePath), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Choose a bundle destination different from AutoFix's live settings and database.");
         ConfigValidator.Validate(settings);
+        using var access = ConfigFileAccess.Acquire(configStorage.ConfigPath);
+        ImportRecovery.Recover(configStorage.ConfigPath, appRuleStorage.DatabasePath);
         EnsureProductTables();
         using var connection = OpenDatabase();
         using var transaction = connection.BeginTransaction(deferred: true);
@@ -68,11 +70,13 @@ public sealed partial class ConfigTransferStorage(ConfigStorage configStorage, A
     public ConfigImportPreview Preview(string source)
     {
         var bundle = ReadBundle(source); // Validate everything before reading or changing local storage.
+        using var access = ConfigFileAccess.Acquire(configStorage.ConfigPath);
+        ImportRecovery.Recover(configStorage.ConfigPath, appRuleStorage.DatabasePath);
+        var snapshot = configStorage.ReadSnapshot();
         EnsureProductTables();
         using var connection = OpenDatabase();
         using var transaction = connection.BeginTransaction(deferred: true);
         var currentData = ReadData(connection, transaction, bundle.Data?.LearnedRules is not null);
-        var snapshot = configStorage.LoadSnapshot();
         var fingerprint = Fingerprint(snapshot.Bytes, currentData);
         transaction.Commit();
         return new(Path.GetFileName(source), bundle, DescribeChanges(snapshot.Config, currentData, bundle), fingerprint);

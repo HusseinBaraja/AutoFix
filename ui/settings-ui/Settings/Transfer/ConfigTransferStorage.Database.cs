@@ -13,40 +13,57 @@ public sealed partial class ConfigTransferStorage
         => Apply(preview, transaction => transaction.Commit());
 
     /// <summary>Keeps transaction completion injectable for deterministic commit and recovery failure checks.</summary>
-    internal void Apply(ConfigImportPreview preview, Action<SqliteTransaction> commit)
+    internal void Apply(ConfigImportPreview preview, Action<SqliteTransaction> commit, Action<ImportStage>? checkpoint = null)
     {
         var bundle = Validate(preview.Bundle);
+        using var access = ConfigFileAccess.Acquire(configStorage.ConfigPath);
+        if (!Path.GetFullPath(appRuleStorage.DatabasePath).Equals(ConfigFileAccess.DatabasePath(configStorage.ConfigPath), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Import recovery requires settings and product data in the same AutoFix directory.");
+        ImportRecovery.Recover(configStorage.ConfigPath, appRuleStorage.DatabasePath);
         EnsureProductTables();
         using var connection = OpenDatabase();
-        using var transaction = connection.BeginTransaction();
-        var current = ReadData(connection, transaction, bundle.Data?.LearnedRules is not null);
+        ImportRecovery.EnsureTable(connection);
         var oldSettings = File.ReadAllBytes(configStorage.ConfigPath);
-        if (Fingerprint(oldSettings, current) != preview.Fingerprint)
-            throw new InvalidDataException("Settings or rules changed after preview. Cancel and preview the import again.");
+        var importedSettings = Encoding.UTF8.GetBytes(ConfigStorage.ToToml(bundle.Settings));
+        using (var preparation = connection.BeginTransaction())
+        {
+            var current = ReadData(connection, preparation, bundle.Data?.LearnedRules is not null);
+            if (Fingerprint(oldSettings, current) != preview.Fingerprint)
+                throw new InvalidDataException("Settings or rules changed after preview. Cancel and preview the import again.");
+            ImportRecovery.Prepare(connection, preparation, oldSettings, importedSettings);
+            preparation.Commit(); // Durable rollback decision precedes every file or policy replacement.
+        }
         var temporary = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(configStorage.ConfigPath))!, $".autofix-import-{Guid.NewGuid():N}.tmp");
         var backup = temporary + ".backup";
-        var settingsReplaced = false;
         Exception? failure = null;
         try
         {
-            File.WriteAllText(temporary, ConfigStorage.ToToml(bundle.Settings), new UTF8Encoding(false));
-            if (bundle.Data is { } data) ReplaceData(connection, transaction, data);
-            File.WriteAllBytes(backup, oldSettings);
-            File.Move(temporary, configStorage.ConfigPath, overwrite: true);
-            settingsReplaced = true;
-            commit(transaction);
+            checkpoint?.Invoke(ImportStage.Prepared);
+            ConfigFileAccess.WriteDurable(backup, oldSettings);
+            ConfigFileAccess.WriteDurable(temporary, importedSettings);
+            using (var transaction = connection.BeginTransaction())
+            {
+                var current = ReadData(connection, transaction, bundle.Data?.LearnedRules is not null);
+                if (Fingerprint(oldSettings, current) != preview.Fingerprint)
+                    throw new InvalidDataException("Rules changed while preparing the import. Preview the import again.");
+                if (bundle.Data is { } data) ReplaceData(connection, transaction, data);
+                ImportRecovery.MarkCommitted(connection, transaction);
+                ConfigFileAccess.ReplaceDurable(temporary, configStorage.ConfigPath);
+                checkpoint?.Invoke(ImportStage.SettingsReplaced);
+                commit(transaction); // Product rows and the forward-recovery decision commit together.
+            }
+            checkpoint?.Invoke(ImportStage.Committed);
+            ImportRecovery.Recover(configStorage.ConfigPath, appRuleStorage.DatabasePath);
         }
         catch (Exception error)
         {
             failure = error;
-            if (settingsReplaced)
+            try { ImportRecovery.Recover(configStorage.ConfigPath, appRuleStorage.DatabasePath); }
+            catch (Exception restoreError) when (restoreError is IOException or UnauthorizedAccessException or System.Security.SecurityException or SqliteException)
             {
-                try { File.Move(backup, configStorage.ConfigPath, overwrite: true); }
-                catch (Exception restoreError) when (restoreError is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-                {
-                    error.Data["SettingsRestoreError"] = restoreError;
-                    error.Data["SettingsBackupPath"] = backup;
-                }
+                error.Data["SettingsRestoreError"] = restoreError;
+                if (File.Exists(backup)) error.Data["SettingsBackupPath"] = backup;
+                error.Data["SettingsRecoveryDatabase"] = appRuleStorage.DatabasePath;
             }
             throw;
         }
@@ -73,7 +90,11 @@ public sealed partial class ConfigTransferStorage
     {
         var message = error.Message;
         if (error.Data["SettingsRestoreError"] is Exception restoreError)
-            message += $" | Settings could not be restored: {restoreError.Message}. Original settings backup: {error.Data["SettingsBackupPath"]}";
+        {
+            message += $" | Import recovery is pending: {restoreError.Message}.";
+            if (error.Data["SettingsBackupPath"] is string backup) message += $" Original settings backup: {backup}.";
+            message += $" Durable recovery database: {error.Data["SettingsRecoveryDatabase"]}. AutoFix blocks correction until recovery succeeds.";
+        }
         if (error.Data["ImportCleanupError"] is Exception cleanupError)
             message += $" | Import file could not be removed: {cleanupError.Message}. File: {error.Data["ImportCleanupPath"]}";
         return message;

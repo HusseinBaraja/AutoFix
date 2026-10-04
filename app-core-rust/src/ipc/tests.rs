@@ -327,6 +327,27 @@ fn updates_any_valid_config_setting_by_path() {
     assert_eq!(config.shortcuts.correct, "Ctrl+Shift+Space");
 }
 
+/// An IPC edit cannot replace a freshly imported setting with the server's earlier cached config.
+#[test]
+fn ipc_edits_preserve_external_imported_settings() {
+    let fixture = IpcFixture::start();
+    let mut config = AppConfig::default();
+    config.triggers.word_count = 22;
+    save_config(&fixture.config_path, &config).unwrap();
+    let response = send_request(
+        &fixture.pipe_path,
+        &IpcRequest::UpdateSetting(UpdateSettingRequest {
+            path: "shortcuts.correct".into(),
+            value: json!("Ctrl+Shift+Space"),
+        }),
+    )
+    .unwrap();
+    assert!(matches!(response, IpcResponse::SettingUpdated(_)));
+    let saved = crate::settings::load_config(&fixture.config_path).unwrap();
+    assert_eq!(saved.triggers.word_count, 22);
+    assert_eq!(saved.shortcuts.correct, "Ctrl+Shift+Space");
+}
+
 #[test]
 fn reads_update_setting_requests_larger_than_initial_buffer() {
     let fixture = IpcFixture::start();

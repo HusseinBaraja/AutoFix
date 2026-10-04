@@ -66,16 +66,19 @@ public sealed class ConfigTransferStorageTests
                 throw primary;
             }));
             Assert.AreSame(primary, error);
-            Assert.IsInstanceOfType(error.Data["SettingsRestoreError"], typeof(UnauthorizedAccessException));
+            Assert.IsInstanceOfType(error.Data["SettingsRestoreError"], typeof(IOException));
             var backup = (string)error.Data["SettingsBackupPath"]!;
             CollectionAssert.AreEqual(before, File.ReadAllBytes(backup));
-            Assert.AreEqual(22, fixture.Storage.Load(fixture.Path).Triggers.WordCount);
+            Assert.AreEqual(22, ConfigStorage.Parse(File.ReadAllText(fixture.Path)).Triggers.WordCount);
+            Assert.AreEqual(1L, Scalar(fixture, "select count(*) from settings_import_recovery"));
             Assert.AreEqual("keep-word", Scalar(fixture, "select entry from custom_dictionary_entries"));
             StringAssert.Contains(ConfigTransferStorage.DescribeFailure(error), "commit failed");
             StringAssert.Contains(ConfigTransferStorage.DescribeFailure(error), backup);
             Assert.AreEqual(1, Directory.GetFiles(fixture.Root, ".autofix-import-*").Length);
         }
         finally { locked?.Dispose(); }
+        Assert.AreEqual(10, fixture.Storage.Load(fixture.Path).Triggers.WordCount);
+        Assert.AreEqual(0L, Scalar(fixture, "select count(*) from settings_import_recovery"));
     }
 
     /// <summary>A locked temporary file cannot mask a commit failure or stop settings restoration.</summary>
@@ -308,7 +311,7 @@ public sealed class ConfigTransferStorageTests
         var preview = transfer.Preview(path);
         var before = File.ReadAllText(fixture.Path);
         using (var locked = new FileStream(fixture.Path, FileMode.Open, FileAccess.Read, FileShare.Read))
-            Assert.ThrowsException<UnauthorizedAccessException>(() => transfer.Apply(preview));
+            Assert.ThrowsException<IOException>(() => transfer.Apply(preview));
         Assert.AreEqual(before, File.ReadAllText(fixture.Path));
         Assert.AreEqual("keep-word", Scalar(fixture, "select entry from custom_dictionary_entries"));
     }

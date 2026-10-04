@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Tomlyn;
+using AutoFix.SettingsUi.Settings.Transfer;
 
 namespace AutoFix.SettingsUi.Settings;
 
@@ -34,10 +35,18 @@ public sealed class ConfigStorage
     /// <summary>Parses the same file bytes retained for stale-preview detection, creating defaults when missing.</summary>
     internal (AppConfig Config, byte[] Bytes) LoadSnapshot()
     {
+        using var access = ConfigFileAccess.Acquire(ConfigPath);
+        ImportRecovery.Recover(ConfigPath);
+        return ReadSnapshot();
+    }
+
+    /// <summary>Reads settings while the caller already owns the settings-file lock and has completed recovery.</summary>
+    internal (AppConfig Config, byte[] Bytes) ReadSnapshot()
+    {
         if (!File.Exists(ConfigPath))
         {
             var config = AppConfig.Default();
-            Save(config);
+            WriteConfig(config);
             LastLoadCreatedConfig = true;
         }
         else LastLoadCreatedConfig = false;
@@ -50,6 +59,10 @@ public sealed class ConfigStorage
     /// <summary>Loads TOML, normalizes legacy grammar categories and retry counts, and rejects invalid settings.</summary>
     public AppConfig Load(string path)
     {
+        if (!Path.GetFullPath(path).Equals(Path.GetFullPath(ConfigPath), StringComparison.OrdinalIgnoreCase))
+            return Parse(File.ReadAllText(path));
+        using var access = ConfigFileAccess.Acquire(path);
+        ImportRecovery.Recover(path);
         return Parse(File.ReadAllText(path));
     }
 
@@ -80,13 +93,24 @@ public sealed class ConfigStorage
     public void Save(AppConfig config)
     {
         ConfigValidator.Validate(config);
+        using var access = ConfigFileAccess.Acquire(ConfigPath);
+        if (ImportRecovery.Recover(ConfigPath))
+            throw new InvalidDataException("An interrupted import was recovered. Reload settings before saving edits.");
+        WriteConfig(config);
+    }
+
+    private void WriteConfig(AppConfig config)
+    {
         var directory = Path.GetDirectoryName(ConfigPath);
         if (!string.IsNullOrWhiteSpace(directory))
         {
             Directory.CreateDirectory(directory);
         }
 
-        File.WriteAllText(ConfigPath, ToToml(config), Encoding.UTF8);
+        var temporary = ConfigPath + ".save.tmp";
+        ConfigFileAccess.WriteDurable(temporary, Encoding.UTF8.GetBytes(ToToml(config)));
+        try { ConfigFileAccess.ReplaceDurable(temporary, ConfigPath); }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
     public void Import(string sourcePath)
@@ -97,6 +121,11 @@ public sealed class ConfigStorage
 
     public void Export(string destinationPath, AppConfig config)
     {
+        if (Path.GetFullPath(destinationPath).Equals(Path.GetFullPath(ConfigPath), StringComparison.OrdinalIgnoreCase))
+        {
+            Save(config);
+            return;
+        }
         ConfigValidator.Validate(config);
         var directory = Path.GetDirectoryName(destinationPath);
         if (!string.IsNullOrWhiteSpace(directory))

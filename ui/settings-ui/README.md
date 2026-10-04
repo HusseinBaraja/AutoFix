@@ -97,8 +97,19 @@ use the same settings-file snapshot. SQLite replacements use one transaction;
 handled file/database failures roll back rows and restore replaced settings. If
 restoration fails, the error includes the original failure and the path to a
 retained backup of the original settings. Cleanup failures also preserve the
-original error. This compensation is not a cross-file guarantee against process crashes
-or power loss. After success the UI refreshes and requests an engine config reload,
+original error. Imports also persist a recovery record before replacing settings.
+The record chooses the original settings until SQLite commits the imported rows;
+that same commit chooses the imported settings. WPF and the Rust engine reconcile
+any surviving record before loading settings. Settings access uses a shared
+Windows file lock, and correction admission, outbound sends and replacements
+refuse pending recovery. File contents are flushed and replaced with write-through
+semantics before the record is cleared. Interrupted imports therefore recover
+the settings and participating product rows to the same committed generation,
+including when the settings file is missing. Failed recovery retains the record
+and blocks correction until a later attempt succeeds. A stale save that triggers
+recovery requires reloading settings; IPC edits read the latest recovered config.
+The journal is local recovery data and is never included in export.
+After success the UI refreshes and requests an engine config reload,
 even if Windows startup registration fails. With the engine stopped, settings
 take effect on its next start. Existing credentials and diagnostic/history tables
 are untouched. Engine migration versions remain owned by the engine.

@@ -211,6 +211,53 @@ mod tests {
         assert!(authorize().is_none());
     }
 
+    /// Pending import recovery denies existing outbound authorizations and replacement reservations for every trigger.
+    #[test]
+    fn pending_import_blocks_sends_and_replacements() {
+        for trigger in [
+            TriggerKind::ManualShortcut,
+            TriggerKind::WordCount,
+            TriggerKind::Character,
+            TriggerKind::FinalFixBeforeReanchor,
+        ] {
+            let fixture = Fixture::new();
+            fixture.database.app_rules().upsert(&allow_rule()).unwrap();
+            let authorize = fixture.authorize(trigger, Arc::new(AtomicBool::new(false)));
+            assert!(authorize().is_some());
+            let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+            connection
+                .execute_batch(
+                    "create table settings_import_recovery (id integer primary key);
+                insert into settings_import_recovery values (1)",
+                )
+                .unwrap();
+            assert!(authorize().is_none());
+            let mut request = triggers::manual(
+                1,
+                "",
+                "This is teh sentence.",
+                ContextVersions::default(),
+                &SelectionCapture::NoSelection,
+                &AppConfig::default(),
+            )
+            .unwrap();
+            request.trigger = trigger;
+            assert!(
+                super::super::SecurityGate::authorize_correction_replacement(
+                    &request,
+                    &AppConfig::default(),
+                    &fixture.database,
+                    &target()
+                )
+                .is_none()
+            );
+            connection
+                .execute("delete from settings_import_recovery", [])
+                .unwrap();
+            assert!(authorize().is_some());
+        }
+    }
+
     /// Permission is read at every send, including changes to trigger and title rules.
     #[test]
     fn revocation_blocks_existing_authorizations_for_every_correction_trigger() {

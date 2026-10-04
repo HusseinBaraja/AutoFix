@@ -32,10 +32,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use crate::{
-    settings::{save_config, AppConfig},
-    storage::Database,
-};
+use crate::{settings::AppConfig, storage::Database};
 
 use self::{
     admin::reject_elevated_process,
@@ -284,14 +281,14 @@ impl RuntimeComponents {
     }
 
     fn reload_shortcuts_if_config_changed(&mut self) {
-        let modified_at = modified_at(&self.config_path);
-        if modified_at == self.config_modified_at {
+        let current_modified_at = modified_at(&self.config_path);
+        if current_modified_at == self.config_modified_at {
             return;
         }
 
-        self.config_modified_at = modified_at;
         match crate::settings::load_config(&self.config_path) {
             Ok(config) => {
+                self.config_modified_at = modified_at(&self.config_path);
                 if shortcuts::detect_conflict(&config) {
                     tracing::warn!("shortcut conflict detected while reloading config");
                 }
@@ -1266,12 +1263,7 @@ fn ensure_parent_directory(path: &Path) -> Result<(), BackgroundError> {
 
 fn load_or_create_config(path: &Path) -> Result<AppConfig, BackgroundError> {
     ensure_parent_directory(path)?;
-
-    if !path.exists() {
-        save_config(path, &AppConfig::default()).map_err(BackgroundError::Config)?;
-    }
-
-    crate::settings::load_config(path).map_err(BackgroundError::Config)
+    crate::settings::load_or_create_config(path).map_err(BackgroundError::Config)
 }
 
 fn modified_at(path: &Path) -> Option<SystemTime> {
