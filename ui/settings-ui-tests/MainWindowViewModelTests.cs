@@ -439,7 +439,7 @@ public sealed partial class MainWindowViewModelTests
     }
 
     [TestMethod]
-    public void SearchTextTrimsInputBeforeFilteringAndScoring()
+    public void SearchTextPreservesInputWhileIgnoringSurroundingWhitespaceForMatching()
     {
         var viewModel = new MainWindowViewModel(
             new FakeBackgroundIpcClient(),
@@ -450,7 +450,7 @@ public sealed partial class MainWindowViewModelTests
 
         var visibleSections = viewModel.SectionView.Cast<SettingsSectionViewModel>().Select(section => section.Name).ToArray();
 
-        Assert.AreEqual("fallback_to_local", viewModel.SearchText);
+        Assert.AreEqual("  fallback_to_local  ", viewModel.SearchText);
         CollectionAssert.AreEqual(new[] { "Engines" }, visibleSections);
         Assert.AreEqual("Engines", viewModel.SelectedSection?.Name);
     }

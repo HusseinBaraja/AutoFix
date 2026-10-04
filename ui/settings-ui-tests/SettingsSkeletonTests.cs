@@ -44,6 +44,7 @@ public sealed class SettingsSkeletonTests
                 "Dictionary",
                 "Engines",
                 "Context",
+                "Privacy & Security",
                 "Feedback",
                 "App Rules",
                 "Logs / Debug",

@@ -38,7 +38,7 @@ public sealed class SettingsUiResourceTests
             .Any(border => (string?)border.Attribute("Style") == "{StaticResource InputShell}"));
         Assert.IsTrue(window
             .Descendants(Presentation + "TextBlock")
-            .Any(text => (string?)text.Attribute("Text") == "Search settings"));
+            .Any(text => ((string?)text.Attribute("Text"))?.StartsWith("Search settings", StringComparison.Ordinal) == true));
         Assert.AreEqual("Search settings", (string?)searchBox.Attribute("AutomationProperties.Name"));
         Assert.IsTrue(window
             .Descendants(Presentation + "TextBlock")

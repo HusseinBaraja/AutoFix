@@ -6,6 +6,29 @@ The completed product pages autosave validated config and notify the background
 engine. Save and validation results appear below every page. Invalid config edits
 remain visible without replacing the last saved config.
 
+Search is available across the top of the window. Ctrl+F focuses it and selects
+the current query; Escape in the search box or Clear search restores browsing.
+Matching is case-insensitive and requires all query words. Setting names,
+descriptions, option labels and config paths are searchable, including nested
+thresholds and queue behaviors (for example `word count threshold`,
+`pending queue cancel oldest` or `api.timeout_auto_ms`). Matching sections remain
+in the sidebar, individual nonmatching settings are hidden, and matching terms
+are highlighted. Section-name searches expose that whole section. A no-results
+view replaces stale content and offers a clear action. Searching never removes
+config fields or changes saved values; edits in filtered results still save the
+complete config. Active search is reapplied after config load or import.
+
+Dictionary editing, per-trigger app rules, secure API-key management, automatic
+language detection and the log viewer have indexed names and descriptions too.
+Search indexes public UI metadata only, never keys, configured values, dictionary
+contents, app-rule rows, typed text or log payloads.
+
+**Privacy & Security** contains the existing arbitrary-selection and clipboard
+switches, plus read-only explanations of unconditional secure-field blocking,
+current-session scope and caret safety. These controls use the same config paths
+and defaults as before. All product sections, including Context's nested limits,
+are searchable.
+
 **App Rules** owns the global blocklist/allowlist run mode. Its table exposes each
 app's list behavior, three trigger permissions, local/API permissions and prose
 safety. Add a process name and optional window-title pattern; identity columns are

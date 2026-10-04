@@ -90,7 +90,7 @@ active when learning is off. Native Ctrl+Z and suggestion rejection are not trac
 use AutoFix's undo shortcut to reject an applied correction.
 
 Native clipboard replacement preserves all readable formats and restores them
-before reporting success. Disable it under **Correction > Use clipboard for
+before reporting success. Disable it under **Privacy & Security > Use clipboard for
 correction** or set `replacement.clipboard_enabled = false` in settings TOML.
 See [the engine documentation](app-core-rust/README.md) for runtime boundaries.
 
@@ -139,12 +139,19 @@ moves the corrected text into informative context, clears executable context,
 records app-level undo and writes metadata without document text.
 
 Selected text must belong to the current typed segment unless **Correct arbitrary
-selection** is enabled under **Shortcuts**. Even with that option, backward
+selection** is enabled under **Privacy & Security**. Even with that option, backward
 selections and selections without reliable caret proof skip correction. Text after
 the caret stays untouched. Unchanged or suppressed selections retain their context
 and selection; suggestion acceptance remains planned.
 
 ## Run App
+
+The settings search bar finds names, descriptions, choices and config paths
+across every page, including Privacy & Security and nested Context limits.
+Use Ctrl+F, then try `word count threshold`, `timeout` or `cancel oldest`.
+Matching settings are filtered and highlighted. Clear search or press Escape in
+the search box to browse again. Keys, typed text and saved dictionary contents
+are excluded from the search index.
 
 From the repository root, build and run AutoFix:
 

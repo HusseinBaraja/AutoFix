@@ -20,6 +20,35 @@ public partial class MainWindow : Window
         this.viewModel = viewModel;
         InitializeComponent();
         DataContext = viewModel;
+        viewModel.PropertyChanged += SettingsNavigationChanged;
+    }
+
+    private void SettingsNavigationChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(MainWindowViewModel.SearchText) or nameof(MainWindowViewModel.SelectedSection))
+            Dispatcher.BeginInvoke(new Action(() => SettingsScrollViewer.ScrollToTop()));
+    }
+
+    private void Window_Closed(object? sender, EventArgs e) => viewModel.PropertyChanged -= SettingsNavigationChanged;
+
+    private void FocusSearch_CanExecute(object sender, CanExecuteRoutedEventArgs e)
+    {
+        e.CanExecute = recordingHotkey is null;
+        e.Handled = true;
+    }
+
+    private void FocusSearch_Executed(object sender, ExecutedRoutedEventArgs e)
+    {
+        SearchBox.Focus(); SearchBox.SelectAll(); e.Handled = true;
+    }
+
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (recordingHotkey is not null) return;
+        if (e.Key == Key.Escape && SearchBox.IsKeyboardFocusWithin)
+        {
+            viewModel.ClearSearchCommand.Execute(null); e.Handled = true;
+        }
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)

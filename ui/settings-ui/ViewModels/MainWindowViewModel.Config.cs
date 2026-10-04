@@ -161,7 +161,7 @@ public sealed partial class MainWindowViewModel
         SubscribeToSettings();
         LoadDictionary();
         SelectedSection = Sections.FirstOrDefault();
-        SectionView.Refresh();
+        UpdateSearch();
         ConfigFormMapper.ClearValidation(Sections);
         IsDirty = dirty;
         RefreshApiKeyStatus();

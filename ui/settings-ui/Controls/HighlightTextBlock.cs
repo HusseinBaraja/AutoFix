@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
+using AutoFix.SettingsUi.Settings;
 
 namespace AutoFix.SettingsUi.Controls;
 
@@ -43,39 +44,42 @@ public sealed class HighlightTextBlock : TextBlock
         Inlines.Clear();
 
         var text = HighlightText ?? "";
-        var query = Query?.Trim() ?? "";
+        var query = new SettingsSearchQuery(Query ?? "");
         if (text.Length == 0)
         {
             return;
         }
 
-        if (query.Length == 0)
+        if (query.Terms.Count == 0)
         {
             Inlines.Add(new Run(text));
             return;
         }
 
-        var cursor = 0;
-        while (cursor < text.Length)
+        // Merge overlapping terms so multi-word and path-style queries highlight consistently.
+        var highlighted = new bool[text.Length];
+        foreach (var term in query.Terms)
         {
-            var match = text.IndexOf(query, cursor, StringComparison.OrdinalIgnoreCase);
-            if (match < 0)
+            for (var start = 0; start < text.Length;)
             {
-                Inlines.Add(new Run(text[cursor..]));
-                break;
+                var match = text.IndexOf(term, start, StringComparison.OrdinalIgnoreCase);
+                if (match < 0) break;
+                Array.Fill(highlighted, true, match, term.Length);
+                start = match + 1;
             }
-
-            if (match > cursor)
+        }
+        for (var cursor = 0; cursor < text.Length;)
+        {
+            var start = cursor;
+            var highlight = highlighted[cursor++];
+            while (cursor < text.Length && highlighted[cursor] == highlight) cursor++;
+            var run = new Run(text[start..cursor]);
+            if (highlight)
             {
-                Inlines.Add(new Run(text[cursor..match]));
+                run.Background = Brushes.Gold;
+                run.Foreground = Brushes.Black;
             }
-
-            Inlines.Add(new Run(text.Substring(match, query.Length))
-            {
-                Background = Brushes.Gold,
-                Foreground = Brushes.Black,
-            });
-            cursor = match + query.Length;
+            Inlines.Add(run);
         }
     }
 }

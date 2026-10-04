@@ -11,7 +11,15 @@
         MinHeight="620"
         Background="#F6F7FB"
         Loaded="Window_Loaded"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        Closed="Window_Closed"
         Deactivated="Window_Deactivated">
+    <Window.CommandBindings>
+        <CommandBinding Command="ApplicationCommands.Find" Executed="FocusSearch_Executed" CanExecute="FocusSearch_CanExecute" />
+    </Window.CommandBindings>
+    <Window.InputBindings>
+        <KeyBinding Command="ApplicationCommands.Find" Key="F" Modifiers="Control" />
+    </Window.InputBindings>
     <Window.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
@@ -26,12 +34,44 @@
     </Window.Resources>
 
     <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="260" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <Border Background="#FFFFFF"
+        <StackPanel Grid.ColumnSpan="2" Margin="20,12,20,10">
+            <DockPanel>
+                <Button Content="Clear search" Command="{Binding ClearSearchCommand}" DockPanel.Dock="Right" Margin="12,0,0,0"
+                        Visibility="{Binding HasSearchQuery, Converter={StaticResource BoolToVisibility}}" />
+                <Border Style="{StaticResource InputShell}">
+                    <Grid>
+                        <TextBox x:Name="SearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                 AutomationProperties.Name="Search settings" Height="40" />
+                        <TextBlock Text="Search settings — try word threshold, timeout, or queue behavior" Margin="13,0"
+                                   Foreground="{StaticResource MutedTextBrush}" IsHitTestVisible="False" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource BodyText}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasSearchQuery}" Value="False">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                </Border>
+            </DockPanel>
+            <TextBlock Text="{Binding SearchSummary}" Margin="2,6,0,0" Foreground="{StaticResource MutedTextBrush}"
+                       AutomationProperties.Name="Settings search results" AutomationProperties.LiveSetting="Polite" />
+        </StackPanel>
+
+        <Border Grid.Row="1" Background="#FFFFFF"
                 BorderBrush="#E5E8F0"
                 BorderThickness="0,0,1,0">
             <DockPanel>
@@ -46,31 +86,6 @@
                                    FontWeight="SemiBold"
                                    VerticalAlignment="Center" />
                     </StackPanel>
-                    <Border Style="{StaticResource InputShell}"
-                            Margin="0,18,0,0">
-                        <Grid>
-                            <TextBox x:Name="SearchBox"
-                                     Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                                     AutomationProperties.Name="Search settings"
-                                     Height="40" />
-                            <TextBlock Text="Search settings"
-                                       Margin="13,0"
-                                       Foreground="{StaticResource MutedTextBrush}"
-                                       IsHitTestVisible="False"
-                                       VerticalAlignment="Center">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock" BasedOn="{StaticResource BodyText}">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
-                                                <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                        </Grid>
-                    </Border>
                 </StackPanel>
 
                 <ListBox ItemsSource="{Binding SectionView}"
@@ -81,7 +96,8 @@
                          Background="Transparent">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <TextBlock Text="{Binding Name}"
+                            <controls:HighlightTextBlock HighlightText="{Binding Name}"
+                                       Query="{Binding DataContext.SearchText, RelativeSource={RelativeSource AncestorType=Window}}"
                                        FontSize="14"
                                        FontWeight="SemiBold" />
                         </DataTemplate>
@@ -90,7 +106,7 @@
             </DockPanel>
         </Border>
 
-        <Grid Grid.Column="1" Margin="28">
+        <Grid Grid.Column="1" Grid.Row="1" Margin="28">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="18" />
@@ -98,7 +114,7 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <DockPanel LastChildFill="True">
+            <DockPanel LastChildFill="True" Visibility="{Binding HasSelectedSection, Converter={StaticResource BoolToVisibility}}">
                 <StackPanel Margin="0,0,16,0">
                     <StackPanel Orientation="Horizontal">
                         <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.Name}"
@@ -118,6 +134,7 @@
             </DockPanel>
 
             <ScrollViewer x:Name="SettingsScrollViewer"
+                          Visibility="{Binding HasSelectedSection, Converter={StaticResource BoolToVisibility}}"
                           Grid.Row="2"
                           HorizontalScrollBarVisibility="Disabled"
                           VerticalScrollBarVisibility="Auto">
@@ -127,6 +144,7 @@
                         <ItemsControl.ItemContainerStyle>
                             <Style TargetType="ContentPresenter">
                                 <Setter Property="HorizontalAlignment" Value="Stretch" />
+                                <Setter Property="Visibility" Value="{Binding IsSearchVisible, Converter={StaticResource BoolToVisibility}}" />
                             </Style>
                         </ItemsControl.ItemContainerStyle>
                         <ItemsControl.ItemTemplate>
@@ -330,17 +348,18 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                    <Border Style="{StaticResource SettingsCard}" Visibility="{Binding SelectedSection.ShowsLanguages, Converter={StaticResource BoolToVisibility}}">
+                    <Border Style="{StaticResource SettingsCard}" Visibility="{Binding SelectedSection.ShowLanguageResults, Converter={StaticResource BoolToVisibility}}">
                         <StackPanel>
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.LanguageSearchCard.Title}" Query="{Binding SearchText}" FontWeight="SemiBold" Margin="0,0,0,6" />
                             <TextBlock Text="{Binding LanguageDetectionSummary}" TextWrapping="Wrap" FontWeight="SemiBold" />
-                            <TextBlock Text="Clear the global preference to detect automatically. Per-app overrides still take priority. AutoFix corrects text in its original language and never translates it." TextWrapping="Wrap" Margin="0,6,0,12" />
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.LanguageSearchCard.Description}" Query="{Binding SearchText}" TextWrapping="Wrap" Margin="0,6,0,12" />
                             <Button Content="Use automatic detection" Command="{Binding AutoDetectLanguageCommand}" HorizontalAlignment="Left" />
                         </StackPanel>
                     </Border>
-                    <Border Style="{StaticResource SettingsCard}" Visibility="{Binding SelectedSection.ShowsEngines, Converter={StaticResource BoolToVisibility}}">
+                    <Border Style="{StaticResource SettingsCard}" Visibility="{Binding SelectedSection.ShowApiKeyResults, Converter={StaticResource BoolToVisibility}}">
                         <StackPanel>
-                            <TextBlock Text="API key for the selected provider" FontWeight="SemiBold" />
-                            <TextBlock Text="Keys are stored only in Windows Credential Manager. Saved keys are never shown or included in config export. A custom endpoint uses the custom provider's key. Choose a model supported by your provider." TextWrapping="Wrap" Margin="0,6,0,12" />
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.ApiKeySearchCard.Title}" Query="{Binding SearchText}" FontWeight="SemiBold" />
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.ApiKeySearchCard.Description}" Query="{Binding SearchText}" TextWrapping="Wrap" Margin="0,6,0,12" />
                             <Border Style="{StaticResource InputShell}" Margin="0,0,0,12">
                                 <PasswordBox x:Name="ApiKeyBox" AutomationProperties.Name="API key" IsVisibleChanged="ApiKeyBox_IsVisibleChanged" BorderThickness="0" Background="Transparent" Padding="12" MinHeight="40" />
                             </Border>
@@ -352,10 +371,10 @@
                             <TextBlock Text="{Binding ApiKeyMessage}" TextWrapping="Wrap" Margin="0,8,0,0" />
                         </StackPanel>
                     </Border>
-                    <Border Style="{StaticResource TableShell}" Visibility="{Binding SelectedSection.ShowsLogs, Converter={StaticResource BoolToVisibility}}">
+                    <Border Style="{StaticResource TableShell}" Visibility="{Binding SelectedSection.ShowLogResults, Converter={StaticResource BoolToVisibility}}">
                         <StackPanel Margin="16">
-                            <TextBlock Text="Correction metadata" FontWeight="SemiBold" />
-                            <TextBlock Text="Latest 500 events, newest first. This viewer never reads typed text or debug payloads. Clear logs deletes both correction metadata and debug events." TextWrapping="Wrap" Margin="0,6,0,12" />
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.LogSearchCard.Title}" Query="{Binding SearchText}" FontWeight="SemiBold" />
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.LogSearchCard.Description}" Query="{Binding SearchText}" TextWrapping="Wrap" Margin="0,6,0,12" />
                             <WrapPanel Margin="0,0,0,12">
                                 <Button Content="Refresh logs" Command="{Binding RefreshLogsCommand}" Margin="0,0,8,0" />
                                 <Button Content="Clear logs" Command="{Binding ClearLogsCommand}" />
@@ -378,9 +397,10 @@
 
                     <Border Style="{StaticResource TableShell}"
                             Margin="0,0,0,10"
-                            Visibility="{Binding SelectedSection.HasAppRules, Converter={StaticResource BoolToVisibility}}">
+                            Visibility="{Binding SelectedSection.ShowAppRulesResults, Converter={StaticResource BoolToVisibility}}">
                         <DockPanel LastChildFill="True" Margin="16">
-                            <TextBlock DockPanel.Dock="Top" Text="Defaults disable triggers in terminals and code editors, and block password managers, remote sessions, games and sensitive system apps. Safety auto detects known terminals and editors. Manual correction requires selected prose; editors also require Editor prose. Commands, code and uncertain text are skipped. Delete and add a rule to change its process or title scope." TextWrapping="Wrap" Margin="0,0,0,10" />
+                            <controls:HighlightTextBlock DockPanel.Dock="Top" HighlightText="{Binding SelectedSection.AppRulesSearchCard.Title}" Query="{Binding SearchText}" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <controls:HighlightTextBlock DockPanel.Dock="Top" HighlightText="{Binding SelectedSection.AppRulesSearchCard.Description}" Query="{Binding SearchText}" TextWrapping="Wrap" Margin="0,0,0,10" />
                             <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
                                 <TextBlock Text="New app process (for example notepad.exe)" />
                                 <Border Style="{StaticResource InputShell}" Margin="0,4,0,8"><TextBox Text="{Binding NewAppProcess, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="New app process" /></Border>
@@ -443,10 +463,10 @@
                     </Border>
 
                     <Border Style="{StaticResource TableShell}"
-                            Visibility="{Binding SelectedSection.HasDictionary, Converter={StaticResource BoolToVisibility}}">
+                            Visibility="{Binding SelectedSection.ShowDictionaryResults, Converter={StaticResource BoolToVisibility}}">
                         <StackPanel Margin="16">
-                            <TextBlock Text="Custom dictionary and pair rules" FontWeight="SemiBold" Margin="0,0,0,8" />
-                            <TextBlock Text="Select an entry to edit. Language: BCP 47 tag (en, en-US); und protects all languages. Empty app scope applies everywhere." TextWrapping="Wrap" Margin="0,0,0,12" />
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.DictionarySearchCard.Title}" Query="{Binding SearchText}" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <controls:HighlightTextBlock HighlightText="{Binding SelectedSection.DictionarySearchCard.Description}" Query="{Binding SearchText}" TextWrapping="Wrap" Margin="0,0,0,12" />
                             <WrapPanel Margin="0,0,0,12">
                                 <Button Content="New entry" Command="{Binding NewDictionaryCommand}" Margin="0,0,8,0" />
                                 <Button Content="Refresh" Command="{Binding RefreshDictionaryCommand}" Margin="0,0,8,0" />
@@ -483,6 +503,14 @@
                     </Border>
                 </StackPanel>
             </ScrollViewer>
+            <Border Grid.Row="2" Style="{StaticResource SettingsCard}" VerticalAlignment="Top"
+                    Visibility="{Binding HasNoSearchResults, Converter={StaticResource BoolToVisibility}}">
+                <StackPanel>
+                    <TextBlock Text="No matching settings" FontSize="20" FontWeight="SemiBold" />
+                    <TextBlock Text="Try a setting name, part of its description, or a behavior such as cancel oldest. Clear the search to browse all sections." TextWrapping="Wrap" Margin="0,8,0,12" />
+                    <Button Content="Show all settings" Command="{Binding ClearSearchCommand}" HorizontalAlignment="Left" />
+                </StackPanel>
+            </Border>
             <StackPanel Grid.Row="3" Margin="0,12,0,0">
                 <TextBlock Text="{Binding StatusTitle}" FontWeight="SemiBold" />
                 <TextBlock Text="{Binding StatusDetail}" TextWrapping="Wrap" Foreground="#667085" MaxHeight="60" />
@@ -490,6 +518,7 @@
         </Grid>
 
         <Border Grid.ColumnSpan="2"
+                Grid.RowSpan="2"
                 Background="#CCF6F7FB"
                 Visibility="{Binding IsOnboardingVisible, Converter={StaticResource BoolToVisibility}}">
             <Border Width="620"
