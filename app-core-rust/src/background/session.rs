@@ -18,6 +18,9 @@ mod undo;
 use undo::CorrectionUndo;
 pub(super) use undo::CorrectionUndoTarget;
 
+#[cfg(test)]
+mod state_machine_tests;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct SessionIdentity {
     // Keep the owner even for focused-element and window keys. IDs and HWNDs

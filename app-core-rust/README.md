@@ -13,6 +13,27 @@ This component owns the installed product's background mode:
 - Replacement engine.
 - App rules and security layer.
 
+## Deterministic context/session tests
+
+Run the state transitions and result-version validation without native capture,
+UI automation, correction workers, network access, or timing waits:
+
+```powershell
+cargo test -p background-engine state_machine_tests --lib
+cargo test -p background-engine context_versions --lib
+```
+
+The suites cover session creation and hybrid key fallback, informative capture
+and shrinking, executable typing, correction/no-change commits, undo, backward
+and short/long forward movement, re-anchoring, final-fix eligibility,
+pending capacity and overflow policies, and stale-result discard. Manual results
+require matching context/executable/caret versions; frozen automatic results may
+survive newer typing while their owned range remains valid. Completion tests
+provide ready in-memory results and fake capture/replacement callbacks. No UI
+tests are included. Run `cargo test` for the full Rust suite.
+
+## Runtime behavior
+
 The correction engine contract is defined in `src/correction`. It keeps
 read-only informative context separate from editable executable text and carries
 the correction mode, enabled grammar categories, language and mixed-language
