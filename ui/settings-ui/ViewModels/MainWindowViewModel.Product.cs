@@ -59,6 +59,7 @@ public sealed partial class MainWindowViewModel
         { ApiKeyMessage = error.Message; }
     }
 
+    /// <summary>Shows credential status or expected profile/Windows errors without interrupting settings navigation.</summary>
     private void RefreshApiKeyStatus()
     {
         try
@@ -69,7 +70,7 @@ public sealed partial class MainWindowViewModel
                 ? $"A key is saved for {config.Api.ProviderPreset}. Enter a new key to replace it."
                 : $"No key saved for {config.Api.ProviderPreset}.";
         }
-        catch (Win32Exception error) { ApiKeyMessage = error.Message; }
+        catch (Exception error) when (error is Win32Exception or ArgumentException) { ApiKeyMessage = error.Message; }
     }
 
     private void LoadLogs()

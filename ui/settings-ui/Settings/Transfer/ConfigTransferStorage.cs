@@ -64,6 +64,7 @@ public sealed partial class ConfigTransferStorage(ConfigStorage configStorage, A
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
+    /// <summary>Builds a read-only diff and stale-state hash from one snapshot of the live settings and rules.</summary>
     public ConfigImportPreview Preview(string source)
     {
         var bundle = ReadBundle(source); // Validate everything before reading or changing local storage.
@@ -71,10 +72,10 @@ public sealed partial class ConfigTransferStorage(ConfigStorage configStorage, A
         using var connection = OpenDatabase();
         using var transaction = connection.BeginTransaction(deferred: true);
         var currentData = ReadData(connection, transaction, bundle.Data?.LearnedRules is not null);
-        var currentConfig = configStorage.LoadOrCreate();
-        var fingerprint = Fingerprint(currentData);
+        var snapshot = configStorage.LoadSnapshot();
+        var fingerprint = Fingerprint(snapshot.Bytes, currentData);
         transaction.Commit();
-        return new(Path.GetFileName(source), bundle, DescribeChanges(currentConfig, currentData, bundle), fingerprint);
+        return new(Path.GetFileName(source), bundle, DescribeChanges(snapshot.Config, currentData, bundle), fingerprint);
     }
 
     private static ConfigBundle ReadBundle(string source)
@@ -188,9 +189,12 @@ public sealed partial class ConfigTransferStorage(ConfigStorage configStorage, A
         using var writer = new StreamWriter(archive.CreateEntry(name).Open(), new UTF8Encoding(false));
         writer.Write(text);
     }
-    private string Fingerprint(TransferData data)
+    /// <summary>Hashes supplied snapshot bytes and participating product rows without rereading live files.</summary>
+    internal static string Fingerprint(byte[] settings, TransferData data)
     {
-        var state = File.ReadAllText(configStorage.ConfigPath) + JsonSerializer.Serialize(data, JsonOptions);
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(state)));
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData(settings);
+        hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(data, JsonOptions));
+        return Convert.ToHexString(hash.GetHashAndReset());
     }
 }

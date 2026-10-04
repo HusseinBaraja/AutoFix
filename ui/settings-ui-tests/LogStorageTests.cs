@@ -6,6 +6,30 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class LogStorageTests
 {
+    /// <summary>Legacy null metadata remains readable without changing populated values or the database.</summary>
+    [TestMethod]
+    public void ViewerDefaultsNullMetadataAndPreservesPopulatedValues()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var path = Path.Combine(fixture.Root, "nullable.sqlite");
+        using var connection = new SqliteConnection($"Data Source={path}");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            create table correction_metadata (id integer primary key, occurred_at text,
+                app_process_name text, trigger_type text, confidence_tier text, engine_used text,
+                replacement_method text, result_reason text, latency_ms integer);
+            insert into correction_metadata values (1, 'timestamp', 'notes.exe', 'manual', 'high', 'local', 'clipboard', 'applied', 20);
+            insert into correction_metadata (id) values (2);
+            """;
+        command.ExecuteNonQuery();
+        var rows = new LogStorage(path).List();
+        Assert.AreEqual(new AutoFix.SettingsUi.Models.MetadataLogItem("", "", "", "", "", "", "", 0), rows[0]);
+        Assert.AreEqual(new AutoFix.SettingsUi.Models.MetadataLogItem("timestamp", "notes.exe", "manual", "high", "local", "clipboard", "applied", 20), rows[1]);
+        command.CommandText = "select count(*) from correction_metadata where occurred_at is null and latency_ms is null";
+        Assert.AreEqual(1L, command.ExecuteScalar());
+    }
+
     [TestMethod]
     public void MissingLogsAreEmptyWithoutCreatingDatabase()
     {

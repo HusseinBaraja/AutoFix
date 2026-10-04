@@ -92,9 +92,12 @@ debug imports require the separate explicit privacy warning after Apply import.
 
 The reviewed payload stays in memory, so changes to the source file cannot alter
 the confirmed import. If saved settings or participating product data change
-after preview, import rejects the stale preview. SQLite replacements use one
-transaction; handled file/database failures roll back rows and restore replaced
-settings. This compensation is not a cross-file guarantee against process crashes
+after preview, import rejects the stale preview. The preview diff and fingerprint
+use the same settings-file snapshot. SQLite replacements use one transaction;
+handled file/database failures roll back rows and restore replaced settings. If
+restoration fails, the error includes the original failure and the path to a
+retained backup of the original settings. Cleanup failures also preserve the
+original error. This compensation is not a cross-file guarantee against process crashes
 or power loss. After success the UI refreshes and requests an engine config reload,
 even if Windows startup registration fails. With the engine stopped, settings
 take effect on its next start. Existing credentials and diagnostic/history tables

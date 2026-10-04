@@ -8,6 +8,28 @@ namespace AutoFix.SettingsUi.Tests;
 
 public sealed partial class MainWindowViewModelTests
 {
+    /// <summary>Invalid dropdown profiles show a recoverable credential message on change, refresh and navigation.</summary>
+    [DataTestMethod]
+    [DataRow("")]
+    [DataRow(" ")]
+    [DataRow("bad\nprofile")]
+    public async Task InvalidProviderProfileDoesNotInterruptSettings(string profile)
+    {
+        using var fixture = TempConfigFixture.Create();
+        var storage = new AppRuleStorage(Path.Combine(fixture.Root, "autofix.sqlite"));
+        var vm = new MainWindowViewModel(new FakeBackgroundIpcClient(), fixture.Storage, storage,
+            new NullConfigFileDialog(), new WindowsCredentialApiKeyStatus(), new FakeStartupRegistration(), new FakeSettingsConsent());
+        await vm.LoadSettingsAsync();
+        Card(vm, "api.provider_preset").SelectedValue = profile;
+        StringAssert.Contains(vm.ApiKeyMessage, "Choose a valid provider profile.");
+        vm.RefreshApiKeyCommand.Execute(null);
+        vm.SelectedSection = vm.Sections.Single(section => section.Settings.Any(card => card.Path == "api.provider_preset"));
+        StringAssert.Contains(vm.ApiKeyMessage, "Choose a valid provider profile.");
+        Assert.AreEqual("openai_compatible", fixture.Storage.Load(fixture.Path).Api.ProviderPreset);
+        Card(vm, "api.provider_preset").SelectedValue = "openai_compatible";
+        Assert.IsFalse(vm.ApiKeyMessage.Contains("Choose a valid provider profile."));
+    }
+
     [TestMethod]
     public async Task DebugConsentAndDependenciesSaveValidConfigs()
     {

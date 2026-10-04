@@ -27,18 +27,24 @@ public sealed class ConfigStorage
     public string ConfigPath { get; }
     public bool LastLoadCreatedConfig { get; private set; }
 
+    /// <summary>Loads validated settings or persists defaults when no settings file exists.</summary>
     public AppConfig LoadOrCreate()
+        => LoadSnapshot().Config;
+
+    /// <summary>Parses the same file bytes retained for stale-preview detection, creating defaults when missing.</summary>
+    internal (AppConfig Config, byte[] Bytes) LoadSnapshot()
     {
         if (!File.Exists(ConfigPath))
         {
             var config = AppConfig.Default();
             Save(config);
             LastLoadCreatedConfig = true;
-            return config;
         }
+        else LastLoadCreatedConfig = false;
 
-        LastLoadCreatedConfig = false;
-        return Load(ConfigPath);
+        var bytes = File.ReadAllBytes(ConfigPath);
+        using var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return (Parse(reader.ReadToEnd()), bytes);
     }
 
     /// <summary>Loads TOML, normalizes legacy grammar categories and retry counts, and rejects invalid settings.</summary>

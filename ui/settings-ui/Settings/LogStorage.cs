@@ -7,6 +7,7 @@ namespace AutoFix.SettingsUi.Settings;
 /// <summary>Reads only correction metadata. Debug text is never selected into the settings viewer.</summary>
 public sealed class LogStorage(string databasePath)
 {
+    /// <summary>Lists the newest metadata, treating absent legacy values as empty strings or zero latency.</summary>
     public IReadOnlyList<MetadataLogItem> List()
     {
         if (!File.Exists(databasePath)) return [];
@@ -21,8 +22,9 @@ public sealed class LogStorage(string databasePath)
             """;
         using var reader = command.ExecuteReader();
         var rows = new List<MetadataLogItem>();
-        while (reader.Read()) rows.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2),
-            reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetString(6), reader.GetInt64(7)));
+        string ReadString(int column) => reader.IsDBNull(column) ? "" : reader.GetString(column);
+        while (reader.Read()) rows.Add(new(ReadString(0), ReadString(1), ReadString(2),
+            ReadString(3), ReadString(4), ReadString(5), ReadString(6), reader.IsDBNull(7) ? 0 : reader.GetInt64(7)));
         return rows;
     }
 

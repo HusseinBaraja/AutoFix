@@ -9,6 +9,104 @@ namespace AutoFix.SettingsUi.Tests;
 [TestClass]
 public sealed class ConfigTransferStorageTests
 {
+    /// <summary>A missing live config gets default settings and a matching preview fingerprint.</summary>
+    [TestMethod]
+    public void PreviewCreatesMissingSettingsAndHashesTheDisplayedSnapshot()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var transfer = CreateTransfer(fixture);
+        var path = Path.Combine(fixture.Root, "bundle.zip");
+        Execute(fixture, "delete from app_rules");
+        transfer.Export(path, AppConfig.Default(), true);
+        File.Delete(fixture.Path);
+        var preview = transfer.Preview(path);
+        Assert.IsTrue(fixture.Storage.LastLoadCreatedConfig);
+        Assert.IsFalse(preview.HasChanges);
+        Assert.AreEqual(ConfigTransferStorage.Fingerprint(File.ReadAllBytes(fixture.Path), preview.Bundle.Data!), preview.Fingerprint);
+        transfer.Apply(preview);
+    }
+
+    /// <summary>Commit failures restore exact settings bytes and roll back all product rows.</summary>
+    [TestMethod]
+    public void CommitFailureRestoresOriginalSettingsAndPreservesThePrimaryError()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var transfer = CreateTransfer(fixture);
+        var config = AppConfig.Default(); config.Triggers.WordCount = 22;
+        var path = Path.Combine(fixture.Root, "bundle.zip"); transfer.Export(path, config, true);
+        new DictionaryStorage(Database(fixture)).Save(new() { Word = "keep-word", Language = "und", Source = "dictionary" });
+        var preview = transfer.Preview(path);
+        var before = File.ReadAllBytes(fixture.Path);
+        var primary = new SqliteException("commit failed", 19);
+        var error = Assert.ThrowsException<SqliteException>(() => transfer.Apply(preview, _ => throw primary));
+        Assert.AreSame(primary, error);
+        CollectionAssert.AreEqual(before, File.ReadAllBytes(fixture.Path));
+        Assert.AreEqual("keep-word", Scalar(fixture, "select entry from custom_dictionary_entries"));
+        Assert.AreEqual(0, Directory.GetFiles(fixture.Root, ".autofix-import-*").Length);
+    }
+
+    /// <summary>Failed restoration retains an exact backup and reports it without replacing the commit exception.</summary>
+    [TestMethod]
+    public void RestoreFailureKeepsBackupAndReportsBothErrors()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var transfer = CreateTransfer(fixture);
+        var config = AppConfig.Default(); config.Triggers.WordCount = 22;
+        var path = Path.Combine(fixture.Root, "bundle.zip"); transfer.Export(path, config, true);
+        new DictionaryStorage(Database(fixture)).Save(new() { Word = "keep-word", Language = "und", Source = "dictionary" });
+        var preview = transfer.Preview(path);
+        var before = File.ReadAllBytes(fixture.Path);
+        var primary = new SqliteException("commit failed", 19);
+        FileStream? locked = null;
+        try
+        {
+            var error = Assert.ThrowsException<SqliteException>(() => transfer.Apply(preview, _ =>
+            {
+                locked = new FileStream(fixture.Path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                throw primary;
+            }));
+            Assert.AreSame(primary, error);
+            Assert.IsInstanceOfType(error.Data["SettingsRestoreError"], typeof(UnauthorizedAccessException));
+            var backup = (string)error.Data["SettingsBackupPath"]!;
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(backup));
+            Assert.AreEqual(22, fixture.Storage.Load(fixture.Path).Triggers.WordCount);
+            Assert.AreEqual("keep-word", Scalar(fixture, "select entry from custom_dictionary_entries"));
+            StringAssert.Contains(ConfigTransferStorage.DescribeFailure(error), "commit failed");
+            StringAssert.Contains(ConfigTransferStorage.DescribeFailure(error), backup);
+            Assert.AreEqual(1, Directory.GetFiles(fixture.Root, ".autofix-import-*").Length);
+        }
+        finally { locked?.Dispose(); }
+    }
+
+    /// <summary>A locked temporary file cannot mask a commit failure or stop settings restoration.</summary>
+    [TestMethod]
+    public void CleanupFailurePreservesCommitErrorAndRestoredSettings()
+    {
+        using var fixture = TempConfigFixture.Create();
+        var transfer = CreateTransfer(fixture);
+        var path = Path.Combine(fixture.Root, "bundle.zip"); transfer.Export(path, AppConfig.Default(), false);
+        var preview = transfer.Preview(path);
+        var before = File.ReadAllBytes(fixture.Path);
+        var primary = new SqliteException("commit failed", 19);
+        FileStream? locked = null;
+        try
+        {
+            var error = Assert.ThrowsException<SqliteException>(() => transfer.Apply(preview, _ =>
+            {
+                var backup = Directory.GetFiles(fixture.Root, ".autofix-import-*.backup").Single();
+                var temporary = backup[..^".backup".Length];
+                locked = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None);
+                throw primary;
+            }));
+            Assert.AreSame(primary, error);
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(fixture.Path));
+            Assert.IsInstanceOfType(error.Data["ImportCleanupError"], typeof(IOException));
+            StringAssert.Contains(ConfigTransferStorage.DescribeFailure(error), (string)error.Data["ImportCleanupPath"]!);
+            Assert.AreEqual(0, Directory.GetFiles(fixture.Root, "*.backup").Length);
+        }
+        finally { locked?.Dispose(); }
+    }
+
     [TestMethod]
     public void BundleRoundTripsPermissionsPhrasesScopesAndEffectiveLanguages()
     {

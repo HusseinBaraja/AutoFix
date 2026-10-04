@@ -46,7 +46,7 @@ public sealed partial class MainWindowViewModel
         {
             ImportPreview = null;
             StatusTitle = "Import failed.";
-            StatusDetail = error.Message;
+            StatusDetail = ConfigTransferStorage.DescribeFailure(error);
         }
         return Task.CompletedTask;
     }
@@ -68,7 +68,7 @@ public sealed partial class MainWindowViewModel
         {
             ImportPreview = null;
             StatusTitle = "Import failed.";
-            StatusDetail = error.Message;
+            StatusDetail = ConfigTransferStorage.DescribeFailure(error);
             return;
         }
 
