@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 mod shutdown_signal;
 pub(super) use shutdown_signal::ShutdownSignal;
+mod engine_lease;
+pub(super) use engine_lease::EngineLease;
 
 const ALLOWED_PROCESS_NAMES: [&str; 1] = ["Autofix.exe"];
 

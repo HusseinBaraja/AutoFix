@@ -40,6 +40,13 @@ deterministic suite; `-NativeDesktop` and `-IsolatedClipboard` opt into native t
 
 ## Runtime behavior
 
+All runtime entrypoints, including standalone `Autofix.exe --engine`, hold a
+Windows-session engine lease before settings/storage or input hooks initialize.
+Another engine refuses startup. `AUTOFIX_DIAGNOSTICS=1` enables metadata console
+diagnostics for user-assisted checks; it never enables full-text debug storage.
+See [writing-app checks](../docs/writing-app-compatibility.md) for the isolated
+runner and remaining messaging-provider limitations.
+
 The correction engine contract is defined in `src/correction`. It keeps
 read-only informative context separate from editable executable text and carries
 the correction mode, enabled grammar categories, language and mixed-language

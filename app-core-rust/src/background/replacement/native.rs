@@ -2,6 +2,54 @@ use super::{Attempt, ReplacementMethod, ReplacementPlan, ReplacementResult, Repl
 
 pub(super) struct NativeStrategy(pub(super) ReplacementMethod);
 
+/// Provider error descriptions can contain document text. Retain only our stage and HRESULT.
+#[cfg(windows)]
+#[derive(Debug)]
+struct RangeProofError {
+    stage: &'static str,
+    hresult: i32,
+}
+
+#[cfg(windows)]
+fn prove<T>(stage: &'static str, result: windows::core::Result<T>) -> Result<T, RangeProofError> {
+    result.map_err(|error| RangeProofError {
+        stage,
+        hresult: error.code().0,
+    })
+}
+
+#[cfg(windows)]
+fn proof_refusal(stage: &'static str) -> RangeProofError {
+    RangeProofError {
+        stage,
+        hresult: 0x80004005u32 as i32,
+    }
+}
+
+#[cfg(windows)]
+impl From<RangeProofError> for windows::core::Error {
+    fn from(error: RangeProofError) -> Self {
+        Self::new(windows::core::HRESULT(error.hresult), error.stage)
+    }
+}
+
+#[cfg(all(windows, test))]
+mod proof_tests {
+    use super::*;
+
+    #[test]
+    fn provider_error_text_never_enters_replacement_diagnostics() {
+        let provider_error = windows::core::Error::new(
+            windows::core::HRESULT(0x80070005u32 as i32),
+            "private document content",
+        );
+        let error = prove::<()>("adjacent_endpoint_move", Err(provider_error)).unwrap_err();
+        assert_eq!(error.stage, "adjacent_endpoint_move");
+        assert_eq!(error.hresult as u32, 0x80070005);
+        assert!(!format!("{error:?}").contains("private document"));
+    }
+}
+
 impl ReplacementStrategy for NativeStrategy {
     /// Identify the mutation method for strategy ordering and failure metadata.
     fn method(&self) -> ReplacementMethod {
@@ -79,46 +127,69 @@ impl PreparedRange {
             return Err("target or input changed before replacement".into());
         }
         let result = unsafe {
-            (|| -> windows::core::Result<Self> {
-                let automation = super::super::target::create_automation()?;
-                let element = automation.GetFocusedElement()?;
-                if element.CurrentIsPassword()?.as_bool()
-                    || element.CurrentIsOffscreen()?.as_bool()
-                    || !element.CurrentIsEnabled()?.as_bool()
-                    || element.CurrentProcessId()? as u32 != plan.target.process_id
+            (|| -> Result<Self, RangeProofError> {
+                let automation = prove(
+                    "automation_create",
+                    super::super::target::create_automation(),
+                )?;
+                let element = prove(
+                    "focused_editor",
+                    super::super::target::resolve_focused_text(&automation),
+                )?;
+                if prove("password_property", element.CurrentIsPassword())?.as_bool()
+                    || prove("offscreen_property", element.CurrentIsOffscreen())?.as_bool()
+                    || !prove("enabled_property", element.CurrentIsEnabled())?.as_bool()
+                    || prove("provider_process", element.CurrentProcessId())? as u32
+                        != plan.target.process_id
                 {
-                    return Err(range_error("field is protected, hidden or disabled"));
+                    return Err(proof_refusal("field_safety_or_owner"));
                 }
-                let pattern: IUIAutomationTextPattern =
-                    element.GetCurrentPatternAs(UIA_TextPatternId)?;
-                let selections = pattern.GetSelection()?;
-                if selections.Length()? != 1 {
-                    return Err(range_error("selection is not a single range"));
+                let pattern: IUIAutomationTextPattern = prove(
+                    "text_pattern",
+                    element.GetCurrentPatternAs(UIA_TextPatternId),
+                )?;
+                let selections = prove("selection_read", pattern.GetSelection())?;
+                if prove("selection_count", selections.Length())? != 1 {
+                    return Err(proof_refusal("selection_not_single"));
                 }
-                let original_selection = selections.GetElement(0)?;
+                let original_selection = prove("selection_range", selections.GetElement(0))?;
                 let caret = if plan.selected_text {
                     let selection = &original_selection;
-                    if selection.GetText(-1)? != plan.original || !plan.following.is_empty() {
-                        return Err(range_error("selection does not match executable text"));
+                    if prove("selected_text_read", selection.GetText(-1))? != plan.original
+                        || !plan.following.is_empty()
+                    {
+                        return Err(proof_refusal("selected_text_mismatch"));
                     }
-                    super::super::context_capture::selected_caret(&element, selection)?
+                    prove(
+                        "selected_caret",
+                        super::super::context_capture::selected_caret(&element, selection),
+                    )?
                 } else {
                     collapsed_selection(&pattern)?
                 };
                 // Providers differ on supplementary Unicode character units.
                 // Resolve both known spans independently and require exact text.
                 let following = adjacent_range(&caret, plan.following, true)?;
-                let original_end = following.Clone()?;
-                original_end.MoveEndpointByRange(END, &following, START)?;
+                let original_end = prove("original_anchor_clone", following.Clone())?;
+                prove(
+                    "original_anchor_collapse",
+                    original_end.MoveEndpointByRange(END, &following, START),
+                )?;
                 let span = adjacent_range(&original_end, plan.original, true)?;
-                if span.CompareEndpoints(START, &span, END)? > 0
-                    || span.CompareEndpoints(END, &caret, END)? > 0
-                    || span.GetText(-1)? != plan.original
+                if prove("span_order", span.CompareEndpoints(START, &span, END))? > 0
+                    || prove("span_before_caret", span.CompareEndpoints(END, &caret, END))? > 0
+                    || prove("span_text_read", span.GetText(-1))? != plan.original
                     || (plan.selected_text
-                        && (span.CompareEndpoints(START, &original_selection, START)? != 0
-                            || span.CompareEndpoints(END, &original_selection, END)? != 0))
+                        && (prove(
+                            "selected_start",
+                            span.CompareEndpoints(START, &original_selection, START),
+                        )? != 0
+                            || prove(
+                                "selected_end",
+                                span.CompareEndpoints(END, &original_selection, END),
+                            )? != 0))
                 {
-                    return Err(range_error("pre-caret text does not match"));
+                    return Err(proof_refusal("span_text_or_endpoints_mismatch"));
                 }
                 Ok(Self {
                     automation,
@@ -131,7 +202,12 @@ impl PreparedRange {
             })()
         };
         // Provider error messages are untrusted and can contain document text.
-        let range = result.map_err(|_| "no reliable pre-caret range".to_owned())?;
+        let range = result.map_err(|error| {
+            format!(
+                "pre-caret proof failed at {} (HRESULT {:08X})",
+                error.stage, error.hresult as u32
+            )
+        })?;
         super::ui_automation::writable(&range.span)?;
         if !current(plan) || !range.focused() {
             return Err("focus or input changed while proving range".into());
@@ -142,8 +218,7 @@ impl PreparedRange {
     /// Require the same focused UI Automation element throughout the operation.
     fn focused(&self) -> bool {
         unsafe {
-            self.automation
-                .GetFocusedElement()
+            super::super::target::resolve_focused_text(&self.automation)
                 .ok()
                 .is_some_and(|element| {
                     self.automation
@@ -396,7 +471,7 @@ impl PreparedRange {
             let caret = if plan.selected_text {
                 super::super::context_capture::selected_caret(&self.element, &selection)
             } else {
-                collapsed_selection(&self.pattern)
+                collapsed_selection(&self.pattern).map_err(windows::core::Error::from)
             }
             .map_err(|_| "caret endpoint unavailable")?;
             if caret.CompareEndpoints(END, &self.original_caret, END).ok() != Some(0) {
@@ -441,7 +516,7 @@ impl PreparedRange {
             (|| -> windows::core::Result<()> {
                 // Discard the pre-mutation provider and its range snapshots.
                 let automation = super::super::target::create_automation()?;
-                let element = automation.GetFocusedElement()?;
+                let element = super::super::target::resolve_focused_text(&automation)?;
                 let pattern: IUIAutomationTextPattern =
                     element.GetCurrentPatternAs(UIA_TextPatternId)?;
                 let caret = collapsed_selection(&pattern)?;
@@ -492,37 +567,60 @@ unsafe fn adjacent_range(
     anchor: &IUIAutomationTextRange,
     text: &str,
     before: bool,
-) -> windows::core::Result<IUIAutomationTextRange> {
-    if anchor.CompareEndpoints(START, anchor, END)? != 0 {
-        return Err(range_error("range anchor is not collapsed"));
+) -> Result<IUIAutomationTextRange, RangeProofError> {
+    if prove(
+        "adjacent_anchor_compare",
+        anchor.CompareEndpoints(START, anchor, END),
+    )? != 0
+    {
+        return Err(proof_refusal("adjacent_anchor_not_collapsed"));
+    }
+    // A degenerate range already proves an empty span without an unnecessary endpoint move.
+    if text.is_empty() {
+        return prove("empty_span_clone", anchor.Clone());
     }
     for count in [text.chars().count(), text.encode_utf16().count()] {
-        let count = i32::try_from(count).map_err(|_| range_error("range exceeds input budget"))?;
-        let range = anchor.Clone()?;
-        range.MoveEndpointByUnit(
-            if before { START } else { END },
-            TextUnit_Character,
-            if before { -count } else { count },
+        let count = i32::try_from(count).map_err(|_| proof_refusal("adjacent_range_budget"))?;
+        let range = prove("adjacent_range_clone", anchor.Clone())?;
+        let moved = prove(
+            "adjacent_endpoint_move",
+            range.MoveEndpointByUnit(
+                if before { START } else { END },
+                TextUnit_Character,
+                if before { -count } else { count },
+            ),
         )?;
-        if range.GetText(-1)? == text {
+        let matched = prove("adjacent_text_read", range.GetText(-1))? == text;
+        tracing::debug!(
+            before,
+            requested_units = count,
+            moved_units = moved,
+            matched,
+            "adjacent range proof"
+        );
+        if matched {
             return Ok(range);
         }
     }
-    Err(range_error("adjacent range does not match known text"))
+    Err(proof_refusal("adjacent_text_mismatch"))
 }
 
 /// Accept exactly one empty selection, with no assumption about its active endpoint.
 #[cfg(windows)]
 unsafe fn collapsed_selection(
     pattern: &IUIAutomationTextPattern,
-) -> windows::core::Result<IUIAutomationTextRange> {
-    let selections = pattern.GetSelection()?;
-    if selections.Length()? != 1 {
-        return Err(range_error("selection is not a single caret"));
+) -> Result<IUIAutomationTextRange, RangeProofError> {
+    let selections = prove("caret_selection_read", pattern.GetSelection())?;
+    if prove("caret_selection_count", selections.Length())? != 1 {
+        return Err(proof_refusal("caret_selection_not_single"));
     }
-    let caret = selections.GetElement(0)?;
-    if caret.CompareEndpoints(START, &caret, END)? != 0 {
-        return Err(range_error("selection is not collapsed"));
+    let caret = prove("caret_range", selections.GetElement(0))?;
+    if prove(
+        "caret_endpoint_compare",
+        caret.CompareEndpoints(START, &caret, END),
+    )? != 0
+    {
+        return Err(proof_refusal("caret_not_collapsed"));
     }
     Ok(caret)
 }

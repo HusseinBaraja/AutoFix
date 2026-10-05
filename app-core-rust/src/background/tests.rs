@@ -584,6 +584,30 @@ fn creates_default_config_when_missing() {
 }
 
 #[test]
+fn manual_writing_check_settings_are_local_and_keep_session_ownership() {
+    let script = include_str!("../../../scripts/writing-app-check.ps1");
+    let settings = script
+        .split("$testSettings = @'")
+        .nth(1)
+        .unwrap()
+        .split("'@")
+        .next()
+        .unwrap();
+    let config: AppConfig = toml::from_str(settings).unwrap();
+    crate::settings::ValidateConfig::validate(&config).unwrap();
+    assert_eq!(
+        config.correction.engine,
+        crate::settings::CorrectionEngine::Local
+    );
+    assert_eq!(config.correction.preferred_language.as_deref(), Some("en"));
+    assert!(!config.shortcuts.correct_arbitrary_selection);
+    assert!(!config.triggers.word_count_enabled);
+    assert!(!config.triggers.character_trigger_enabled);
+    assert_eq!(config.learning.mode, crate::settings::LearningMode::Off);
+    assert!(!config.logging.full_text_debug_mode_enabled);
+}
+
+#[test]
 fn background_runtime_respects_elevation_and_initializes_files() {
     let root = unique_temp_dir();
     let config_path = root.join("settings.toml");
@@ -603,6 +627,20 @@ fn background_runtime_respects_elevation_and_initializes_files() {
         }
         Ok(()) => {
             let mut runtime = result.unwrap();
+            let duplicate_root = root.join("duplicate");
+            let duplicate_paths = RuntimePaths::new(
+                duplicate_root.join("settings.toml"),
+                duplicate_root.join("autofix.sqlite"),
+                duplicate_root.join("logs"),
+            );
+            assert!(matches!(
+                BackgroundRuntime::start(duplicate_paths),
+                Err(BackgroundError::EngineLease(_))
+            ));
+            assert!(
+                !duplicate_root.exists(),
+                "duplicate startup must refuse before files or input hooks"
+            );
             // Startup must retain the timestamp from before default-file creation.
             assert_eq!(runtime.components.config_modified_at, None);
             runtime.components.reload_shortcuts_if_config_changed();

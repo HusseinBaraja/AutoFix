@@ -51,6 +51,7 @@ use self::{
 
 pub(crate) struct BackgroundRuntime {
     components: RuntimeComponents,
+    _engine_lease: process_group::EngineLease,
 }
 
 struct RuntimeComponents {
@@ -138,6 +139,7 @@ pub(crate) enum BackgroundError {
     InputHook(u32),
     InputWorker(std::io::Error),
     ShutdownSignal(u32),
+    EngineLease(u32),
 }
 
 impl fmt::Display for BackgroundError {
@@ -157,6 +159,7 @@ impl fmt::Display for BackgroundError {
                 formatter,
                 "failed to create engine stop signal: Windows error {code}"
             ),
+            Self::EngineLease(code) => write!(formatter, "another AutoFix engine is running or the engine lease is unavailable: Windows error {code}"),
             Self::InputWorker(source) => {
                 write!(formatter, "failed to start input worker: {source}")
             }
@@ -171,7 +174,10 @@ impl Error for BackgroundError {
             Self::Config(source) => Some(source),
             Self::Database(source) => Some(source),
             Self::InputWorker(source) => Some(source),
-            Self::ElevatedProcess | Self::InputHook(_) | Self::ShutdownSignal(_) => None,
+            Self::ElevatedProcess
+            | Self::InputHook(_)
+            | Self::ShutdownSignal(_)
+            | Self::EngineLease(_) => None,
         }
     }
 }
@@ -186,6 +192,8 @@ pub(crate) fn run_background_mode() -> Result<(), BackgroundError> {
 impl BackgroundRuntime {
     fn start(paths: RuntimePaths) -> Result<Self, BackgroundError> {
         reject_elevated_process()?;
+        let engine_lease =
+            process_group::EngineLease::acquire().map_err(BackgroundError::EngineLease)?;
         initialize_logging();
         ensure_parent_directory(paths.config_path())?;
         ensure_parent_directory(paths.database_path())?;
@@ -203,7 +211,10 @@ impl BackgroundRuntime {
         )?;
 
         tracing::info!("AutoFix background process started");
-        Ok(Self { components })
+        Ok(Self {
+            components,
+            _engine_lease: engine_lease,
+        })
     }
 
     /// Report unresolved cleanup separately from a fully drained graceful exit.
@@ -557,6 +568,7 @@ impl InputProcessor {
         for event in events {
             match event {
                 InputEvent::FocusChange => {
+                    tracing::debug!("focus notification received");
                     self.feedback.reset();
                     gate_result = None;
                     self.session_manager
@@ -735,13 +747,6 @@ impl InputProcessor {
                 },
             );
         }
-        if let Some(signal) = self
-            .session_manager
-            .active()
-            .and_then(|session| session.latest_movement())
-        {
-            tracing::debug!(?signal, "typed session position changed");
-        }
         let typed_chars = self
             .session_manager
             .active()
@@ -769,6 +774,7 @@ impl InputProcessor {
                 }
                 self.feedback.blocked(false);
                 if let SecurityDecision::Allowed { target } = decision {
+                    tracing::debug!(process = %target.process_name, active_matches = self.session_manager.active_matches(&target), "manual shortcut admitted");
                     if self.config.shortcuts.correct_arbitrary_selection
                         && !self.session_manager.active_matches(&target)
                     {
@@ -796,6 +802,19 @@ impl InputProcessor {
                                 },
                             );
                             if let Some(selected) = selected {
+                                tracing::debug!(
+                                    selection_available = !matches!(
+                                        selected,
+                                        context_capture::SelectionCapture::Unavailable
+                                    ),
+                                    caret_only = matches!(
+                                        selected,
+                                        context_capture::SelectionCapture::NoSelection
+                                    ),
+                                    position_uncertain = session.position_uncertain(),
+                                    typed_chars = executable.chars().count(),
+                                    "manual context checked"
+                                );
                                 if matches!(
                                     selected,
                                     context_capture::SelectionCapture::NoSelection
@@ -1252,7 +1271,16 @@ impl InputProcessor {
 }
 
 fn initialize_logging() {
-    let _ = tracing_subscriber::fmt().with_target(false).try_init();
+    let level =
+        if std::env::var_os("AUTOFIX_DIAGNOSTICS").as_deref() == Some(std::ffi::OsStr::new("1")) {
+            tracing::Level::DEBUG
+        } else {
+            tracing::Level::INFO
+        };
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(level)
+        .with_target(false)
+        .try_init();
 }
 
 fn ensure_parent_directory(path: &Path) -> Result<(), BackgroundError> {

@@ -1,5 +1,8 @@
 use std::path::Path;
 
+mod focused_text;
+pub(super) use focused_text::resolve as resolve_focused_text;
+
 use windows::Win32::{
     Foundation::{S_FALSE, S_OK},
     System::{
@@ -126,7 +129,7 @@ pub(crate) fn detect_focused_target() -> TargetDetection {
     let window_title = window_title(window).unwrap_or_default();
     let is_elevated = process_is_elevated_or_blocked(process_id);
     let desktop_state = desktop_state();
-    let element = focused_element_context();
+    let element = focused_element_context(window as isize, process_id);
     let (
         focused_element_id,
         is_password_or_protected,
@@ -144,6 +147,10 @@ pub(crate) fn detect_focused_target() -> TargetDetection {
         .unwrap_or((None, false, false, false));
     let normalized_process = normalize_process_name(&process_name);
     let normalized_title = window_title.to_ascii_lowercase();
+
+    if active_window_handle_value() != window as isize {
+        return TargetDetection::Unsupported;
+    }
 
     TargetDetection::Available(FocusedTarget {
         process_id,
@@ -301,7 +308,7 @@ fn process_is_elevated_or_blocked(process_id: u32) -> bool {
     }
 }
 
-fn focused_element_context() -> Option<FocusedElementContext> {
+fn focused_element_context(window: isize, process: u32) -> Option<FocusedElementContext> {
     unsafe {
         let initialization_result = CoInitializeEx(None, COINIT_MULTITHREADED);
         let initialization_succeeded =
@@ -312,7 +319,17 @@ fn focused_element_context() -> Option<FocusedElementContext> {
 
         let context = (|| {
             let automation = create_automation().ok()?;
-            let element = automation.GetFocusedElement().ok()?;
+            let element = resolve_focused_text(&automation)
+                .inspect_err(|error| {
+                    tracing::debug!(hresult = error.code().0, "focused text resolution refused");
+                })
+                .ok()?;
+
+            if active_window_handle_value() != window
+                || element.CurrentProcessId().ok()? as u32 != process
+            {
+                return None;
+            }
 
             let focused_element_id = runtime_id(&element)
                 .map(FocusedElementId::RuntimeId)

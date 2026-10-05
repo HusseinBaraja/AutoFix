@@ -49,6 +49,13 @@ No adapter uses whole-field setters or searches document text for an approximate
 match. Arbitrary middle-document UIA mutation, TSF, app-specific document APIs,
 and IME composition are still incomplete.
 
+When UIA returns an opaque native host, admission, capture and replacement now
+share one composer resolver. It requires a keyboard-owned host in the foreground
+process, known-safe focused descendants, and one editor identity. Repeated
+references count as one editor only when both runtime IDs and UIA element
+comparison agree. Different editors, identity collisions, protected descendants
+and unknown ownership refuse. This is implemented behavior, not an actual-app pass.
+
 ## Laptop inventory
 
 Run from the normal Windows user session:
@@ -95,8 +102,42 @@ drafts and never send messages as a test. Keep existing user drafts/documents.
 
 Full compatibility for the scoped laptop apps remains incomplete. Native Edit
 and WPF fixture passes prove those providers only. WhatsApp was inspected after
-access retries: its focused WinUI bridge has no TextPattern range and ambiguous
-focused descendants. It remains unsupported by the current adapter. No composer
-correction or message sending occurred. Computer Use stopped on physical Escape.
+access retries: its focused WinUI bridge has no TextPattern range. A later probe
+reported many references sharing one editor runtime identity. The composer
+resolver still needs user-assisted verification. Telegram exposed a focused Qt
+text range, but its captured three-character correction failed during replacement
+range preparation. Stage/HRESULT diagnostics now distinguish those failures;
+the exact live cause and actual-app correction/undo remain unverified.
 Actual app coverage and broader document adapters remain release blockers for
 a claim of full compatibility or unrestricted customer readiness.
+
+## User-assisted checks without Computer Use
+
+After building `AutoFix.sln`, exit a normal AutoFix shell before starting:
+
+```powershell
+.\scripts\writing-app-check.ps1 -Mode Manual
+# When finished with this run:
+.\scripts\writing-app-check.ps1 -Stop
+```
+
+The script starts a hidden standalone engine with isolated settings/storage under
+ignored `target`, local English typos-only correction, learning off, arbitrary
+selection off, and metadata diagnostics. It does not copy normal settings,
+dictionaries or credentials. Runtime startup holds one engine lease before
+initializing storage or input hooks. The stop command signals only its recorded
+process after checking executable and start time; it never force-kills a process.
+
+In each app, physically type `teh word` into an empty unsent disposable composer,
+press and release Ctrl+Alt+Space, and compare the result with `the word`. Without
+moving focus/caret or typing more, press Ctrl+Alt+Z: expect exactly `teh word`.
+Record correction and undo separately. Never send a message or replace an existing
+user draft. The active record `target/writing-app-check-active.json` identifies
+the PID, mode, settings and logs. Logs contain counts, stage names and HRESULTs;
+provider error descriptions and document text are excluded.
+
+Stop before changing modes. `-Mode WordCount` enables only a two-completed-word
+trigger; `-Mode Character` enables only `.`. Follow T02/T03 and the remaining
+preservation/security scenarios above. Newer following typing, middle-document
+UIA replacement and multiline replacement through Unicode keyboard input still
+refuse. They remain compatibility gaps, not positive preservation passes.

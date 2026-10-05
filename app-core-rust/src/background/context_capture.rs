@@ -234,7 +234,7 @@ pub(super) fn read_before_caret(
         }
         let result = (|| {
             let automation = super::target::create_automation().ok()?;
-            let element = automation.GetFocusedElement().ok()?;
+            let element = super::target::resolve_focused_text(&automation).ok()?;
             if element.CurrentIsPassword().ok()?.as_bool()
                 || element.CurrentIsOffscreen().ok()?.as_bool()
                 || !element.CurrentIsEnabled().ok()?.as_bool()
@@ -272,7 +272,7 @@ pub(super) fn read_before_caret(
                 .ok()?;
             // GetText is bounded and the range ends at the collapsed caret.
             let text = preceding.GetText(max_chars).ok()?;
-            let still_focused = automation.GetFocusedElement().ok()?;
+            let still_focused = super::target::resolve_focused_text(&automation).ok()?;
             if !automation
                 .CompareElements(&element, &still_focused)
                 .ok()?
@@ -328,7 +328,7 @@ pub(super) fn read_selection(
         }
         let selected = (|| {
             let automation = super::target::create_automation().ok()?;
-            let element = automation.GetFocusedElement().ok()?;
+            let element = super::target::resolve_focused_text(&automation).ok()?;
             if element.CurrentIsPassword().ok()?.as_bool()
                 || element.CurrentIsOffscreen().ok()?.as_bool()
                 || !element.CurrentIsEnabled().ok()?.as_bool()
@@ -424,7 +424,7 @@ pub(super) fn read_selection(
                 selection_at_document_start,
             )
             .map(str::to_owned);
-            let still_focused = automation.GetFocusedElement().ok()?;
+            let still_focused = super::target::resolve_focused_text(&automation).ok()?;
             automation
                 .CompareElements(&element, &still_focused)
                 .ok()?

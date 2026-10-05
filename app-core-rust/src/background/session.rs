@@ -185,10 +185,6 @@ impl Session {
         self.versions
     }
 
-    pub(crate) fn latest_movement(&self) -> Option<MovementSignal> {
-        self.executable.latest_movement()
-    }
-
     pub(crate) fn position_uncertain(&self) -> bool {
         self.pending_movement.is_some()
     }

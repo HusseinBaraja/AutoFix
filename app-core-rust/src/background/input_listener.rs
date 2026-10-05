@@ -99,7 +99,7 @@ mod native {
     use std::{
         collections::VecDeque,
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicIsize, Ordering},
             mpsc, Mutex, OnceLock,
         },
         thread::{self, JoinHandle},
@@ -118,12 +118,12 @@ mod native {
             },
             WindowsAndMessaging::{
                 CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW,
-                GetWindowThreadProcessId, PeekMessageW, PostThreadMessageW, SetWindowsHookExW,
-                TranslateMessage, UnhookWindowsHookEx, EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND,
-                HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT,
-                PM_NOREMOVE, WH_KEYBOARD_LL, WH_MOUSE_LL, WINEVENT_OUTOFCONTEXT, WM_KEYDOWN,
-                WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_QUIT, WM_RBUTTONDOWN, WM_SYSKEYDOWN,
-                WM_XBUTTONDOWN,
+                GetWindowThreadProcessId, IsChild, PeekMessageW, PostThreadMessageW,
+                SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, EVENT_OBJECT_FOCUS,
+                EVENT_SYSTEM_FOREGROUND, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLMHF_INJECTED,
+                MSG, MSLLHOOKSTRUCT, PM_NOREMOVE, WH_KEYBOARD_LL, WH_MOUSE_LL,
+                WINEVENT_OUTOFCONTEXT, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_QUIT,
+                WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_XBUTTONDOWN,
             },
         },
     };
@@ -136,6 +136,7 @@ mod native {
     const QUEUE_LIMIT: usize = 512;
     static EVENTS: OnceLock<Mutex<VecDeque<RawEvent>>> = OnceLock::new();
     static OVERFLOWED: AtomicBool = AtomicBool::new(false);
+    static OBSERVED_FOREGROUND: AtomicIsize = AtomicIsize::new(0);
 
     enum RawEvent {
         Key(KeyStroke),
@@ -252,6 +253,7 @@ mod native {
 
     impl Hooks {
         fn install() -> Result<Self, u32> {
+            OBSERVED_FOREGROUND.store(unsafe { GetForegroundWindow() } as isize, Ordering::Release);
             let keyboard = unsafe {
                 SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), std::ptr::null_mut(), 0)
             };
@@ -400,15 +402,49 @@ mod native {
         CallNextHookEx(std::ptr::null_mut(), code, message, data)
     }
 
+    /// Ignore only a proved background notification. Relevant/unknown events remain barriers.
+    fn relevant_focus_event(
+        event: u32,
+        window: isize,
+        foreground: isize,
+        previous: isize,
+        descendant: bool,
+        different_process: bool,
+    ) -> bool {
+        event != EVENT_OBJECT_FOCUS
+            || window == 0
+            || foreground == 0
+            || foreground != previous
+            || window == foreground
+            || descendant
+            || !different_process
+    }
+
     unsafe extern "system" fn focus_hook(
         _hook: HWINEVENTHOOK,
-        _event: u32,
-        _window: windows_sys::Win32::Foundation::HWND,
+        event: u32,
+        window: windows_sys::Win32::Foundation::HWND,
         _object: i32,
         _child: i32,
         _thread: u32,
         _time: u32,
     ) {
+        let foreground = GetForegroundWindow();
+        let previous = OBSERVED_FOREGROUND.swap(foreground as isize, Ordering::AcqRel);
+        let mut foreground_process = 0;
+        let mut event_process = 0;
+        GetWindowThreadProcessId(foreground, &mut foreground_process);
+        GetWindowThreadProcessId(window, &mut event_process);
+        if !relevant_focus_event(
+            event,
+            window as isize,
+            foreground as isize,
+            previous,
+            !window.is_null() && !foreground.is_null() && IsChild(foreground, window) != 0,
+            foreground_process != 0 && event_process != 0 && foreground_process != event_process,
+        ) {
+            return;
+        }
         mark_position_change();
         push(RawEvent::FocusChange);
     }
@@ -492,6 +528,75 @@ mod native {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn background_focus_does_not_discard_foreground_typing() {
+            assert!(!relevant_focus_event(
+                EVENT_OBJECT_FOCUS,
+                99,
+                10,
+                10,
+                false,
+                true
+            ));
+            // Owned popups and unknown event owners cannot be dismissed as background noise.
+            assert!(relevant_focus_event(
+                EVENT_OBJECT_FOCUS,
+                99,
+                10,
+                10,
+                false,
+                false
+            ));
+            assert!(relevant_focus_event(
+                EVENT_OBJECT_FOCUS,
+                11,
+                10,
+                10,
+                true,
+                true
+            ));
+            assert!(relevant_focus_event(
+                EVENT_OBJECT_FOCUS,
+                10,
+                10,
+                10,
+                false,
+                true
+            ));
+            assert!(relevant_focus_event(
+                EVENT_OBJECT_FOCUS,
+                99,
+                10,
+                20,
+                false,
+                true
+            ));
+            assert!(relevant_focus_event(
+                EVENT_OBJECT_FOCUS,
+                0,
+                10,
+                10,
+                false,
+                true
+            ));
+            assert!(relevant_focus_event(
+                EVENT_OBJECT_FOCUS,
+                99,
+                0,
+                0,
+                false,
+                true
+            ));
+            assert!(relevant_focus_event(
+                EVENT_SYSTEM_FOREGROUND,
+                99,
+                10,
+                10,
+                false,
+                true
+            ));
+        }
 
         fn key(virtual_key: u16) -> KeyStroke {
             KeyStroke {
