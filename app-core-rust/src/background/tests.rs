@@ -8,6 +8,65 @@ use crate::{background::paths::RuntimePaths, settings::AppConfig};
 
 use super::{admin, load_or_create_config, BackgroundError, BackgroundRuntime};
 
+#[test]
+fn slow_provider_input_batches_preserve_order_and_work_boundaries() {
+    use super::{coalesce_input, InputEvent, InputWork, INPUT_EVENT_BATCH_LIMIT};
+    use std::collections::VecDeque;
+    fn key(sequence: u64) -> InputEvent {
+        let mut key = super::input_listener::stale_key_for_test();
+        key.window = 17;
+        key.position_generation = 9;
+        key.input_sequence = sequence;
+        InputEvent::Key(key)
+    }
+    let mut pending = VecDeque::from([InputWork::Events(vec![key(1)])]);
+    for sequence in 2..=20 {
+        assert!(coalesce_input(
+            &mut pending,
+            &mut InputWork::Events(vec![key(sequence)])
+        ));
+    }
+    assert_eq!(pending.len(), 1);
+    let Some(InputWork::Events(events)) = pending.pop_front() else {
+        panic!("missing input batch")
+    };
+    for (index, event) in events.iter().enumerate() {
+        let InputEvent::Key(key) = event else {
+            panic!("lost key")
+        };
+        assert_eq!(
+            (key.window, key.position_generation, key.input_sequence),
+            (17, 9, index as u64 + 1)
+        );
+    }
+    for boundary in [
+        InputWork::Shortcut(1),
+        InputWork::Config(Box::default()),
+        InputWork::Reset,
+        InputWork::Shutdown,
+    ] {
+        pending.push_back(boundary);
+        assert!(!coalesce_input(
+            &mut pending,
+            &mut InputWork::Events(vec![key(21)])
+        ));
+        pending.clear();
+    }
+    pending.push_back(InputWork::Events(
+        (0..INPUT_EVENT_BATCH_LIMIT)
+            .map(|i| key(i as u64))
+            .collect(),
+    ));
+    assert!(!coalesce_input(
+        &mut pending,
+        &mut InputWork::Events(vec![key(256)])
+    ));
+    let Some(InputWork::Events(events)) = pending.back() else {
+        panic!("missing bounded batch")
+    };
+    assert_eq!(events.len(), INPUT_EVENT_BATCH_LIMIT);
+}
+
 /// Successful native undo learns only after a stable, successful session commit.
 #[test]
 fn undo_learning_requires_committed_bookkeeping_and_stable_input() {
@@ -483,7 +542,12 @@ fn slow_input_worker_discards_stale_batches_at_queue_limit() {
         .unwrap();
 
     for _ in 0..=super::INPUT_WORK_QUEUE_LIMIT {
-        worker.send(super::InputWork::Events(Vec::new()));
+        // Each batch fills the coalescing budget; overflow still resets ownership.
+        worker.send(super::InputWork::Events(
+            std::iter::repeat_with(|| super::InputEvent::FocusChange)
+                .take(super::INPUT_EVENT_BATCH_LIMIT)
+                .collect(),
+        ));
     }
     let (lock, _) = &*worker.queue;
     let queued = lock.lock().unwrap();

@@ -87,6 +87,20 @@ enum InputWork {
 }
 
 const INPUT_WORK_QUEUE_LIMIT: usize = 8;
+const INPUT_EVENT_BATCH_LIMIT: usize = 256;
+
+/// Batch adjacent physical input without crossing a shortcut/config/reset boundary.
+/// Every event retains its original window, position generation and input sequence.
+fn coalesce_input(pending: &mut VecDeque<InputWork>, work: &mut InputWork) -> bool {
+    if let (Some(InputWork::Events(previous)), InputWork::Events(next)) = (pending.back_mut(), work)
+    {
+        if previous.len().saturating_add(next.len()) <= INPUT_EVENT_BATCH_LIMIT {
+            previous.append(next);
+            return true;
+        }
+    }
+    false
+}
 
 /// Accept read-only capture only while the hook input sequence remains unchanged.
 fn capture_if_current<T>(
@@ -401,9 +415,13 @@ impl InputWorker {
         })
     }
 
-    fn send(&self, work: InputWork) {
+    fn send(&self, mut work: InputWork) {
         let (lock, ready) = &*self.queue;
         let mut pending = lock.lock().unwrap();
+        if coalesce_input(&mut pending, &mut work) {
+            ready.notify_one();
+            return;
+        }
         if pending.len() >= INPUT_WORK_QUEUE_LIMIT {
             if matches!(work, InputWork::Tick) {
                 return;

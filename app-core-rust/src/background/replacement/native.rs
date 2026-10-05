@@ -139,8 +139,10 @@ impl PreparedRange {
                 if prove("password_property", element.CurrentIsPassword())?.as_bool()
                     || prove("offscreen_property", element.CurrentIsOffscreen())?.as_bool()
                     || !prove("enabled_property", element.CurrentIsEnabled())?.as_bool()
-                    || prove("provider_process", element.CurrentProcessId())? as u32
-                        != plan.target.process_id
+                    || !super::super::target::provider_owner_matches(
+                        plan.target.process_id,
+                        prove("provider_process", element.CurrentProcessId())? as u32,
+                    )
                 {
                     return Err(proof_refusal("field_safety_or_owner"));
                 }

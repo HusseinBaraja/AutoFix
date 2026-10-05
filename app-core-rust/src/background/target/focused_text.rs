@@ -1,7 +1,10 @@
 //! Resolve a keyboard-owned editor when UIA reports an opaque native host.
+use windows::Win32::System::Variant::{VARIANT, VT_ARRAY, VT_I4};
 use windows::Win32::UI::Accessibility::{
     IUIAutomation2, IUIAutomationElement, IUIAutomationTextPattern, TreeScope_Descendants,
-    UIA_HasKeyboardFocusPropertyId, UIA_TextPatternId,
+    UIA_ControlTypePropertyId, UIA_HasKeyboardFocusPropertyId, UIA_IsEnabledPropertyId,
+    UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId, UIA_NativeWindowHandlePropertyId,
+    UIA_ProcessIdPropertyId, UIA_RuntimeIdPropertyId, UIA_TextPatternId,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, IsChild, GUITHREADINFO,
@@ -16,6 +19,33 @@ fn refusal(reason: &'static str) -> windows::core::Error {
 
 fn candidate_safe(properties: [Option<bool>; 4], same_process: bool) -> bool {
     same_process && properties == [Some(false), Some(false), Some(true), Some(true)]
+}
+
+fn cached_identity(element: &IUIAutomationElement) -> Option<String> {
+    unsafe {
+        let value = element
+            .GetCachedPropertyValue(UIA_RuntimeIdPropertyId)
+            .ok()?;
+        identity_from_variant(&value)
+    }
+}
+
+fn identity_from_variant(value: &VARIANT) -> Option<String> {
+    unsafe {
+        let raw = &value.Anonymous.Anonymous;
+        if raw.vt != (VT_ARRAY | VT_I4) {
+            return None;
+        }
+        // The VARIANT owns this array; do not destroy it independently.
+        let values = super::safe_array_i32_values(raw.Anonymous.parray)?;
+        (!values.is_empty()).then(|| {
+            values
+                .iter()
+                .map(i32::to_string)
+                .collect::<Vec<_>>()
+                .join(".")
+        })
+    }
 }
 
 /// Runtime identity alone is insufficient: providers can reuse IDs for different elements.
@@ -66,7 +96,7 @@ pub(in crate::background) fn resolve(
             return Err(refusal("keyboard owner differs from foreground process"));
         }
         let host = automation.GetFocusedElement()?;
-        if host.CurrentProcessId()? as u32 != process {
+        if !super::provider_owner_matches(process, host.CurrentProcessId()? as u32) {
             return Err(refusal("focused provider differs from foreground process"));
         }
         // An explicit password always reaches the security block, never a descendant search.
@@ -98,49 +128,86 @@ pub(in crate::background) fn resolve(
             UIA_HasKeyboardFocusPropertyId,
             &windows::Win32::System::Variant::VARIANT::from(true),
         )?;
-        let references = host.FindAll(TreeScope_Descendants, &condition)?;
+        // One fresh bulk snapshot per resolution, never a persisted authorization cache.
+        // Per-reference COM property calls turn duplicate providers into input backlog.
+        let resolution_started = std::time::Instant::now();
+        let cache = automation.CreateCacheRequest()?;
+        for property in [
+            UIA_ProcessIdPropertyId,
+            UIA_HasKeyboardFocusPropertyId,
+            UIA_IsPasswordPropertyId,
+            UIA_IsOffscreenPropertyId,
+            UIA_IsEnabledPropertyId,
+            UIA_RuntimeIdPropertyId,
+            UIA_NativeWindowHandlePropertyId,
+            UIA_ControlTypePropertyId,
+        ] {
+            cache.AddProperty(property)?;
+        }
+        cache.AddPattern(UIA_TextPatternId)?;
+        let references = host.FindAllBuildCache(TreeScope_Descendants, &condition, &cache)?;
         let count = references.Length()?;
         if count > MAX_FOCUSED_REFERENCES {
             return Err(refusal("focused editor reference budget exceeded"));
         }
-        tracing::debug!(focused_references = count, "resolving opaque focused host");
+        tracing::debug!(
+            foreground_process = process,
+            focused_references = count,
+            elapsed_ms = resolution_started.elapsed().as_millis() as u64,
+            "resolving opaque focused host"
+        );
         let mut candidates = Vec::new();
+        let mut owners = std::collections::HashMap::new();
         for index in 0..count {
             let element = references.GetElement(index)?;
-            if !element.CurrentHasKeyboardFocus()?.as_bool() {
+            if !element.CachedHasKeyboardFocus()?.as_bool() {
                 return Err(refusal("descendant focus changed during resolution"));
             }
-            if element.CurrentIsPassword()?.as_bool() {
+            if element.CachedIsPassword()?.as_bool() {
                 return Err(refusal("focused descendant is protected"));
             }
-            if element.CurrentProcessId()? as u32 != process {
+            let editor_process = element.CachedProcessId()? as u32;
+            let owner_matches = *owners
+                .entry(editor_process)
+                .or_insert_with(|| super::provider_owner_matches(process, editor_process));
+            if !owner_matches {
+                tracing::debug!(
+                    foreground_process = process,
+                    editor_process,
+                    control_type = element.CachedControlType().ok().map(|value| value.0),
+                    native_window = element
+                        .CachedNativeWindowHandle()
+                        .ok()
+                        .map(|value| !value.0.is_null()),
+                    text_pattern = element
+                        .GetCachedPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+                        .is_ok(),
+                    "focused descendant owner mismatch"
+                );
                 return Err(refusal("focused descendant has a different owner"));
             }
             if element
-                .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+                .GetCachedPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
                 .is_ok()
             {
                 if !candidate_safe(
                     [
+                        element.CachedIsPassword().ok().map(|value| value.as_bool()),
                         element
-                            .CurrentIsPassword()
+                            .CachedIsOffscreen()
                             .ok()
                             .map(|value| value.as_bool()),
+                        element.CachedIsEnabled().ok().map(|value| value.as_bool()),
                         element
-                            .CurrentIsOffscreen()
-                            .ok()
-                            .map(|value| value.as_bool()),
-                        element.CurrentIsEnabled().ok().map(|value| value.as_bool()),
-                        element
-                            .CurrentHasKeyboardFocus()
+                            .CachedHasKeyboardFocus()
                             .ok()
                             .map(|value| value.as_bool()),
                     ],
-                    element.CurrentProcessId()? as u32 == process,
+                    owner_matches,
                 ) {
                     return Err(refusal("focused editor safety is unproved"));
                 }
-                let identity = super::runtime_id(&element);
+                let identity = cached_identity(&element);
                 candidates.push((element, identity));
             }
         }
@@ -149,6 +216,23 @@ pub(in crate::background) fn resolve(
                 .CompareElements(left, right)
                 .map(|equal| equal.as_bool())
         })?;
+        if !candidate_safe(
+            [
+                editor.CurrentIsPassword().ok().map(|value| value.as_bool()),
+                editor
+                    .CurrentIsOffscreen()
+                    .ok()
+                    .map(|value| value.as_bool()),
+                editor.CurrentIsEnabled().ok().map(|value| value.as_bool()),
+                editor
+                    .CurrentHasKeyboardFocus()
+                    .ok()
+                    .map(|value| value.as_bool()),
+            ],
+            super::provider_owner_matches(process, editor.CurrentProcessId()? as u32),
+        ) {
+            return Err(refusal("focused editor changed after bulk snapshot"));
+        }
         if GetForegroundWindow() != foreground
             || !automation
                 .CompareElements(&host, &automation.GetFocusedElement()?)?
@@ -163,6 +247,10 @@ pub(in crate::background) fn resolve(
         {
             return Err(refusal("keyboard owner changed during resolution"));
         }
+        tracing::debug!(
+            elapsed_ms = resolution_started.elapsed().as_millis() as u64,
+            "opaque focused editor resolved"
+        );
         Ok(editor)
     }
 }
@@ -170,6 +258,41 @@ pub(in crate::background) fn resolve(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cached_identity_requires_a_nonempty_integer_array() {
+        use windows::Win32::System::Ole::{SafeArrayCreateVector, SafeArrayPutElement};
+        for invalid in [
+            VARIANT::default(),
+            VARIANT::from(42),
+            VARIANT::from(true),
+            VARIANT::from("42.7"),
+        ] {
+            assert_eq!(identity_from_variant(&invalid), None);
+        }
+        for values in [vec![], vec![42, 7, -3]] {
+            unsafe {
+                let mut value = VARIANT::default();
+                let array = SafeArrayCreateVector(VT_I4, 0, values.len() as u32);
+                assert!(!array.is_null());
+                let raw = &mut *value.Anonymous.Anonymous;
+                raw.vt = VT_ARRAY | VT_I4;
+                raw.Anonymous.parray = array;
+                for (index, item) in values.iter().enumerate() {
+                    SafeArrayPutElement(array, &(index as i32), item as *const _ as *const _)
+                        .unwrap();
+                }
+                assert_eq!(
+                    identity_from_variant(&value),
+                    if values.is_empty() {
+                        None
+                    } else {
+                        Some("42.7.-3".into())
+                    }
+                );
+            }
+        }
+    }
 
     #[test]
     fn password_hidden_disabled_unfocused_foreign_and_unknown_editors_refuse() {

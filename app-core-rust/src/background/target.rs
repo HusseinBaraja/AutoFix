@@ -1,7 +1,9 @@
 use std::path::Path;
 
 mod focused_text;
+mod provider_owner;
 pub(super) use focused_text::resolve as resolve_focused_text;
+pub(super) use provider_owner::matches as provider_owner_matches;
 
 use windows::Win32::{
     Foundation::{S_FALSE, S_OK},
@@ -326,7 +328,7 @@ fn focused_element_context(window: isize, process: u32) -> Option<FocusedElement
                 .ok()?;
 
             if active_window_handle_value() != window
-                || element.CurrentProcessId().ok()? as u32 != process
+                || !provider_owner_matches(process, element.CurrentProcessId().ok()? as u32)
             {
                 return None;
             }

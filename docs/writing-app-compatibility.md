@@ -103,11 +103,26 @@ drafts and never send messages as a test. Keep existing user drafts/documents.
 Full compatibility for the scoped laptop apps remains incomplete. Native Edit
 and WPF fixture passes prove those providers only. WhatsApp was inspected after
 access retries: its focused WinUI bridge has no TextPattern range. A later probe
-reported many references sharing one editor runtime identity. The composer
-resolver still needs user-assisted verification. Telegram exposed a focused Qt
-text range, but its captured three-character correction failed during replacement
-range preparation. Stage/HRESULT diagnostics now distinguish those failures;
-the exact live cause and actual-app correction/undo remain unverified.
+reported many references sharing one editor runtime identity. On 2026-10-05,
+the user-assisted WhatsApp run produced no correction or undo. Runtime diagnostics
+showed descendant process-owner rejection and discarded input after slow provider
+processing. Ownership metadata identified `msedgewebview2.exe` as a child of
+`WhatsApp.Root.exe`. Hosted-provider admission now requires a live process chain
+to the foreground application, matching token user/session, no elevation and
+creation-time order to reject reused parent PIDs. Unrelated/unknown owners refuse.
+Fresh bulk property snapshots reduce duplicate-reference calls, and adjacent
+physical input batches coalesce without crossing shortcuts or config/reset
+boundaries. Queue overflow still invalidates ownership. These changes need a
+new actual-app pass; they do not establish WhatsApp compatibility.
+WhatsApp composer resolution and correction remain unverified.
+
+The user reported that Telegram manual correction and exact AutoFix undo worked
+as expected in the same isolated run. Runtime diagnostics confirm successful UIA
+correction and undo of a three-character span. This is one manual composer pass;
+automatic triggers, Unicode, multiline text, newer typing, surrounding text,
+clipboard and secure-field behavior still need actual-app passes. An earlier
+Telegram range-preparation failure was observed before these changes; its exact
+underlying failed provider operation was not established.
 Actual app coverage and broader document adapters remain release blockers for
 a claim of full compatibility or unrestricted customer readiness.
 
