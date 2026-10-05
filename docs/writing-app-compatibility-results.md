@@ -42,3 +42,28 @@ The previous [integration report](windows-text-target-integration-results.md)
 records an earlier sandbox foreground failure. This run used the normal host
 desktop for owned fixtures and passed all five opt-in suites. Actual applications
 remain unverified. See [scope and release blockers](writing-app-compatibility.md).
+
+## Composer checkpoint — 2026-10-05
+
+Before Computer Use was stopped with physical Escape, exact disposable WhatsApp
+drafts passed correction and AutoFix undo for manual (`teh`), two-completed-word
+(`teh word `) and character (`teh.`) triggers. The opt-in live test uses production
+pipeline/native code, isolated local policies/storage and the single-engine lease,
+but seeds synthetic session input. These are not physical-keyboard/global-hotkey
+end-to-end passes. The earlier user-assisted diagnostics did retain three physical
+characters; the user also reported a Telegram manual correction/undo pass.
+
+This checkpoint adds bounded context clipping detection, guarded operation-local
+composer discovery reuse, hosted field-boundary proof, asynchronous selection
+acknowledgment and bounded selected-character substitutions. Revalidation on the
+final checkpoint and the remaining cases in [the live-draft table](writing-app-compatibility.md)
+are still required before either app is verified fixed.
+
+Commit verification: 457 Rust tests pass, 10 tests ignored; Clippy with all targets
+and features passes with warnings denied; the solution builds with zero warnings
+or errors; .NET tests pass 241 with one credential-manager prerequisite skip.
+The owned native editor correction/undo fixture passes. The WPF fixture failed
+before mutation on two attempts with `WPF fixture could not acquire authorized
+focus`; its live verification remains unresolved. Its suffix oracle now reflects
+the selected-character capability, while read-only refusal remains required.
+No actual chat messages were sent. Machine-local diagnostics remain ignored.

@@ -478,6 +478,7 @@ impl InputProcessor {
 
     /// Defer completion until hook input is drained, then validate the live target and caret.
     fn finish_correction(&mut self) {
+        let _resolution_scope = target::ResolutionScope::begin();
         self.learner
             .poll(&self.config.learning, self.database.path());
         // Frozen ranges may survive processed typing, but never guess what keys
@@ -577,6 +578,7 @@ impl InputProcessor {
 
     /// Processes a guarded input batch, captures context, and snapshots correction policies.
     fn process_input(&mut self, events: Vec<InputEvent>) {
+        let _resolution_scope = target::ResolutionScope::begin();
         let mut pending_requests = Vec::new();
         let mut gate_result: Option<(isize, bool)> = None;
         let mut needs_capture = false;
@@ -774,6 +776,7 @@ impl InputProcessor {
 
     /// Route configured shortcuts through security and snapshot validation.
     fn process_shortcut(&mut self, id: usize) {
+        let _resolution_scope = target::ResolutionScope::begin();
         match GlobalShortcutListener::action_for_id(id) {
             Some(ShortcutAction::Correct) => {
                 let stamp = Self::input_stamp();

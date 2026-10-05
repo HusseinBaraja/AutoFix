@@ -165,7 +165,8 @@ fn wpf_uia_replacement_and_app_undo() {
         assert_eq!(observed["text"], "old teh");
         assert_eq!(observed["start"], 7);
     }
-    // The framework's insert/overtype state must never threaten existing suffixes.
+    // Equal-width selected-character patches preserve the unowned after-caret
+    // suffix even when multi-character keyboard insertion cannot be authorized.
     let target = fixture.setup("old teh AFTER", false);
     fixture.call(json!({"command":"setup", "text":"old teh AFTER", "start":7, "length":0}));
     let plan = ReplacementPlan {
@@ -176,8 +177,19 @@ fn wpf_uia_replacement_and_app_undo() {
         selected_text: false,
         stamp: stamp(),
     };
-    let refused = ReplacementEngine::execute(&plan, false);
-    assert!(!refused.success && !refused.may_have_changed, "{refused:?}");
+    let corrected = ReplacementEngine::execute(&plan, false);
+    assert!(corrected.success, "{corrected:?}");
+    let observed = fixture.call(json!({"command":"snapshot"}));
+    assert_eq!(observed["text"], "old the AFTER");
+    assert_eq!(observed["start"], 7);
+    assert_eq!(observed["length"], 0);
+    let undo = ReplacementPlan {
+        original: "the",
+        replacement: "teh",
+        ..plan
+    };
+    let restored = ReplacementEngine::execute(&undo, false);
+    assert!(restored.success, "{restored:?}");
     assert_eq!(
         fixture.call(json!({"command":"snapshot"}))["text"],
         "old teh AFTER"

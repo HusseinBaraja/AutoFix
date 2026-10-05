@@ -207,6 +207,34 @@ fn capture_char_limit(limits: &ContextConfig, known_typed_chars: usize) -> i32 {
         .min(i32::MAX as usize) as i32
 }
 
+/// GetText returns a bounded prefix, which is not necessarily the caret suffix.
+/// Use one sentinel unit to detect clipping, then shrink the range until the
+/// complete returned text fits. Never read an unbounded provider document.
+fn bounded_preceding_text(
+    budget: i32,
+    mut read: impl FnMut(i32, i32) -> Option<String>,
+) -> Option<String> {
+    let read_limit = budget.checked_add(1).filter(|limit| *limit > 0)?;
+    let mut units = budget;
+    loop {
+        let text = read(units, read_limit)?;
+        let returned_units = text.encode_utf16().count();
+        tracing::debug!(
+            requested_units = units,
+            returned_units,
+            read_limit,
+            "bounded caret context read"
+        );
+        if returned_units < read_limit as usize {
+            return Some(text);
+        }
+        if units == 0 {
+            return None;
+        }
+        units /= 2;
+    }
+}
+
 #[cfg(windows)]
 pub(super) fn read_before_caret(
     target: &FocusedTarget,
@@ -259,19 +287,42 @@ pub(super) fn read_before_caret(
             {
                 return None;
             }
-            let preceding = caret.Clone().ok()?;
             // The stored context is capped separately. Read enough to include
             // the known typed suffix, otherwise it can crowd the anchor out.
             let max_chars = capture_char_limit(limits, known_typed_chars);
-            preceding
-                .MoveEndpointByUnit(
-                    TextPatternRangeEndpoint_Start,
-                    TextUnit_Character,
-                    -max_chars,
-                )
-                .ok()?;
-            // GetText is bounded and the range ends at the collapsed caret.
-            let text = preceding.GetText(max_chars).ok()?;
+            let text = bounded_preceding_text(max_chars, |units, read_limit| {
+                let preceding = caret.Clone().ok()?;
+                if units != 0 {
+                    preceding
+                        .MoveEndpointByUnit(
+                            TextPatternRangeEndpoint_Start,
+                            TextUnit_Character,
+                            -units,
+                        )
+                        .ok()?;
+                }
+                // Moving Start must not move End past the original caret.
+                if preceding
+                    .CompareEndpoints(
+                        TextPatternRangeEndpoint_End,
+                        &caret,
+                        TextPatternRangeEndpoint_End,
+                    )
+                    .ok()?
+                    != 0
+                    || preceding
+                        .CompareEndpoints(
+                            TextPatternRangeEndpoint_Start,
+                            &preceding,
+                            TextPatternRangeEndpoint_End,
+                        )
+                        .ok()?
+                        > 0
+                {
+                    return None;
+                }
+                Some(preceding.GetText(read_limit).ok()?.to_string())
+            })?;
             let still_focused = super::target::resolve_focused_text(&automation).ok()?;
             if !automation
                 .CompareElements(&element, &still_focused)
@@ -280,7 +331,7 @@ pub(super) fn read_before_caret(
             {
                 return None;
             }
-            Some(text.to_string())
+            Some(text)
         })();
         CoUninitialize();
         // UIA calls cross process boundaries. Drop text if focus changed while
@@ -473,6 +524,47 @@ pub(super) fn read_before_caret(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clipped_context_prefix_is_retried_before_accepting_caret_text() {
+        let mut calls = Vec::new();
+        let text = bounded_preceding_text(8, |units, limit| {
+            calls.push((units, limit));
+            Some(if units > 2 {
+                "x".repeat(limit as usize)
+            } else {
+                "🙂teh".into()
+            })
+        });
+        assert_eq!(text.as_deref(), Some("🙂teh"));
+        assert_eq!(calls, [(8, 9), (4, 9), (2, 9)]);
+        assert_eq!(
+            bounded_preceding_text(4, |_, limit| {
+                assert_eq!(limit, 5);
+                Some("🙂🙂".into())
+            })
+            .as_deref(),
+            Some("🙂🙂")
+        );
+    }
+
+    #[test]
+    fn unavailable_or_always_clipped_context_is_never_an_anchor() {
+        assert_eq!(bounded_preceding_text(8, |_, _| None), None);
+        let mut calls = 0;
+        assert_eq!(
+            bounded_preceding_text(8, |_, limit| {
+                calls += 1;
+                Some("x".repeat(limit as usize))
+            }),
+            None
+        );
+        assert_eq!(calls, 5); // 8, 4, 2, 1, collapsed caret.
+        assert_eq!(
+            bounded_preceding_text(i32::MAX, |_, _| panic!("unbounded read")),
+            None
+        );
+    }
 
     #[test]
     fn captures_to_nearest_boundary_or_word_limit() {

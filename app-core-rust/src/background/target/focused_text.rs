@@ -12,6 +12,59 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 const MAX_FOCUSED_REFERENCES: i32 = 256;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ResolutionKey {
+    window: isize,
+    keyboard: isize,
+    process: u32,
+    position: u64,
+    sequence: u64,
+}
+
+#[derive(Clone)]
+struct ResolvedEditor {
+    key: ResolutionKey,
+    host: IUIAutomationElement,
+    editor: IUIAutomationElement,
+    identity: String,
+}
+
+thread_local! {
+    static RESOLUTION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static RESOLVED_EDITOR: std::cell::RefCell<Option<ResolvedEditor>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Keep COM alive and editor discovery local to one guarded input operation.
+/// Cached discovery is never reused across work items or input/focus changes.
+pub(in crate::background) struct ResolutionScope(bool, std::marker::PhantomData<std::rc::Rc<()>>);
+impl ResolutionScope {
+    pub(in crate::background) fn begin() -> Self {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+        let initialized =
+            super::accept_com_initialization(unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) });
+        if initialized {
+            RESOLUTION_DEPTH.with(|depth| depth.set(depth.get() + 1));
+        }
+        Self(initialized, std::marker::PhantomData)
+    }
+}
+impl Drop for ResolutionScope {
+    fn drop(&mut self) {
+        if self.0 {
+            RESOLUTION_DEPTH.with(|depth| {
+                depth.set(depth.get() - 1);
+                if depth.get() == 0 {
+                    RESOLVED_EDITOR.with(|editor| editor.borrow_mut().take());
+                }
+            });
+            // Release every stored COM reference before releasing this apartment.
+            unsafe {
+                windows::Win32::System::Com::CoUninitialize();
+            }
+        }
+    }
+}
+
 fn refusal(reason: &'static str) -> windows::core::Error {
     tracing::debug!(stage = reason, "focused text resolution refused");
     windows::core::Error::new(windows::core::HRESULT(0x80004005u32 as i32), reason)
@@ -124,11 +177,69 @@ pub(in crate::background) fn resolve(
         {
             return Err(refusal("opaque host does not own keyboard focus"));
         }
+        let key = ResolutionKey {
+            window: foreground as isize,
+            keyboard: keyboard.hwndFocus as isize,
+            process,
+            position: super::super::input_listener::current_position_generation(),
+            sequence: super::super::input_listener::current_input_sequence(),
+        };
+        let previous = RESOLVED_EDITOR.with(|editor| editor.borrow().clone());
+        if let Some(previous) = previous.filter(|previous| previous.key == key) {
+            // Recheck native ownership, the current UIA host and all live field
+            // properties. Only the duplicate-reference discovery step is reused.
+            if automation.CompareElements(&previous.host, &host)?.as_bool()
+                && candidate_safe(
+                    [
+                        previous
+                            .editor
+                            .CurrentIsPassword()
+                            .ok()
+                            .map(|value| value.as_bool()),
+                        previous
+                            .editor
+                            .CurrentIsOffscreen()
+                            .ok()
+                            .map(|value| value.as_bool()),
+                        previous
+                            .editor
+                            .CurrentIsEnabled()
+                            .ok()
+                            .map(|value| value.as_bool()),
+                        previous
+                            .editor
+                            .CurrentHasKeyboardFocus()
+                            .ok()
+                            .map(|value| value.as_bool()),
+                    ],
+                    super::provider_owner_matches(
+                        process,
+                        previous.editor.CurrentProcessId()? as u32,
+                    ),
+                )
+                && super::runtime_id(&previous.editor).as_deref()
+                    == Some(previous.identity.as_str())
+                && GetForegroundWindow() == foreground
+                && super::super::input_listener::current_position_generation() == key.position
+                && super::super::input_listener::current_input_sequence() == key.sequence
+            {
+                let mut still_keyboard: GUITHREADINFO = std::mem::zeroed();
+                still_keyboard.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+                if GetGUIThreadInfo(thread, &mut still_keyboard) == 0
+                    || still_keyboard.hwndFocus != keyboard.hwndFocus
+                {
+                    return Err(refusal("keyboard owner changed during resolution"));
+                }
+                tracing::debug!("focused editor discovery reused after live validation");
+                return Ok(previous.editor);
+            }
+        }
+        RESOLVED_EDITOR.with(|editor| editor.borrow_mut().take());
         let condition = automation.CreatePropertyCondition(
             UIA_HasKeyboardFocusPropertyId,
             &windows::Win32::System::Variant::VARIANT::from(true),
         )?;
-        // One fresh bulk snapshot per resolution, never a persisted authorization cache.
+        // One fresh bulk snapshot per guarded discovery, never a persisted authorization cache.
         // Per-reference COM property calls turn duplicate providers into input backlog.
         let resolution_started = std::time::Instant::now();
         let cache = automation.CreateCacheRequest()?;
@@ -251,6 +362,21 @@ pub(in crate::background) fn resolve(
             elapsed_ms = resolution_started.elapsed().as_millis() as u64,
             "opaque focused editor resolved"
         );
+        if RESOLUTION_DEPTH.with(|depth| depth.get() > 0)
+            && super::super::input_listener::current_position_generation() == key.position
+            && super::super::input_listener::current_input_sequence() == key.sequence
+        {
+            if let Some(identity) = super::runtime_id(&editor) {
+                RESOLVED_EDITOR.with(|cached| {
+                    *cached.borrow_mut() = Some(ResolvedEditor {
+                        key,
+                        host,
+                        editor: editor.clone(),
+                        identity,
+                    })
+                });
+            }
+        }
         Ok(editor)
     }
 }
@@ -258,6 +384,33 @@ pub(in crate::background) fn resolve(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_input_native_owner_or_focus_change_invalidates_discovery() {
+        let key = ResolutionKey {
+            window: 1,
+            keyboard: 2,
+            process: 3,
+            position: 4,
+            sequence: 5,
+        };
+        for changed in [
+            ResolutionKey { window: 9, ..key },
+            ResolutionKey { keyboard: 9, ..key },
+            ResolutionKey { process: 9, ..key },
+            ResolutionKey { position: 9, ..key },
+            ResolutionKey { sequence: 9, ..key },
+        ] {
+            assert!(key != changed);
+        }
+        assert_eq!(RESOLUTION_DEPTH.with(|depth| depth.get()), 0);
+        {
+            let _scope = ResolutionScope::begin();
+            assert_eq!(RESOLUTION_DEPTH.with(|depth| depth.get()), 1);
+        }
+        assert_eq!(RESOLUTION_DEPTH.with(|depth| depth.get()), 0);
+        assert!(RESOLVED_EDITOR.with(|editor| editor.borrow().is_none()));
+    }
 
     #[test]
     fn cached_identity_requires_a_nonempty_integer_array() {

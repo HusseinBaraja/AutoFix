@@ -589,21 +589,42 @@ impl CorrectionPipeline {
             } else {
                 session.known_before_caret()
             };
-            let Some(live_before_caret) =
-                read_before_caret(&target, &active.request, known_before_caret.chars().count())
-            else {
+            let captured =
+                read_before_caret(&target, &active.request, known_before_caret.chars().count());
+            tracing::debug!(
+                available = captured.is_some(),
+                "completion caret capture checked"
+            );
+            let Some(live_before_caret) = captured else {
                 return false;
             };
             // The exact tracked region must still end at the live caret.
             // Never search elsewhere in the document for a similar span.
-            if !exact_range_before_caret(
+            let range_matches = exact_range_before_caret(
                 &live_before_caret,
                 &known_before_caret,
                 original,
                 &active.request.replacement_following_text,
-            ) || current_stamp() != validation_stamp
-                || !active.valid(session, current_stamp())
-            {
+            );
+            let stamp_matches = current_stamp() == validation_stamp;
+            let request_matches = active.valid(session, current_stamp());
+            tracing::debug!(
+                range_matches,
+                stamp_matches,
+                request_matches,
+                known_chars = known_before_caret.chars().count(),
+                live_chars = live_before_caret.chars().count(),
+                original_chars = original.chars().count(),
+                following_chars = active.request.replacement_following_text.chars().count(),
+                known_suffix_matches = known_before_caret.ends_with(&format!(
+                    "{original}{}",
+                    active.request.replacement_following_text
+                )),
+                live_suffix_matches = live_before_caret.ends_with(&known_before_caret),
+                live_ends_line_break = live_before_caret.ends_with(['\r', '\n']),
+                "completion caret range checked"
+            );
+            if !range_matches || !stamp_matches || !request_matches {
                 return false;
             }
             if output.behavior == ConfidenceBehavior::Suggestion {

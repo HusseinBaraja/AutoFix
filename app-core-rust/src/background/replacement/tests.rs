@@ -8,7 +8,7 @@ use crate::{
 };
 use std::cell::RefCell;
 
-fn target() -> FocusedTarget {
+pub(super) fn target() -> FocusedTarget {
     FocusedTarget {
         process_id: 1,
         process_name: "editor.exe".into(),

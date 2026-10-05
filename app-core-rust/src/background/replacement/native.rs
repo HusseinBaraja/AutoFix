@@ -38,6 +38,75 @@ mod proof_tests {
     use super::*;
 
     #[test]
+    fn scalar_patches_keep_unicode_multiline_and_newer_text_outside_the_write() {
+        let target = super::super::tests::target();
+        let plan = ReplacementPlan {
+            target: &target,
+            original: "é😃 العربية teh\nword",
+            replacement: "é😃 العربية the\nword",
+            following: " next",
+            selected_text: false,
+            stamp: crate::background::pipeline::InputStamp {
+                position: 0,
+                sequence: 0,
+            },
+        };
+        let patches = scalar_patches(&plan).unwrap();
+        assert_eq!(patches.len(), 2);
+        assert_eq!(
+            (
+                &*patches[0].original,
+                &*patches[0].replacement,
+                &*patches[0].following
+            ),
+            ("h", "e", "\nword next")
+        );
+        assert_eq!(
+            (
+                &*patches[1].original,
+                &*patches[1].replacement,
+                &*patches[1].following
+            ),
+            ("e", "h", "e\nword next")
+        );
+        for (original, replacement) in
+            [("", "a"), ("a", "ab"), ("a", "😃"), ("a", "\n"), ("a", "a")]
+        {
+            assert!(scalar_patches(&ReplacementPlan {
+                original,
+                replacement,
+                ..plan
+            })
+            .is_none());
+        }
+        assert!(scalar_patches(&ReplacementPlan {
+            selected_text: true,
+            ..plan
+        })
+        .is_none());
+        let before = "a".repeat(64);
+        let after = "b".repeat(64);
+        assert_eq!(
+            scalar_patches(&ReplacementPlan {
+                original: &before,
+                replacement: &after,
+                ..plan
+            })
+            .unwrap()
+            .len(),
+            64
+        );
+        let before = "a".repeat(65);
+        let after = "b".repeat(65);
+        assert!(scalar_patches(&ReplacementPlan {
+            original: &before,
+            replacement: &after,
+            ..plan
+        })
+        .is_none());
+    }
+
+    #[test]
     fn provider_error_text_never_enters_replacement_diagnostics() {
         let provider_error = windows::core::Error::new(
             windows::core::HRESULT(0x80070005u32 as i32),
@@ -83,8 +152,132 @@ fn replace(method: ReplacementMethod, plan: &ReplacementPlan<'_>) -> Attempt {
     let _apartment = Apartment;
     match PreparedRange::new(plan) {
         Err(reason) => Attempt::Unavailable(reason),
-        Ok(range) => range.replace(method, plan),
+        Ok(range) => {
+            if method == ReplacementMethod::UiAutomation {
+                let whole_span_safe = !plan.replacement.chars().any(char::is_control)
+                    && super::ui_automation::authorize(
+                        &range.automation,
+                        &range.element,
+                        &range.pattern,
+                        &range.span,
+                        plan.following,
+                        plan.original,
+                        plan.replacement,
+                    )
+                    .is_ok();
+                if !whole_span_safe {
+                    if let Some(patches) = scalar_patches(plan) {
+                        return replace_patches(plan, patches);
+                    }
+                }
+            }
+            range.replace(method, plan)
+        }
     }
+}
+
+#[cfg(windows)]
+struct ScalarPatch {
+    original: String,
+    replacement: String,
+    following: String,
+}
+
+/// Apply equal-scalar-width substitutions from right to left. Every write is a
+/// single selected-character operation, so overtype cannot touch following text.
+/// Unchanged Unicode and line breaks are verified, never retyped.
+#[cfg(windows)]
+fn scalar_patches(plan: &ReplacementPlan<'_>) -> Option<Vec<ScalarPatch>> {
+    if plan.selected_text {
+        return None;
+    }
+    let original: Vec<char> = plan.original.chars().collect();
+    let replacement: Vec<char> = plan.replacement.chars().collect();
+    if original.len() != replacement.len() {
+        return None;
+    }
+    // Each patch retains a known suffix. Bound the count before allocating
+    // those strings; an adversarial whole-span rewrite must not grow quadratically.
+    if original
+        .iter()
+        .zip(&replacement)
+        .filter(|(a, b)| a != b)
+        .count()
+        > 64
+    {
+        return None;
+    }
+    let mut patches = Vec::new();
+    for index in (0..original.len()).rev() {
+        if original[index] == replacement[index] {
+            continue;
+        }
+        let before = original[index].to_string();
+        let after = replacement[index].to_string();
+        if !super::ui_automation::atomic_selected_edit(&before, &after) {
+            return None;
+        }
+        let following = replacement[index + 1..].iter().collect::<String>() + plan.following;
+        patches.push(ScalarPatch {
+            original: before,
+            replacement: after,
+            following,
+        });
+    }
+    (!patches.is_empty()).then_some(patches)
+}
+
+#[cfg(windows)]
+fn replace_patches(plan: &ReplacementPlan<'_>, patches: Vec<ScalarPatch>) -> Attempt {
+    let mut changed = false;
+    for patch in patches {
+        let subplan = ReplacementPlan {
+            target: plan.target,
+            original: &patch.original,
+            replacement: &patch.replacement,
+            following: &patch.following,
+            selected_text: false,
+            stamp: plan.stamp,
+        };
+        let attempt = match PreparedRange::new(&subplan) {
+            Ok(range) => range.replace(ReplacementMethod::UiAutomation, &subplan),
+            Err(reason) => Attempt::Unavailable(reason),
+        };
+        match attempt {
+            Attempt::Finished(result) if result.success => changed = true,
+            Attempt::Finished(mut result) => {
+                result.may_have_changed |= changed;
+                result.range = Some(plan.range());
+                return Attempt::Finished(result);
+            }
+            Attempt::Unavailable(reason) if !changed => return Attempt::Unavailable(reason),
+            Attempt::Unavailable(reason) => {
+                return Attempt::Finished(ReplacementResult {
+                    success: false,
+                    method: Some(ReplacementMethod::UiAutomation),
+                    range: Some(plan.range()),
+                    reason: Some(reason),
+                    may_have_changed: true,
+                })
+            }
+        }
+    }
+    let final_plan = ReplacementPlan {
+        target: plan.target,
+        original: plan.replacement,
+        replacement: plan.original,
+        following: plan.following,
+        selected_text: false,
+        stamp: plan.stamp,
+    };
+    let verification = PreparedRange::new(&final_plan);
+    Attempt::Finished(ReplacementResult {
+        success: verification.is_ok(),
+        method: Some(ReplacementMethod::UiAutomation),
+        range: Some(plan.range()),
+        reason: verification.err(),
+        may_have_changed: changed,
+    })
 }
 
 /// Refuse native mutation on platforms without Windows replacement APIs.
@@ -276,10 +469,13 @@ impl PreparedRange {
         };
         if method == ReplacementMethod::UiAutomation {
             if let Err(reason) = super::ui_automation::authorize(
+                &self.automation,
                 &self.element,
                 &self.pattern,
                 &self.span,
                 plan.following,
+                plan.original,
+                plan.replacement,
             ) {
                 return Attempt::Unavailable(reason);
             }
@@ -337,7 +533,7 @@ impl PreparedRange {
             selection_attempted = true;
             unsafe { self.span.Select() }.map_err(|_| "range selection failed")?;
             // Verify Select selected exactly the proven span, not a provider approximation.
-            self.verify_selection(plan)?;
+            self.wait_selection(plan)?;
             if let Some(transaction) = clipboard.as_mut() {
                 transaction.install().map_err(|failure| {
                     if failure.clipboard_uncertain {
@@ -368,10 +564,13 @@ impl PreparedRange {
             }
             if method == ReplacementMethod::UiAutomation {
                 super::ui_automation::authorize(
+                    &self.automation,
                     &self.element,
                     &self.pattern,
                     &self.span,
                     plan.following,
+                    plan.original,
+                    plan.replacement,
                 )?;
                 if !provider_keyboard_target(plan) {
                     return Err("UIA keyboard host changed before mutation".into());
@@ -484,6 +683,23 @@ impl PreparedRange {
     }
 
     /// Reject approximate provider selections before publishing or injecting text.
+    /// Hosted providers may acknowledge Select before their UI thread applies it.
+    /// Wait only before mutation and keep the target/input guards on every poll.
+    fn wait_selection(&self, plan: &ReplacementPlan<'_>) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+        loop {
+            if !current(plan) || !self.focused() {
+                return Err("target or input changed while selecting".into());
+            }
+            match self.verify_selection(plan) {
+                Ok(()) => return Ok(()),
+                Err(reason) if std::time::Instant::now() >= deadline => return Err(reason),
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(5)),
+            }
+        }
+    }
+
+    /// Reject approximate provider selections before publishing or injecting text.
     fn verify_selection(&self, plan: &ReplacementPlan<'_>) -> Result<(), String> {
         unsafe {
             let selections = self
@@ -496,6 +712,15 @@ impl PreparedRange {
             let selected = selections
                 .GetElement(0)
                 .map_err(|_| "selection unreadable")?;
+            tracing::debug!(
+                start = selected.CompareEndpoints(START, &self.span, START).ok(),
+                end = selected.CompareEndpoints(END, &self.span, END).ok(),
+                exact_text = selected
+                    .GetText(-1)
+                    .ok()
+                    .is_some_and(|text| text == plan.original),
+                "native selection endpoints checked"
+            );
             if selected.CompareEndpoints(START, &self.span, START).ok() != Some(0)
                 || selected.CompareEndpoints(END, &self.span, END).ok() != Some(0)
                 || selected.GetText(-1).map_err(|_| "selection unreadable")? != plan.original
@@ -522,6 +747,21 @@ impl PreparedRange {
                 let pattern: IUIAutomationTextPattern =
                     element.GetCurrentPatternAs(UIA_TextPatternId)?;
                 let caret = collapsed_selection(&pattern)?;
+                if !plan.following.is_empty() {
+                    // Hosted editors can restore the original caret themselves
+                    // after a selected-character update. Prove the entire known
+                    // replacement/following suffix before accepting that position.
+                    if let Ok(following) = adjacent_range(&caret, plan.following, true) {
+                        let anchor = following.Clone()?;
+                        anchor.MoveEndpointByRange(END, &following, START)?;
+                        if adjacent_range(&anchor, plan.replacement, true).is_ok()
+                            && current_after_mutation(plan)
+                            && self.focused()
+                        {
+                            return Ok(());
+                        }
+                    }
+                }
                 adjacent_range(&caret, plan.replacement, true)?;
                 let following = adjacent_range(&caret, plan.following, false)?;
                 if !current_after_mutation(plan) || !self.focused() {

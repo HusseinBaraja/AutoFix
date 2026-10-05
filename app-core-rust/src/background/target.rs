@@ -3,6 +3,7 @@ use std::path::Path;
 mod focused_text;
 mod provider_owner;
 pub(super) use focused_text::resolve as resolve_focused_text;
+pub(super) use focused_text::ResolutionScope;
 pub(super) use provider_owner::matches as provider_owner_matches;
 
 use windows::Win32::{

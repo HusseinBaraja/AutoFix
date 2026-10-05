@@ -2,6 +2,8 @@
 mod clipboard;
 #[cfg(windows)]
 mod direct;
+#[cfg(all(windows, test))]
+mod live_tests;
 mod native;
 #[cfg(windows)]
 mod send_input;
