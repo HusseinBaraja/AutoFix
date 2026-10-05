@@ -14,7 +14,8 @@ if (Test-Path -LiteralPath $recordPath) {
     $record = Get-Content -LiteralPath $recordPath -Raw | ConvertFrom-Json
     $owned = Get-Process -Id $record.process_id -ErrorAction SilentlyContinue
     if ($owned) {
-        if ($owned.Path -ne $record.executable -or $owned.StartTime.ToUniversalTime().ToString('o') -ne $record.started_utc) {
+        $recordedStart = ([datetime] $record.started_utc).ToUniversalTime()
+        if ($owned.Path -ne $record.executable -or $owned.StartTime.ToUniversalTime() -ne $recordedStart) {
             throw 'Recorded PID belongs to a different process. No process was stopped.'
         }
         if (!$Stop) { throw 'The owned check is still running. Run this script with -Stop first.' }
