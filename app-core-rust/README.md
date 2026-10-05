@@ -433,13 +433,27 @@ skips persistence without delaying input processing or losing the committed undo
 
 The replacement feature lives in `src/background/replacement`. Its strategy
 interface tries direct text APIs, UI Automation replacement, clipboard paste,
-then SendInput. Direct APIs/TSF and UI Automation mutation currently report
-unavailable and can be implemented progressively. UI Automation TextPattern
+then SendInput. Direct insertion uses synchronous `EM_REPLACESEL` with native undo
+enabled on writable Unicode Edit/RichEdit controls. Native selected UTF-16 length
+and text capacity are checked before insertion; Unicode, deletion and selected
+multiline text do not require clipboard access. A timeout is uncertain mutation
+and stops fallback. UI Automation TextPattern
 must first prove a collapsed caret (or a selection ending at the native caret),
 the exact executable span and any newer
 typed text between that span and the caret. Only that span is selected; text
 after the original caret remains untouched. Missing or unreliable providers
 refuse replacement rather than guessing a keystroke distance.
+
+Windowless and framework UIA text controls use TextPattern selection plus Unicode
+keyboard input only when the selected range is proved writable and ends exactly
+at the document end, with no newer following text. TextPattern has no text setter;
+whole-field `ValuePattern.SetValue` is never used. The end restriction prevents
+unknown overtype behavior from consuming text after the caret. Input containing
+control characters refuses this method. All methods reject protected, mixed or
+unknown range writability before selection and again before mutation. Foreground
+window, provider process and keyboard host must belong to the authorized process.
+TSF and app-specific document APIs remain planned. These framework capabilities
+do not establish compatibility with every app using the framework.
 
 Clipboard replacement uses synchronous `WM_PASTE` on recognized native Edit
 and RichEdit controls. It snapshots every enumerated clipboard format, including
@@ -526,9 +540,15 @@ and a bitmap. It verifies actual native paste, restoration, recovery from a
 locked clipboard, and retention of a newer copy without touching the desktop
 clipboard. It refuses a visible station or unrelated existing clipboard data.
 The opt-in `native_edit_replacement_smoke` test owns a separate native editor;
-it checks clipboard/SendInput correction and recorded app undo, preserving the
+it checks direct/clipboard/SendInput correction, UIA end-of-document insertion,
+and recorded app undo, preserving the
 newer executable text, caret and document suffix on an
 interactive Windows desktop. It safely refuses unsupported clipboard formats.
+The opt-in `wpf_uia_replacement_and_app_undo` owns a separate WPF fixture process;
+it verifies actual TextBox provider correction/undo with Unicode and deletion,
+and refuses read-only ranges and a document suffix. See
+[writing-app compatibility](../docs/writing-app-compatibility.md) for the
+laptop writing scope and installed-app inventory. Detection is not verification.
 
 Feature code should be organized by product behavior, not technical layer. Keep modules small, private by default, and colocate tests with the behavior they verify.
 

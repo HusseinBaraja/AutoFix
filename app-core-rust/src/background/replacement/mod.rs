@@ -1,10 +1,16 @@
 //! The mutation owner. Strategies may fall through only before any target mutation.
 mod clipboard;
+#[cfg(windows)]
+mod direct;
 mod native;
 #[cfg(windows)]
 mod send_input;
 #[cfg(test)]
 mod tests;
+#[cfg(windows)]
+mod ui_automation;
+#[cfg(all(windows, test))]
+mod wpf_tests;
 
 use super::{
     pipeline::InputStamp,
@@ -143,20 +149,6 @@ trait ReplacementStrategy {
     fn replace(&mut self, plan: &ReplacementPlan<'_>) -> Attempt;
 }
 
-/// Reserved layers have an explicit capability refusal, never pretend success.
-struct DeferredStrategy(ReplacementMethod);
-impl ReplacementStrategy for DeferredStrategy {
-    /// Identify the strategy so clipboard preferences can skip preparation entirely.
-    fn method(&self) -> ReplacementMethod {
-        self.0
-    }
-
-    /// Return Unavailable only before target selection or mutation can have changed.
-    fn replace(&mut self, _: &ReplacementPlan<'_>) -> Attempt {
-        Attempt::Unavailable(format!("{:?} replacement is not implemented", self.0))
-    }
-}
-
 /// Try methods in safety order and stop on every completed or uncertain attempt.
 fn run_strategies(
     plan: &ReplacementPlan<'_>,
@@ -263,8 +255,8 @@ impl ReplacementEngine {
         run_strategies(
             plan,
             &mut [
-                &mut DeferredStrategy(ReplacementMethod::DirectTextApi),
-                &mut DeferredStrategy(ReplacementMethod::UiAutomation),
+                &mut native::NativeStrategy(ReplacementMethod::DirectTextApi),
+                &mut native::NativeStrategy(ReplacementMethod::UiAutomation),
                 &mut native::NativeStrategy(ReplacementMethod::Clipboard),
                 &mut native::NativeStrategy(ReplacementMethod::SendInput),
             ],

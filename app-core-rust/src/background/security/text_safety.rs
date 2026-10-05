@@ -71,6 +71,21 @@ pub(super) fn mode(rules: &[AppRule], target: &FocusedTarget) -> SafetyMode {
             | "eclipse.exe"
             | "goland64.exe"
             | "rustrover64.exe"
+            | "studio64.exe"
+            | "netbeans64.exe"
+            | "netbeans.exe"
+            | "antigravity.exe"
+            | "t3code.exe"
+            | "t3-code.exe"
+            | "qtcreator.exe"
+            | "rstudio.exe"
+            | "spyder.exe"
+            | "thonny.exe"
+            | "emacs.exe"
+            | "gvim.exe"
+            | "geany.exe"
+            | "scite.exe"
+            | "kate.exe"
     ) || [
         "visual studio",
         "intellij",

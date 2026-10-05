@@ -40,6 +40,62 @@ const TRIGGERS: [TriggerKind; 3] = [
     TriggerKind::Character,
 ];
 
+/// The catalog records proposed writing surfaces, never native-provider passes.
+#[test]
+fn writing_app_catalog_guards_every_target_and_keeps_editor_prose_opt_in() {
+    let catalog: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../shared-schema/windows-writing-apps.json"
+    ))
+    .unwrap();
+    let apps = catalog["apps"].as_array().unwrap();
+    assert_eq!(catalog["scope"], "installed_laptop");
+    assert!(!apps.is_empty());
+    let mut names = std::collections::HashSet::new();
+    let config = AppConfig::default();
+    let defaults = crate::storage::Database::open_memory()
+        .unwrap()
+        .app_rules()
+        .list()
+        .unwrap();
+    for app in apps {
+        assert!(names.insert(app["id"].as_str().unwrap()));
+        assert_eq!(app["status"], "not_verified");
+        assert_eq!(app["host"], "desktop");
+        assert!(matches!(
+            app["category"].as_str(),
+            Some("consumer" | "office" | "developer")
+        ));
+        assert!(!app["surface"].as_str().unwrap().is_empty());
+        let process = app["process"].as_str().unwrap();
+        let target = focused(process, "Writing compatibility fixture");
+        for trigger in TRIGGERS {
+            let admitted = matches!(
+                decision(trigger, &config, &defaults, &target),
+                SecurityDecision::Allowed { .. }
+            );
+            assert_eq!(
+                admitted,
+                app["policy"] == "general",
+                "{}: {trigger:?}",
+                app["name"]
+            );
+            // An app-rule allowlist can never authorize secure/unproved controls.
+            for protected in [true, false] {
+                let mut unsafe_target = target.clone();
+                if protected {
+                    unsafe_target.is_password_or_protected = true;
+                } else {
+                    unsafe_target.field_safety_known = false;
+                }
+                assert!(matches!(
+                    decision(trigger, &config, &[allow_rule(process)], &unsafe_target),
+                    SecurityDecision::Blocked { .. }
+                ));
+            }
+        }
+    }
+}
+
 fn focused(process: &str, title: &str) -> FocusedTarget {
     FocusedTarget {
         process_name: process.into(),
@@ -129,7 +185,7 @@ fn windows_target_app_rule_matrix() {
                 config.correction.engine = engine.clone();
                 let rule = allow_rule(process);
                 assert!(matches!(
-                    decision(trigger, &config, &[rule.clone()], &target),
+                    decision(trigger, &config, std::slice::from_ref(&rule), &target),
                     SecurityDecision::Allowed { .. }
                 ));
                 let mut trigger_denied = rule.clone();

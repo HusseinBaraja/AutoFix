@@ -85,6 +85,7 @@ impl PreparedRange {
                 if element.CurrentIsPassword()?.as_bool()
                     || element.CurrentIsOffscreen()?.as_bool()
                     || !element.CurrentIsEnabled()?.as_bool()
+                    || element.CurrentProcessId()? as u32 != plan.target.process_id
                 {
                     return Err(range_error("field is protected, hidden or disabled"));
                 }
@@ -131,6 +132,7 @@ impl PreparedRange {
         };
         // Provider error messages are untrusted and can contain document text.
         let range = result.map_err(|_| "no reliable pre-caret range".to_owned())?;
+        super::ui_automation::writable(&range.span)?;
         if !current(plan) || !range.focused() {
             return Err("focus or input changed while proving range".into());
         }
@@ -177,6 +179,39 @@ impl PreparedRange {
         } else {
             None
         };
+        let direct_window = if method == ReplacementMethod::DirectTextApi {
+            match unsafe { self.element.CurrentNativeWindowHandle() } {
+                Ok(window) if super::direct::supports_target(window.0 as isize) => {
+                    Some(window.0 as isize)
+                }
+                _ => return Attempt::Unavailable("no safe selected-range native text API".into()),
+            }
+        } else {
+            None
+        };
+        let direct_text = if let Some(window) = direct_window {
+            match super::direct::prepare(window, plan.replacement) {
+                Ok(text) => Some(text),
+                Err(reason) => return Attempt::Unavailable(reason),
+            }
+        } else {
+            None
+        };
+        if method == ReplacementMethod::UiAutomation {
+            if let Err(reason) = super::ui_automation::authorize(
+                &self.element,
+                &self.pattern,
+                &self.span,
+                plan.following,
+            ) {
+                return Attempt::Unavailable(reason);
+            }
+            if !provider_keyboard_target(plan) {
+                return Attempt::Unavailable(
+                    "UIA keyboard host is not the authorized process".into(),
+                );
+            }
+        }
         let input_window = if method == ReplacementMethod::SendInput {
             match unsafe { self.element.CurrentNativeWindowHandle() } {
                 Ok(window) if super::send_input::supports_target(window.0 as isize) => {
@@ -191,7 +226,7 @@ impl PreparedRange {
         } else {
             None
         };
-        let inputs = if input_window.is_some() {
+        let inputs = if input_window.is_some() || method == ReplacementMethod::UiAutomation {
             match super::send_input::prepare(plan.replacement) {
                 Ok(inputs) => Some(inputs),
                 Err(reason) => return Attempt::Unavailable(reason),
@@ -248,12 +283,38 @@ impl PreparedRange {
                     return Err("SendInput keyboard focus or target safety changed".into());
                 }
             }
+            if let Some(window) = direct_window {
+                if !super::direct::supports_target(window) || !keyboard_target(window, plan) {
+                    return Err("native insertion focus or target safety changed".into());
+                }
+                super::direct::validate_selection(window, plan.original, plan.replacement)?;
+            }
+            if method == ReplacementMethod::UiAutomation {
+                super::ui_automation::authorize(
+                    &self.element,
+                    &self.pattern,
+                    &self.span,
+                    plan.following,
+                )?;
+                if !provider_keyboard_target(plan) {
+                    return Err("UIA keyboard host changed before mutation".into());
+                }
+            }
+            super::ui_automation::writable(&self.span)?;
             if !current(plan) || !self.focused() {
                 return Err("target or input changed before mutation".into());
             }
+            self.verify_selection(plan)?;
             // After this point a failed call may have mutated text: never fall through.
             result.may_have_changed = true;
-            if let Some(window) = paste_window {
+            if let Some(window) = direct_window {
+                super::direct::insert(
+                    window,
+                    direct_text
+                        .as_deref()
+                        .ok_or("native text batch unavailable")?,
+                )?;
+            } else if let Some(window) = paste_window {
                 super::clipboard::paste_and_restore(
                     || super::clipboard::paste(window),
                     || restore_clipboard(clipboard.as_mut(), plan),
@@ -537,5 +598,33 @@ fn keyboard_target(window: isize, plan: &ReplacementPlan<'_>) -> bool {
             && thread != 0
             && GetGUIThreadInfo(thread, &mut info) != 0
             && info.hwndFocus as isize == window
+    }
+}
+
+/// Windowless UIA controls still need a live foreground keyboard host in the same process.
+#[cfg(windows)]
+fn provider_keyboard_target(plan: &ReplacementPlan<'_>) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, GUITHREADINFO,
+    };
+    unsafe {
+        let foreground = GetForegroundWindow();
+        if foreground as isize != plan.target.window_handle {
+            return false;
+        }
+        let mut process = 0;
+        let thread = GetWindowThreadProcessId(foreground, &mut process);
+        let mut info: GUITHREADINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+        if process != plan.target.process_id
+            || thread == 0
+            || GetGUIThreadInfo(thread, &mut info) == 0
+            || info.hwndFocus.is_null()
+        {
+            return false;
+        }
+        let mut focused_process = 0;
+        GetWindowThreadProcessId(info.hwndFocus, &mut focused_process);
+        focused_process == plan.target.process_id
     }
 }

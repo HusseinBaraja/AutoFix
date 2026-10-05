@@ -15,3 +15,6 @@ Prefer short, durable notes over speculative design documents.
 
 [Windows text-target integration scenarios](windows-text-target-integration.md)
 defines manual app coverage, browser/WPF fixtures, and the automated test runner.
+
+[Writing-app compatibility](writing-app-compatibility.md) defines the installed
+laptop writing targets, local inventory, capability boundaries and release gate.

@@ -7,7 +7,8 @@ This suite checks v1 behavior in [README](../README.md) and the
   storage, dispatcher, local worker, session commits and undo records.
   Focus/capture/mutation are adapters, not real application providers.
 - Opt-in native tests own a Windows Edit control and exercise real range proof,
-  replacement, clipboard/SendInput, undo and caret movement. Clipboard recovery
+  direct insertion, clipboard/SendInput, undo and caret movement. A separate WPF
+  fixture tests the UIA adapter. Clipboard recovery
   tests use an isolated, noninteractive window station.
 - Manual scenarios below verify actual installed targets. No real target has
   a recorded manual pass until a tester runs it.
@@ -28,7 +29,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-windows-integ
 
 # Also test native replacement on an unlocked interactive Windows desktop.
 # Tests briefly focus their own editor. Avoid typing during the run.
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-windows-integration.ps1 -NativeDesktop -IsolatedClipboard
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-windows-integration.ps1 -NativeDesktop -WpfDesktop -IsolatedClipboard
 
 # Only the new target contracts:
 cargo test -p background-engine windows_target --lib
@@ -75,8 +76,10 @@ hosted in `powershell.exe` remains a terminal target and is blocked by default.
 `Conditional` means policy permits an ordinary, unelevated, known-safe field;
 replacement still needs reliable UI Automation caret/range proof and supported
 mutation. Clipboard paste supports recognized Edit/RichEdit controls; SendInput
-supports standard Unicode Edit. Direct text APIs/UI Automation mutation are
-planned. Custom browser/messaging controls may refuse all triggers safely.
+supports standard Unicode Edit. Direct selected-range insertion supports recognized
+Unicode Edit/RichEdit controls. The UIA keyboard adapter requires a proved writable
+range ending at the document end and no newer following text. Custom
+browser/messaging controls may refuse all triggers safely.
 Record those as `UNSUPPORTED`, not successful corrections.
 
 | Target / field | Shortcut | Word count | Character | Cases / setup |

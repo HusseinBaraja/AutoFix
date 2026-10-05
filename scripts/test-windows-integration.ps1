@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [switch] $NativeDesktop,
+    [switch] $WpfDesktop,
     [switch] $IsolatedClipboard,
     [string] $ResultsDirectory = (Join-Path ([System.IO.Path]::GetTempPath()) ("AutoFix-integration-" + [guid]::NewGuid().ToString("N")))
 )
@@ -58,11 +59,23 @@ try {
         Invoke-IntegrationSuite "native_clipboard_preservation_smoke" @("test", "-p", "background-engine", "--lib", $clipboard, "--", "--exact", "--ignored", "--nocapture", "--test-threads=1") -SingleTest
     }
     else { $results.Add([pscustomobject]@{ suite = "native_clipboard_preservation_smoke"; status = "not_run"; reason = "Enable -IsolatedClipboard on Windows" }) }
+    if ($WpfDesktop) {
+        $fixtureProject = Join-Path $repoRoot 'tests\windows-targets\wpf\AutoFix.TextTargetFixture.csproj'
+        & dotnet build $fixtureProject
+        if ($LASTEXITCODE -ne 0) { throw 'WPF fixture build failed.' }
+        $previousFixture = $env:AUTOFIX_WPF_FIXTURE
+        try {
+            $env:AUTOFIX_WPF_FIXTURE = Join-Path $repoRoot 'tests\windows-targets\wpf\bin\Debug\net8.0-windows\AutoFix.TextTargetFixture.exe'
+            Invoke-IntegrationSuite 'wpf_uia_replacement_and_app_undo' @('test', '-p', 'background-engine', '--lib', 'background::replacement::wpf_tests::wpf_uia_replacement_and_app_undo', '--', '--exact', '--ignored', '--nocapture', '--test-threads=1') -SingleTest
+        }
+        finally { $env:AUTOFIX_WPF_FIXTURE = $previousFixture }
+    }
+    else { $results.Add([pscustomobject]@{ suite = 'wpf_uia_replacement_and_app_undo'; status = 'not_run'; reason = 'Enable -WpfDesktop on an unlocked Windows desktop' }) }
 }
 finally {
     Pop-Location
     # Keep a complete report even when a failed suite stops the run early.
-    foreach ($name in @("deterministic", "native_edit_replacement_smoke", "native_automatic_trigger_smoke", "native_caret_movement_smoke", "native_clipboard_preservation_smoke")) {
+    foreach ($name in @("deterministic", "native_edit_replacement_smoke", "native_automatic_trigger_smoke", "native_caret_movement_smoke", "native_clipboard_preservation_smoke", "wpf_uia_replacement_and_app_undo")) {
         if (!($results | Where-Object { $_.suite -eq $name })) {
             $results.Add([pscustomobject]@{ suite = $name; status = "not_run"; reason = "Run stopped before this suite" })
         }

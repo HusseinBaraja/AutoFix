@@ -705,7 +705,12 @@ fn native_editor_smoke(automatic_only: bool, movement_only: bool) {
                 0
             );
         }
-        for method in [ReplacementMethod::Clipboard, ReplacementMethod::SendInput] {
+        for method in [
+            ReplacementMethod::DirectTextApi,
+            ReplacementMethod::UiAutomation,
+            ReplacementMethod::Clipboard,
+            ReplacementMethod::SendInput,
+        ] {
             let refused = run_strategies(&stale, &mut [&mut native::NativeStrategy(method)], true);
             assert!(!refused.success && !refused.may_have_changed);
             assert!(refused.range.is_none());
@@ -1004,7 +1009,7 @@ fn native_editor_smoke(automatic_only: bool, movement_only: bool) {
                 }
                 .into(),
                 if original != corrected {
-                    "send_input"
+                    "direct_text_api"
                 } else {
                     "none"
                 }
@@ -1137,7 +1142,7 @@ fn native_editor_smoke(automatic_only: bool, movement_only: bool) {
             assert_eq!(session.undo_target().unwrap().original, "teh");
             let connection = rusqlite::Connection::open(&path).unwrap();
             let count: u64 = connection.query_row(
-                "select count(*) from correction_metadata where result_reason = 'correction_applied' and replacement_method = 'send_input'",
+                "select count(*) from correction_metadata where result_reason = 'correction_applied' and replacement_method = 'direct_text_api'",
                 [], |row| row.get(0)).unwrap();
             assert_eq!(count, 1);
             processor.process_shortcut(2);
@@ -1172,6 +1177,18 @@ fn native_editor_smoke(automatic_only: bool, movement_only: bool) {
         std::fs::remove_file(path).unwrap();
     }
     for (method, original, replacement, following, selected_text) in [
+        (ReplacementMethod::DirectTextApi, "teh", "the", "", false),
+        (
+            ReplacementMethod::DirectTextApi,
+            "teh",
+            "é😃",
+            " newer",
+            false,
+        ),
+        (ReplacementMethod::DirectTextApi, "teh", "", " newer", false),
+        (ReplacementMethod::DirectTextApi, "teh", "العربية", "", true),
+        (ReplacementMethod::UiAutomation, "teh", "the", "", false),
+        (ReplacementMethod::UiAutomation, "teh", "é😃", "", false),
         (ReplacementMethod::Clipboard, "teh", "the", "", false),
         (ReplacementMethod::Clipboard, "teh", "the", " newer", false),
         (ReplacementMethod::SendInput, "teh", "the", "", false),
@@ -1183,7 +1200,12 @@ fn native_editor_smoke(automatic_only: bool, movement_only: bool) {
         (ReplacementMethod::SendInput, "teh", "é😃", "", true),
         (ReplacementMethod::SendInput, "teh", "", "", true),
     ] {
-        let initial = format!("old {original}{following} AFTER");
+        let suffix = if method == ReplacementMethod::UiAutomation {
+            ""
+        } else {
+            " AFTER"
+        };
+        let initial = format!("old {original}{following}{suffix}");
         let initial_caret = format!("old {original}{following}").encode_utf16().count();
         unsafe {
             let root = GetAncestor(edit as _, GA_ROOT);
@@ -1340,7 +1362,7 @@ fn native_editor_smoke(automatic_only: bool, movement_only: bool) {
         };
         assert_eq!(
             String::from_utf16_lossy(&text[..length as usize]),
-            format!("old {replacement}{following} AFTER")
+            format!("old {replacement}{following}{suffix}")
         );
         let expected_caret = format!("old {replacement}{following}")
             .encode_utf16()

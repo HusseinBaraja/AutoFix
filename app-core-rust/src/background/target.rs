@@ -9,7 +9,9 @@ use windows::Win32::{
         },
         Ole::{SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetLBound, SafeArrayGetUBound},
     },
-    UI::Accessibility::{CUIAutomation8, IUIAutomation2},
+    UI::Accessibility::{
+        CUIAutomation8, IUIAutomation2, IUIAutomationTextPattern, UIA_TextPatternId,
+    },
 };
 use windows_sys::Win32::{
     Foundation::{CloseHandle, GetLastError, ERROR_ACCESS_DENIED, HWND},
@@ -315,23 +317,31 @@ fn focused_element_context() -> Option<FocusedElementContext> {
             let focused_element_id = runtime_id(&element)
                 .map(FocusedElementId::RuntimeId)
                 .or_else(|| automation_id(&element).map(FocusedElementId::AutomationId));
-            let is_password_or_protected = element
+            let password = element
                 .CurrentIsPassword()
-                .map(|is_password| is_password.as_bool())
-                .unwrap_or(false);
-            let is_offscreen = element
+                .ok()
+                .map(|value| value.as_bool());
+            let offscreen = element
                 .CurrentIsOffscreen()
-                .map(|is_offscreen| is_offscreen.as_bool())
-                .unwrap_or(true);
-            let is_enabled = element
-                .CurrentIsEnabled()
-                .map(|is_enabled| is_enabled.as_bool())
-                .unwrap_or(false);
+                .ok()
+                .map(|value| value.as_bool());
+            let enabled = element.CurrentIsEnabled().ok().map(|value| value.as_bool());
+            let (is_password_or_protected, is_hidden_or_unavailable) =
+                field_safety_properties(password, offscreen, enabled)?;
+            // Opaque hosts can hide a nested password field. Require the focused
+            // field's own text provider before capture or outbound API work.
+            let text_pattern = !is_password_or_protected
+                && element
+                    .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+                    .is_ok();
+            if !proved_field(is_password_or_protected, text_pattern) {
+                return None;
+            }
 
             Some(FocusedElementContext {
                 focused_element_id,
                 is_password_or_protected,
-                is_hidden_or_unavailable: is_offscreen || !is_enabled,
+                is_hidden_or_unavailable,
             })
         })();
 
@@ -341,6 +351,20 @@ fn focused_element_context() -> Option<FocusedElementContext> {
 
         context
     }
+}
+
+/// Every provider safety property must be known; password-query failure is not false.
+fn field_safety_properties(
+    password: Option<bool>,
+    offscreen: Option<bool>,
+    enabled: Option<bool>,
+) -> Option<(bool, bool)> {
+    let (password, offscreen, enabled) = (password?, offscreen?, enabled?);
+    Some((password, offscreen || !enabled))
+}
+
+fn proved_field(password: bool, text_pattern: bool) -> bool {
+    password || text_pattern
 }
 
 pub(super) fn create_automation() -> windows::core::Result<IUIAutomation2> {
@@ -497,6 +521,132 @@ fn safe_array_i32_values(safe_array: *mut SAFEARRAY) -> Option<Vec<i32>> {
 mod tests {
     use super::*;
     use windows::core::HRESULT;
+
+    #[test]
+    fn missing_provider_safety_properties_never_authorize_a_field() {
+        for missing in 0..3 {
+            let mut properties = [Some(false), Some(false), Some(true)];
+            properties[missing] = None;
+            assert!(field_safety_properties(properties[0], properties[1], properties[2]).is_none());
+        }
+        assert_eq!(
+            field_safety_properties(Some(true), Some(false), Some(true)),
+            Some((true, false))
+        );
+        assert_eq!(
+            field_safety_properties(Some(false), Some(true), Some(true)),
+            Some((false, true))
+        );
+        assert_eq!(
+            field_safety_properties(Some(false), Some(false), Some(false)),
+            Some((false, true))
+        );
+    }
+
+    #[test]
+    fn opaque_nonpassword_hosts_do_not_prove_nested_field_safety() {
+        assert!(!proved_field(false, false));
+        assert!(proved_field(false, true));
+        // Preserve the explicit password block even when the control hides text.
+        assert!(proved_field(true, false));
+    }
+
+    /// Read-only capability observation, never a real-app correction pass.
+    #[test]
+    #[ignore = "requires a focused writing field and AUTOFIX_EXPECTED_PROCESS; reads metadata only"]
+    fn focused_writing_target_capabilities() {
+        use windows::Win32::UI::Accessibility::{
+            IUIAutomationTextPattern, TextPatternRangeEndpoint_End as END, TreeScope_Descendants,
+            UIA_HasKeyboardFocusPropertyId, UIA_IsReadOnlyAttributeId, UIA_TextPatternId,
+        };
+        let expected =
+            std::env::var("AUTOFIX_EXPECTED_PROCESS").expect("set the intended process name");
+        let TargetDetection::Available(target) = detect_focused_target() else {
+            panic!("no focused target")
+        };
+        assert!(
+            target.process_name.eq_ignore_ascii_case(&expected),
+            "intended app is not foreground"
+        );
+        eprintln!(
+            "process={} eligibility={:?} field_identity={} safety_known={}",
+            target.process_name,
+            target.correction_eligibility(),
+            target.focused_element_id.is_some(),
+            target.field_safety_known
+        );
+        unsafe {
+            let initialized = CoInitializeEx(None, COINIT_MULTITHREADED);
+            assert!(accept_com_initialization(initialized));
+            struct Apartment;
+            impl Drop for Apartment {
+                fn drop(&mut self) {
+                    unsafe { CoUninitialize() };
+                }
+            }
+            let _apartment = Apartment;
+            let automation = create_automation().unwrap();
+            let element = automation.GetFocusedElement().unwrap();
+            let pattern =
+                element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId);
+            eprintln!(
+                "control={:?} provider_process={:?} native_hwnd={} text_pattern={} framework={:?} class={:?}",
+                element.CurrentControlType().ok(),
+                element.CurrentProcessId().ok(),
+                element
+                    .CurrentNativeWindowHandle()
+                    .is_ok_and(|hwnd| !hwnd.is_invalid()),
+                pattern.is_ok(),
+                element.CurrentFrameworkId().ok().map(|id| id.to_string()),
+                element.CurrentClassName().ok().map(|class| class.to_string())
+            );
+            let condition = automation
+                .CreatePropertyCondition(
+                    UIA_HasKeyboardFocusPropertyId,
+                    &windows::Win32::System::Variant::VARIANT::from(true),
+                )
+                .unwrap_or_else(|_| panic!("focus condition unavailable"));
+            if let Ok(descendants) = element.FindAll(TreeScope_Descendants, &condition) {
+                let count = descendants.Length().unwrap_or(0);
+                eprintln!("focused_descendants={count}");
+                for index in 0..count.min(16) {
+                    let Ok(child) = descendants.GetElement(index) else {
+                        continue;
+                    };
+                    eprintln!(
+                        "descendant_control={:?} text_pattern={} password={:?} verified_focus={:?}",
+                        child.CurrentControlType().ok(),
+                        child
+                            .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+                            .is_ok(),
+                        child.CurrentIsPassword().ok().map(|value| value.as_bool()),
+                        child
+                            .CurrentHasKeyboardFocus()
+                            .ok()
+                            .map(|value| value.as_bool())
+                    );
+                }
+            } else {
+                eprintln!("focused_descendant_query_unavailable");
+            }
+            if let Ok(pattern) = pattern {
+                let selections = pattern.GetSelection().unwrap();
+                eprintln!("selection_count={}", selections.Length().unwrap());
+                if selections.Length().unwrap() == 1 {
+                    let selection = selections.GetElement(0).unwrap();
+                    let writable = selection
+                        .GetAttributeValue(UIA_IsReadOnlyAttributeId)
+                        .ok()
+                        .and_then(|value| bool::try_from(&value).ok())
+                        == Some(false);
+                    let at_end = pattern.DocumentRange().ok().is_some_and(|document| {
+                        selection.CompareEndpoints(END, &document, END).ok() == Some(0)
+                    });
+                    eprintln!("writable={writable} at_document_end={at_end}");
+                }
+            }
+        }
+    }
 
     fn normal_target() -> FocusedTarget {
         FocusedTarget {

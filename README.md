@@ -55,8 +55,12 @@ when the old span is still proved before the caret. A different field or an
 unproved range re-anchors safely. Final checks use the configured engine, mode,
 language, confidence, and app rules; text after the caret is never changed.
 
-Local ML correction, suggestion acceptance, IME composition, and direct text API
-or UI Automation mutation remain planned. App-level undo restores only recorded
+Native Edit/RichEdit correction uses selected-range text APIs without the clipboard.
+Other editable UI Automation text controls can use verified selection plus Unicode
+input at the document end. Missing capabilities refuse safely. See the
+[writing-app coverage](docs/writing-app-compatibility.md) for scope and evidence.
+Local ML correction, suggestion acceptance, IME composition, and TSF mutation
+remain planned. App-level undo restores only recorded
 corrections whose exact span and caret can still be verified.
 
 Undo defaults to **Ctrl+Alt+Z**. Under **Shortcuts**, configure the hotkey and

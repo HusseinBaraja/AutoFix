@@ -1,0 +1,278 @@
+{
+  "schema_version": 2,
+  "scope": "installed_laptop",
+  "inventory_date": "2026-10-05",
+  "purpose": "Only apps observed on this laptop with sustained prose typing. Browsers cover writing fields, not search. Membership is a verification target, never runtime permission or compatibility evidence.",
+  "apps": [
+    {
+      "id": "whatsapp",
+      "name": "WhatsApp",
+      "process_aliases": [
+        "whatsapp.exe"
+      ],
+      "category": "consumer",
+      "process": "whatsapp.root.exe",
+      "surface": "Message composer",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "telegram",
+      "name": "Telegram",
+      "category": "consumer",
+      "process": "telegram.exe",
+      "surface": "Message composer",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "obsidian",
+      "name": "Obsidian",
+      "category": "consumer",
+      "process": "obsidian.exe",
+      "surface": "Plain prose note",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "onenote",
+      "name": "OneNote",
+      "category": "consumer",
+      "process": "onenote.exe",
+      "surface": "Note body",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "word",
+      "name": "Word",
+      "category": "office",
+      "process": "winword.exe",
+      "surface": "Document prose",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "outlook-classic",
+      "name": "Outlook (classic)",
+      "category": "office",
+      "process": "outlook.exe",
+      "surface": "Email body",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "microsoft-teams",
+      "name": "Microsoft Teams",
+      "category": "office",
+      "process": "ms-teams.exe",
+      "surface": "Message composer",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "notepad-plus-plus",
+      "name": "Notepad++",
+      "category": "developer",
+      "process": "notepad++.exe",
+      "surface": "Selected comment prose",
+      "policy": "code_editor",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "webstorm",
+      "name": "WebStorm",
+      "category": "developer",
+      "process": "webstorm64.exe",
+      "surface": "Selected comment prose",
+      "policy": "code_editor",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "rustrover",
+      "name": "RustRover",
+      "category": "developer",
+      "process": "rustrover64.exe",
+      "surface": "Selected comment prose",
+      "policy": "code_editor",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "zed",
+      "name": "Zed",
+      "category": "developer",
+      "process": "zed.exe",
+      "surface": "Selected comment prose",
+      "policy": "code_editor",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "antigravity",
+      "name": "Antigravity",
+      "category": "developer",
+      "process": "antigravity.exe",
+      "surface": "Selected comment prose",
+      "policy": "code_editor",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "t3-code",
+      "name": "T3 Code",
+      "process_aliases": [
+        "t3-code.exe",
+        "t3 code (alpha).exe"
+      ],
+      "name_aliases": [
+        "T3 Code (Alpha)"
+      ],
+      "category": "developer",
+      "process": "t3code.exe",
+      "surface": "Selected comment prose",
+      "policy": "code_editor",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "scite",
+      "name": "SciTE",
+      "category": "developer",
+      "process": "scite.exe",
+      "surface": "Selected comment prose",
+      "policy": "code_editor",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "github-desktop",
+      "name": "GitHub Desktop",
+      "category": "developer",
+      "process": "githubdesktop.exe",
+      "surface": "Commit message",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "whatsapp-beta",
+      "name": "WhatsApp Beta",
+      "category": "consumer",
+      "process": "whatsapp.root.exe",
+      "surface": "Message composer",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "sticky-notes",
+      "name": "Sticky Notes",
+      "category": "consumer",
+      "process": "onenote.exe",
+      "surface": "Note body",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified",
+      "name_aliases": [
+        "Sticky Notes (new)"
+      ]
+    },
+    {
+      "id": "windows-notepad",
+      "name": "Notepad",
+      "category": "consumer",
+      "process": "notepad.exe",
+      "surface": "Plain-text document",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "powerpoint",
+      "name": "PowerPoint",
+      "category": "office",
+      "process": "powerpnt.exe",
+      "surface": "Slide prose and speaker notes",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "publisher",
+      "name": "Publisher",
+      "category": "office",
+      "process": "mspub.exe",
+      "surface": "Publication prose",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "skype-business",
+      "name": "Skype for Business",
+      "category": "office",
+      "process": "lync.exe",
+      "surface": "Chat message composer",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "codex-desktop",
+      "name": "Codex desktop (registered as ChatGPT)",
+      "category": "developer",
+      "process": "codex.exe",
+      "surface": "Prompt composer",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified",
+      "name_aliases": [
+        "ChatGPT",
+        "Codex"
+      ],
+      "process_aliases": [
+        "chatgpt.exe"
+      ]
+    },
+    {
+      "id": "edge",
+      "name": "Microsoft Edge",
+      "category": "consumer",
+      "process": "msedge.exe",
+      "surface": "Web message, email and document fields; exclude search/address bar",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "chromium",
+      "name": "Chromium",
+      "category": "consumer",
+      "process": "chrome.exe",
+      "surface": "Web message, email and document fields; exclude search/address bar",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    },
+    {
+      "id": "zen",
+      "name": "Zen",
+      "category": "consumer",
+      "process": "zen.exe",
+      "surface": "Web message, email and document fields; exclude search/address bar",
+      "policy": "general",
+      "host": "desktop",
+      "status": "not_verified"
+    }
+  ]
+}
