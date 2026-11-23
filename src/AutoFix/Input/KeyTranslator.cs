@@ -53,12 +53,18 @@ internal sealed class KeyTranslator
         _down[key.Vk] = !key.Up;
     }
 
-    /// <summary>Clears stuck keys when another app may have consumed key-up events.</summary>
+    private static readonly int[] ModifierKeys =
+        [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LSHIFT, VK_RSHIFT, VK_LCONTROL, VK_RCONTROL, VK_LMENU, VK_RMENU, VK_LWIN, VK_RWIN];
+
+    /// <summary>
+    /// Clears modifiers whose key-up the hook never saw, for example after Ctrl+Alt+Del, Win+L
+    /// or a UAC prompt, where keys are released on another desktop.
+    /// </summary>
     public void Resync()
     {
-        for (int vk = 0; vk < 256; vk++)
+        foreach (int vk in ModifierKeys)
         {
-            if (_down[vk] && (GetAsyncKeyState(vk) & 0x8000) == 0) _down[vk] = false;
+            if (_down[vk] && !IsDown(vk)) _down[vk] = false;
         }
     }
 
@@ -68,6 +74,11 @@ internal sealed class KeyTranslator
         KeyStroke Make(KeyKind kind, string? text = null) => new(kind, !key.Up, text, mods, isReplay, key);
 
         if (key.Up) return Make(KeyKind.Neutral);
+        if (mods != Mods.None)
+        {
+            Resync();
+            mods = Mods;
+        }
         int vk = key.Vk;
         if (IsModifier(vk)) return Make(KeyKind.Modifier);
         if (vk == VK_PACKET)

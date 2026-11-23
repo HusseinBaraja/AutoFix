@@ -46,7 +46,7 @@ or **Spelling and grammar**.
 ## Privacy and safety
 
 - Only the text you just typed (and up to 400 earlier characters as context) is sent, and only when a fix runs.
-- Password fields are never read. Single tokens such as emails, links, and codes are never sent.
+- Password fields are never read. Single tokens such as emails, links, and codes are never sent automatically.
 - Terminals, code editors, password managers and remote desktops are off by default. Turn AutoFix
   off for any app from the tray menu or in settings.
 - AutoFix never changes text after the caret. If you click, move the caret, or switch windows, it
@@ -80,3 +80,8 @@ dotnet test .\tests\AutoFix.Tests # unit tests
 - Apps that run as administrator cannot be corrected unless AutoFix also runs as administrator.
 - Editors that change text by themselves while you type (for example, their own autocorrect) can
   make AutoFix skip a fix.
+- After a pause, AutoFix never completes the last word, because you may still be typing it.
+- When you start typing in the middle of existing text, a fix that would change the first letter of
+  the first word is skipped, because AutoFix cannot see the letters before the caret.
+- Selection fixes use the clipboard briefly; the app you copy from may still add the selection to
+  Windows clipboard history.

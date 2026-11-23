@@ -6,26 +6,35 @@ namespace AutoFix.Input;
 /// <summary>Builds <c>SendInput</c> batches. One batch is never interleaved with real user input.</summary>
 internal static class Injector
 {
-    /// <summary>Marks AutoFix's own edits so the hook can count them.</summary>
-    public static readonly UIntPtr EditMarker = 0x41464544; // "AFED"
+    private const ulong EditTag = 0x41464544; // "AFED"
     /// <summary>Marks user input that AutoFix held back and sends again.</summary>
     public static readonly UIntPtr ReplayMarker = 0x41465250; // "AFRP"
     /// <summary>Marks Ctrl+C / Ctrl+V sent for selection fixes; the hook ignores them.</summary>
     public static readonly UIntPtr CommandMarker = 0x4146434D; // "AFCM"
 
-    public static INPUT[] BuildEdit(EditPlan plan)
+    /// <summary>Marks AutoFix's own edits with an id, so the hook counts only the current edit.</summary>
+    public static UIntPtr EditMarker(uint id) => (UIntPtr)((ulong)id << 32 | EditTag);
+
+    public static bool IsEdit(UIntPtr extra, out uint id)
+    {
+        ulong value = (ulong)extra;
+        id = (uint)(value >> 32);
+        return (value & 0xFFFFFFFF) == EditTag;
+    }
+
+    public static INPUT[] BuildEdit(EditPlan plan, UIntPtr marker)
     {
         var inputs = new List<INPUT>(plan.Backspaces * 2 + plan.Insert.Length * 2);
         ushort backScan = (ushort)MapVirtualKey(VK_BACK, 0);
         for (int i = 0; i < plan.Backspaces; i++)
         {
-            inputs.Add(Key(VK_BACK, backScan, 0, EditMarker));
-            inputs.Add(Key(VK_BACK, backScan, KEYEVENTF_KEYUP, EditMarker));
+            inputs.Add(Key(VK_BACK, backScan, 0, marker));
+            inputs.Add(Key(VK_BACK, backScan, KEYEVENTF_KEYUP, marker));
         }
         foreach (char c in plan.Insert)
         {
-            inputs.Add(Key(0, c, KEYEVENTF_UNICODE, EditMarker));
-            inputs.Add(Key(0, c, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, EditMarker));
+            inputs.Add(Key(0, c, KEYEVENTF_UNICODE, marker));
+            inputs.Add(Key(0, c, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, marker));
         }
         return [.. inputs];
     }

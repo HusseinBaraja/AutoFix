@@ -42,10 +42,12 @@ static class E2E
 
         string data = Path.Combine(Path.GetTempPath(), "autofix-e2e-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(data);
+        // E2E_LIVE=1 uses DeepSeek with the key in AUTOFIX_API_KEY instead of the mock server.
+        bool live = Environment.GetEnvironmentVariable("E2E_LIVE") == "1";
         File.WriteAllText(Path.Combine(data, "settings.json"), JsonSerializer.Serialize(new
         {
             enabled = true,
-            provider = "custom",
+            provider = live ? "deepseek" : "custom",
             providers = new Dictionary<string, object> { ["custom"] = new { model = "mock", baseUrl = $"http://127.0.0.1:{port}/v1" } },
             fixOnSentenceEnd = true,
             fixOnPause = false,
@@ -57,7 +59,7 @@ static class E2E
 
         var start = new ProcessStartInfo(exe, "--background") { UseShellExecute = false };
         start.Environment["AUTOFIX_DATA_DIR"] = data;
-        start.Environment["AUTOFIX_API_KEY"] = "test-key";
+        if (!live) start.Environment["AUTOFIX_API_KEY"] = "test-key";
         using var app = Process.Start(start)!;
         Thread.Sleep(2000);
 
@@ -103,6 +105,20 @@ static class E2E
                 }
             });
 
+            if (live)
+            {
+                Run("live: enter waits for the fix", () =>
+                {
+                    Clear(_box);
+                    var watch = Stopwatch.StartNew();
+                    Type("helo, how ar you\nok");
+                    long typed = watch.ElapsedMilliseconds;
+                    Expect(() => Text(_box) == "hello, how are you\r\nok", 6000);
+                    Console.WriteLine($"    Enter released {watch.ElapsedMilliseconds - typed} ms after typing finished");
+                });
+            }
+            else
+            {
             Run("typing during the request is kept", () =>
             {
                 Clear(_box);
@@ -127,6 +143,15 @@ static class E2E
                 Clear(_box);
                 Type("helo wrld\nok");
                 Expect(() => Text(_box) == "hello world\r\nok", 3000);
+            });
+
+            Run("fast typing through an Enter hold keeps key order", () =>
+            {
+                Clear(_box);
+                _delayMs = 120;
+                Type("helo wrld\nthe next line keeps every key in order");
+                Expect(() => Text(_box) == "hello world\r\nthe next line keeps every key in order", 4000);
+                _delayMs = 300;
             });
 
             Run("selection is fixed and clipboard kept", () =>
@@ -154,6 +179,7 @@ static class E2E
                 Thread.Sleep(1500);
                 if (_requests != before) throw new Exception("a request was sent from a password field");
             });
+            }
         }
         catch (Exception ex)
         {

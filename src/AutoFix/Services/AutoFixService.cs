@@ -40,6 +40,7 @@ internal sealed class AutoFixService : IInputHost, IDisposable
     private Snapshot _snapshot;
     private InputThread? _input;
     private long _lastNetworkAt;
+    private readonly object _fieldGate = new();
     private (int FieldId, Task<bool> IsPassword) _fieldCheck = (-1, Task.FromResult(false));
     private int _selectionBusy;
     private volatile bool _tryBoxFocused;
@@ -113,18 +114,21 @@ internal sealed class AutoFixService : IInputHost, IDisposable
 
     public void Update(Action<AppSettings> change)
     {
-        bool startup;
+        bool startup, appsChanged;
         lock (_gate)
         {
             bool before = _settings.StartWithWindows;
+            var blockedBefore = _snapshot.Blocked;
             change(_settings);
             startup = before != _settings.StartWithWindows;
+            appsChanged = !blockedBefore.SetEquals(_settings.BlockedApps);
             _store.Save(_settings);
             _snapshot = BuildSnapshot(_settings, CredentialStore.Get(_settings.Provider));
             _input?.Update(EngineOptionsFor(_settings, _snapshot), KeyChord.TryParse(_settings.Hotkey));
         }
         if (startup && _manageStartup) StartupRegistration.Apply(_settings.StartWithWindows);
-        _input?.RefreshFocus();
+        // Only a changed app list can change whether the focused app may be corrected.
+        if (appsChanged) _input?.RefreshFocus();
         WarmUp();
         Changed?.Invoke();
     }
@@ -222,7 +226,8 @@ internal sealed class AutoFixService : IInputHost, IDisposable
             }
             catch (LlmException ex)
             {
-                Log.Warn($"{request.Trigger}: {ex.Kind} ({ex.Status}) {ex.Message}");
+                // Error bodies can echo the request, so the message itself is not logged.
+                Log.Warn($"{request.Trigger}: {ex.Kind} (HTTP {ex.Status})");
                 ReportError(ex, target);
                 outcome = CorrectionOutcome.Fail(ex.Message);
             }
@@ -280,14 +285,18 @@ internal sealed class AutoFixService : IInputHost, IDisposable
     public void Learn(IReadOnlyList<string> words)
     {
         if (words.Count == 0) return;
-        Update(settings =>
+        // Called from the keyboard hook: save on a worker so the hook returns at once.
+        Task.Run(() =>
         {
-            foreach (var word in words)
+            Update(settings =>
             {
-                if (!settings.Dictionary.Contains(word, StringComparer.OrdinalIgnoreCase)) settings.Dictionary.Add(word);
-            }
+                foreach (var word in words)
+                {
+                    if (!settings.Dictionary.Contains(word, StringComparer.OrdinalIgnoreCase)) settings.Dictionary.Add(word);
+                }
+            });
+            Log.Info($"Undo: kept {words.Count} word(s) in the dictionary.");
         });
-        Log.Info($"Undo: kept {words.Count} word(s) in the dictionary.");
     }
 
     // Selection -----------------------------------------------------------------------------
@@ -304,6 +313,7 @@ internal sealed class AutoFixService : IInputHost, IDisposable
             Notify("AutoFix never reads password fields.", target);
             return;
         }
+        int inputBefore = _input?.UserInputCount ?? 0;
 
         var original = ClipboardSnapshot.Capture();
         if (original is null)
@@ -349,7 +359,7 @@ internal sealed class AutoFixService : IInputHost, IDisposable
         }
         catch (LlmException ex)
         {
-            Log.Warn($"Selection: {ex.Kind} ({ex.Status}) {ex.Message}");
+            Log.Warn($"Selection: {ex.Kind} (HTTP {ex.Status})");
             _notifier.ShowWorking(false, null);
             Notify(ex.UserMessage, target);
             return;
@@ -361,16 +371,16 @@ internal sealed class AutoFixService : IInputHost, IDisposable
             Notify(result.Rejected ? "AutoFix skipped this text: the answer changed too much." : "Looks good. Nothing to fix.", target);
             return;
         }
-        if (GetForegroundWindow() != target.Window)
+        if (GetForegroundWindow() != target.Window || (_input?.UserInputCount ?? 0) != inputBefore)
         {
-            Notify("The window changed, so AutoFix did not paste the fix.", target);
+            Notify("You moved on, so AutoFix did not paste the fix.", target);
             return;
         }
 
         var current = ClipboardSnapshot.Capture();
         if (!ClipboardSnapshot.SetText(lead + result.Text + trail)) return;
         Injector.Send(Injector.BuildCtrlChord(0x56)); // Ctrl+V
-        await Task.Delay(400); // Let the app read the clipboard before restoring it.
+        await Task.Delay(600); // Let the app read the clipboard before restoring it.
         current?.Restore();
         _input?.Post(engine => engine.Reset());
 
@@ -398,7 +408,7 @@ internal sealed class AutoFixService : IInputHost, IDisposable
 
     private Task<bool> FieldCheck(int fieldId)
     {
-        lock (_gate)
+        lock (_fieldGate)
         {
             if (_fieldCheck.FieldId != fieldId) _fieldCheck = (fieldId, Task.Run(FocusInspector.IsPasswordField));
             return _fieldCheck.IsPassword;

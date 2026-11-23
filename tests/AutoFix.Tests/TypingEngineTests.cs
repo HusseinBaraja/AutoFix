@@ -397,8 +397,72 @@ public sealed class TypingEngineTests
         engine.Type(host, "teh cat. ");
         engine.Answer(host, "the cat.");
 
-        engine.Wait(host, TypingEngine.InjectTimeoutMs);
+        engine.Wait(host, 1000);
+        Assert.IsTrue(engine.IsInjecting, "timeout grows with the size of the edit");
+        engine.Wait(host, 500);
 
         Assert.IsFalse(engine.IsInjecting);
+    }
+
+    [TestMethod]
+    public void PauseNeverCompletesAnUnfinishedWord()
+    {
+        var (engine, host) = EngineDriver.Create(new EngineOptions(PauseMs: 1000));
+        engine.Type(host, "I am goin");
+        engine.Wait(host, 1000);
+
+        engine.Answer(host, "I am going");
+
+        Assert.AreEqual(0, host.Injected.Count);
+        Assert.AreEqual("I am goin", host.Screen);
+    }
+
+    [TestMethod]
+    public void PauseStillFixesOtherWords()
+    {
+        var (engine, host) = EngineDriver.Create(new EngineOptions(PauseMs: 1000));
+        engine.Type(host, "teh day is goin");
+        engine.Wait(host, 1000);
+
+        engine.Answer(host, "the day is going");
+
+        Assert.AreEqual("the day is goin", host.Screen);
+    }
+
+    [TestMethod]
+    public void FixThatCouldMergeWithTextBeforeTheCaretIsSkipped()
+    {
+        // The caret was placed after "Hello"; the engine only knows "s there".
+        var (engine, host) = EngineDriver.Create(SentenceOnly);
+        engine.Type(host, "s there. ");
+
+        engine.Answer(host, "is there.");
+
+        Assert.AreEqual(0, host.Injected.Count);
+    }
+
+    [TestMethod]
+    public void FocusChangeDuringEnterHoldDropsHeldKeys()
+    {
+        var (engine, host) = EngineDriver.Create(new EngineOptions(FixOnPause: false));
+        engine.Type(host, "helo wrld");
+        engine.Enter();
+        engine.Type(host, "x");
+
+        engine.OnFocusChanged(allowed: true);
+
+        Assert.IsFalse(engine.IsHolding);
+        Assert.AreEqual(0, host.Replayed.Count);
+    }
+
+    [TestMethod]
+    public void TimerDoesNotSpinWhileWaitingForAnAnswer()
+    {
+        var (engine, host) = EngineDriver.Create(new EngineOptions(PauseMs: 1000, FixBeforeEnter: false));
+        engine.Type(host, "One. ");
+        engine.Type(host, "two");
+        engine.Wait(host, 5000);
+
+        Assert.AreEqual(-1, host.TickDelay);
     }
 }

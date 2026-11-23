@@ -33,6 +33,8 @@ internal static class Theme
 
     private static bool SystemUsesDarkTheme()
     {
+        // For screenshots and testing: AUTOFIX_THEME=light or dark.
+        if (Environment.GetEnvironmentVariable("AUTOFIX_THEME") is { } forced) return forced == "dark";
         using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
         return key?.GetValue("AppsUseLightTheme") is int light && light == 0;
     }

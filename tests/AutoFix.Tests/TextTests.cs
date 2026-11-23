@@ -111,6 +111,21 @@ public sealed class ResponseGuardTests
         Assert.AreEqual("Hey, how are you?", ResponseGuard.Clean("hey how are you", "Hey, how are you?", true));
 
     [TestMethod]
+    public void RejectsSwappingShortWords()
+    {
+        Assert.IsNull(ResponseGuard.Clean("thx", "thanks", false));
+        Assert.IsNull(ResponseGuard.Clean("yes", "no", false));
+    }
+
+    [TestMethod]
+    public void KeepsUnfinishedLastWord()
+    {
+        Assert.AreEqual("the day is goin", ResponseGuard.KeepUnfinishedLastWord("teh day is goin", "the day is going"));
+        Assert.AreEqual("hello", ResponseGuard.KeepUnfinishedLastWord("helo", "hello"));
+        Assert.AreEqual("going.", ResponseGuard.KeepUnfinishedLastWord("goin.", "going."));
+    }
+
+    [TestMethod]
     public void EditDistanceCountsSwapsOnce()
     {
         Assert.AreEqual(1, ResponseGuard.EditDistance("teh", "the"));

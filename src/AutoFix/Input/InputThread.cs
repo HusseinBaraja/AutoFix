@@ -29,6 +29,7 @@ internal interface IInputHost
 internal sealed unsafe class InputThread : IEngineHost, IDisposable
 {
     private const uint WM_INVOKE = WM_APP + 1;
+    private const uint EventSystemDesktopSwitch = 0x0020;
 
     private readonly IInputHost _host;
     private readonly Thread _thread;
@@ -47,6 +48,12 @@ internal sealed unsafe class InputThread : IEngineHost, IDisposable
     private uint _threadId;
     private UIntPtr _timer;
     private int _expectedEditEvents;
+    private uint _editId;
+    // User input that arrives while held-back input is being replayed must wait behind it.
+    private int _replayOutstanding;
+    private long _replayStartedAt;
+    private readonly List<object> _late = [];
+    private int _userInputCount;
     private FocusTarget _focus = FocusTarget.None;
     private (IntPtr Window, int Object, int Child) _focusKey;
     private Exception? _startError;
@@ -59,6 +66,7 @@ internal sealed unsafe class InputThread : IEngineHost, IDisposable
     private IntPtr _mouseHook;
     private IntPtr _foregroundHook;
     private IntPtr _focusHook;
+    private IntPtr _desktopHook;
 
     public InputThread(IInputHost host, EngineOptions options, KeyChord? hotkey)
     {
@@ -97,6 +105,9 @@ internal sealed unsafe class InputThread : IEngineHost, IDisposable
         _engine.UpdateOptions(options);
     });
 
+    /// <summary>Counts real key presses and clicks, so slow actions can detect that the user moved on.</summary>
+    public int UserInputCount => Volatile.Read(ref _userInputCount);
+
     /// <summary>Re-reads the focused window, for example after focus moves inside AutoFix's own window.</summary>
     public void RefreshFocus() => Post(() => SetFocus(GetForegroundWindow()));
 
@@ -124,7 +135,8 @@ internal sealed unsafe class InputThread : IEngineHost, IDisposable
 
     public void Inject(EditPlan plan)
     {
-        var inputs = Injector.BuildEdit(plan);
+        uint id = ++_editId;
+        var inputs = Injector.BuildEdit(plan, Injector.EditMarker(id));
         var target = _focus.Window;
         _expectedEditEvents = inputs.Length;
         _sender.Add(() =>
@@ -133,6 +145,7 @@ internal sealed unsafe class InputThread : IEngineHost, IDisposable
             Log.Warn("Could not type the fix: the window changed or Windows refused the input.");
             Post(() =>
             {
+                if (id != _editId) return;
                 _expectedEditEvents = 0;
                 _engine.OnInjectionComplete(false);
             });
@@ -142,9 +155,18 @@ internal sealed unsafe class InputThread : IEngineHost, IDisposable
     public void Replay(IReadOnlyList<object> inputs)
     {
         var batch = Injector.BuildReplay(inputs);
+        if (batch.Length == 0) return;
+        _replayOutstanding += batch.Length;
+        _replayStartedAt = NowMs;
         _sender.Add(() =>
         {
-            if (!Injector.Send(batch)) Log.Warn("SendInput refused replayed input.");
+            if (Injector.Send(batch)) return;
+            Log.Warn("SendInput refused replayed input.");
+            Post(() =>
+            {
+                _replayOutstanding = 0;
+                FlushLate();
+            });
         });
     }
 
@@ -176,6 +198,8 @@ internal sealed unsafe class InputThread : IEngineHost, IDisposable
             _foregroundHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero,
                 _winEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
             _focusHook = SetWinEventHook(EVENT_OBJECT_FOCUS, EVENT_OBJECT_FOCUS, IntPtr.Zero,
+                _winEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+            _desktopHook = SetWinEventHook(EventSystemDesktopSwitch, EventSystemDesktopSwitch, IntPtr.Zero,
                 _winEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
             SetFocus(GetForegroundWindow());
         }
@@ -210,6 +234,7 @@ internal sealed unsafe class InputThread : IEngineHost, IDisposable
         UnhookWindowsHookEx(_mouseHook);
         UnhookWinEvent(_foregroundHook);
         UnhookWinEvent(_focusHook);
+        UnhookWinEvent(_desktopHook);
     }
 
     private static void Safe(Action action)
@@ -242,9 +267,9 @@ internal sealed unsafe class InputThread : IEngineHost, IDisposable
 
     private bool OnKeyboard(ref KBDLLHOOKSTRUCT data)
     {
-        if (data.dwExtraInfo == Injector.EditMarker)
+        if (Injector.IsEdit(data.dwExtraInfo, out uint editId))
         {
-            if (_expectedEditEvents > 0 && --_expectedEditEvents == 0) _engine.OnInjectionComplete(true);
+            if (editId == _editId && _expectedEditEvents > 0 && --_expectedEditEvents == 0) _engine.OnInjectionComplete(true);
             return false;
         }
         if (data.dwExtraInfo == Injector.CommandMarker) return false;
@@ -252,10 +277,20 @@ internal sealed unsafe class InputThread : IEngineHost, IDisposable
         bool replay = data.dwExtraInfo == Injector.ReplayMarker;
         var raw = new RawKey((ushort)data.vkCode, (ushort)data.scanCode, (data.flags & LLKHF_UP) != 0,
             (data.flags & LLKHF_EXTENDED) != 0);
+        if (replay)
+        {
+            ReplayArrived();
+        }
+        else
+        {
+            if (!raw.Up) Interlocked.Increment(ref _userInputCount);
+            if (HoldBehindReplay(raw)) return true;
+        }
 
+        if (!raw.Up) _keys.Resync();
         if (!replay && _hotkey is { } hotkey)
         {
-            if (!raw.Up && raw.Vk == hotkey.VirtualKey && _keys.Mods == hotkey.Mods)
+            if (!raw.Up && raw.Vk == hotkey.VirtualKey && _keys.Mods == hotkey.Mods && ModifiersDown(hotkey.Mods))
             {
                 _hotkeyUpToSwallow = raw.Vk;
                 _engine.OnHotkey();
@@ -268,7 +303,10 @@ internal sealed unsafe class InputThread : IEngineHost, IDisposable
             }
         }
 
-        var stroke = _keys.Translate(raw, replay, KeyboardLayout());
+        // Held keys are translated when they are replayed; translating twice would break dead keys.
+        var stroke = _engine.IsHolding || _engine.IsInjecting
+            ? new KeyStroke(KeyKind.Neutral, !raw.Up, IsReplay: replay, Raw: raw)
+            : _keys.Translate(raw, replay, KeyboardLayout());
         bool swallow = _engine.OnKey(stroke);
         if (!swallow) _keys.Update(raw);
         return swallow;
@@ -290,6 +328,15 @@ internal sealed unsafe class InputThread : IEngineHost, IDisposable
                         bool replay = info.dwExtraInfo == Injector.ReplayMarker;
                         var raw = replay ? null : new RawMouse(msg, info.pt.X, info.pt.Y, info.mouseData);
                         bool down = msg is WM_LBUTTONDOWN or WM_RBUTTONDOWN or WM_MBUTTONDOWN or WM_XBUTTONDOWN;
+                        if (replay)
+                        {
+                            ReplayArrived();
+                        }
+                        else
+                        {
+                            if (down) Interlocked.Increment(ref _userInputCount);
+                            if (HoldBehindReplay(raw!)) return 1;
+                        }
                         if (down) _keys.Resync();
                         if (_engine.OnMouseButton(raw, down)) return 1;
                     }
@@ -311,8 +358,18 @@ internal sealed unsafe class InputThread : IEngineHost, IDisposable
             {
                 SetFocus(hwnd);
             }
+            else if (eventType == EventSystemDesktopSwitch)
+            {
+                _keys.Resync();
+            }
             else if (eventType == EVENT_OBJECT_FOCUS)
             {
+                // Background apps can fire focus events too (some do so constantly); only focus
+                // changes inside the foreground app can move the caret the user is typing at.
+                IntPtr foreground = GetForegroundWindow();
+                GetWindowThreadProcessId(hwnd, out uint eventProcess);
+                GetWindowThreadProcessId(foreground, out uint foregroundProcess);
+                if (eventProcess != foregroundProcess) return;
                 var key = (hwnd, idObject, idChild);
                 if (key == _focusKey) return;
                 _focusKey = key;
@@ -325,10 +382,43 @@ internal sealed unsafe class InputThread : IEngineHost, IDisposable
         }
     }
 
+    private void ReplayArrived()
+    {
+        if (_replayOutstanding > 0 && --_replayOutstanding == 0) FlushLate();
+    }
+
+    /// <returns>True when the user event was queued behind replayed input that has not arrived yet.</returns>
+    private bool HoldBehindReplay(object raw)
+    {
+        if (_replayOutstanding == 0) return false;
+        if (NowMs - _replayStartedAt > 1000)
+        {
+            // Replayed input got lost; do not hold the user's typing any longer.
+            _replayOutstanding = 0;
+            FlushLate();
+            return false;
+        }
+        _late.Add(raw);
+        return true;
+    }
+
+    private void FlushLate()
+    {
+        if (_late.Count == 0) return;
+        var inputs = _late.ToArray();
+        _late.Clear();
+        Replay(inputs);
+    }
+
+    private static bool ModifiersDown(Mods mods) =>
+        (!mods.HasFlag(Mods.Ctrl) || IsDown(VK_CONTROL)) && (!mods.HasFlag(Mods.Alt) || IsDown(VK_MENU))
+        && (!mods.HasFlag(Mods.Shift) || IsDown(VK_SHIFT)) && (!mods.HasFlag(Mods.Win) || IsDown(VK_LWIN) || IsDown(VK_RWIN));
+
     /// <summary>Any focus change may move the caret to another field, so typed text is forgotten.</summary>
     private void SetFocus(IntPtr window)
     {
         _focus = FocusInspector.Describe(window);
+        _keys.Resync();
         _engine.OnFocusChanged(_host.OnFocusChanged(_focus));
     }
 

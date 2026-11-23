@@ -64,6 +64,8 @@ internal sealed class ClipboardSnapshot
         {
             EmptyClipboard();
             foreach (var (format, data) in _formats) Put(format, data);
+            // The user's content is already in clipboard history; do not add it a second time.
+            ExcludeFromHistory();
             return true;
         }
         finally
@@ -105,15 +107,20 @@ internal sealed class ClipboardSnapshot
             EmptyClipboard();
             byte[] chars = System.Text.Encoding.Unicode.GetBytes(text + "\0");
             Put(CF_UNICODETEXT, chars);
-            Put(RegisterClipboardFormat("ExcludeClipboardContentFromMonitorProcessing"), [0, 0, 0, 0]);
-            Put(RegisterClipboardFormat("CanIncludeInClipboardHistory"), [0, 0, 0, 0]);
-            Put(RegisterClipboardFormat("CanUploadToCloudClipboard"), [0, 0, 0, 0]);
+            ExcludeFromHistory();
             return true;
         }
         finally
         {
             CloseClipboard();
         }
+    }
+
+    private static void ExcludeFromHistory()
+    {
+        Put(RegisterClipboardFormat("ExcludeClipboardContentFromMonitorProcessing"), [0, 0, 0, 0]);
+        Put(RegisterClipboardFormat("CanIncludeInClipboardHistory"), [0, 0, 0, 0]);
+        Put(RegisterClipboardFormat("CanUploadToCloudClipboard"), [0, 0, 0, 0]);
     }
 
     private static void Put(uint format, byte[] data)

@@ -22,9 +22,31 @@ public static partial class ResponseGuard
 
         if (!grammar) text = KeepStyle(original, text);
 
-        int allowed = Math.Max(3, (int)Math.Ceiling(original.Length * (grammar ? 0.5 : 0.34)));
+        int allowed = Math.Max(2, (int)Math.Ceiling(original.Length * (grammar ? 0.5 : 0.34)));
         if (EditDistance(original, text, allowed) > allowed) return null;
         return text;
+    }
+
+    /// <summary>
+    /// Undoes a change that only extends the last word ("goin" to "going"): after a pause, that word
+    /// may be unfinished, and completing it would clash with the letters the user types next.
+    /// </summary>
+    public static string KeepUnfinishedLastWord(string original, string corrected)
+    {
+        int originalStart = LastWordStart(original);
+        int correctedStart = LastWordStart(corrected);
+        string originalWord = original[originalStart..];
+        string correctedWord = corrected[correctedStart..];
+        bool extendsOnly = originalWord.Length > 0 && correctedWord.Length > originalWord.Length
+            && correctedWord.StartsWith(originalWord, StringComparison.OrdinalIgnoreCase);
+        return extendsOnly ? corrected[..correctedStart] + originalWord : corrected;
+    }
+
+    private static int LastWordStart(string text)
+    {
+        int i = text.Length;
+        while (i > 0 && char.IsLetterOrDigit(text[i - 1])) i--;
+        return i;
     }
 
     private static string Unwrap(string text, string original)

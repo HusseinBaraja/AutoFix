@@ -18,7 +18,7 @@ public sealed class TypingEngine
 {
     internal const int MaxTargetChars = 1200;
     internal const int ContextChars = 400;
-    internal const int InjectTimeoutMs = 1500;
+    internal const int InjectTimeoutMs = 1000;
     internal const int DeferRetryMs = 40;
     internal const int DeferMaxMs = 1500;
     internal const int WorkingNoticeDelayMs = 250;
@@ -38,6 +38,7 @@ public sealed class TypingEngine
     private LastFix? _lastFix;
     private bool _injecting;
     private long _injectStartedAt;
+    private long _injectTimeoutMs;
     private bool _holding;
     private long _holdStartedAt;
     private int _holdTriggers;
@@ -46,7 +47,7 @@ public sealed class TypingEngine
     private long _lastTextAt;
     private int _typingStartedEpoch = -1;
 
-    private sealed record Pending(int Id, int Epoch, int Start, string Original, string Lead, string Trail)
+    private sealed record Pending(int Id, int Epoch, int Start, string Original, string Lead, string Trail, CorrectionTrigger Trigger)
     {
         public int End => Start + Original.Length;
     }
@@ -142,8 +143,10 @@ public sealed class TypingEngine
         _focusAllowed = allowed;
         if (_holding)
         {
-            if (_injecting) return;
-            ReleaseHold();
+            // Another window took focus during an Enter hold. Sending the held keys there
+            // could submit something the user never meant for that window.
+            _queue.Clear();
+            if (!_injecting) ReleaseHold();
         }
     }
 
@@ -198,7 +201,7 @@ public sealed class TypingEngine
     public void OnTick()
     {
         long now = Now;
-        if (_injecting && now - _injectStartedAt >= InjectTimeoutMs)
+        if (_injecting && now - _injectStartedAt >= _injectTimeoutMs)
         {
             OnInjectionComplete(false);
         }
@@ -310,7 +313,7 @@ public sealed class TypingEngine
         string lead = original[..original.IndexOf(core, StringComparison.Ordinal)];
         string trail = original[(lead.Length + core.Length)..];
 
-        _inFlight = new Pending(++_nextId, _epoch, start, original, lead, trail);
+        _inFlight = new Pending(++_nextId, _epoch, start, original, lead, trail, trigger);
         _host.StartCorrection(new CorrectionRequest(_inFlight.Id, core, ContextBefore(start), trigger, _epoch));
     }
 
@@ -321,6 +324,10 @@ public sealed class TypingEngine
 
         // The user kept typing the same word; this answer is for a word that no longer exists.
         if (suffix.Length > 0 && IsWordChar(request.Original[^1]) && IsWordChar(suffix[0])) return;
+
+        // A pause can come in the middle of a word; never complete it ("goin" -> "going").
+        if (request.Trigger == CorrectionTrigger.Pause)
+            correctedCore = ResponseGuard.KeepUnfinishedLastWord(request.Original.Trim(), correctedCore);
 
         string corrected = request.Lead + correctedCore + request.Trail;
         if (corrected == request.Original)
@@ -333,6 +340,14 @@ public sealed class TypingEngine
         {
             // Backspaces would become Ctrl+Backspace; wait for the keys to be released.
             _deferred = new Deferred(request, correctedCore, _deferred?.Deadline ?? Now + DeferMaxMs);
+            return;
+        }
+
+        // The text before the caret is unknown, so the first typed word may be the end of a longer
+        // word ("Hello|" + "s there"). A fix that changes its first letter could merge words.
+        if (request.Start == 0 && IsWordChar(request.Original[0]) && !SameFirstLetter(request.Original, corrected))
+        {
+            _checkedUpTo = Math.Max(_checkedUpTo, request.End);
             return;
         }
 
@@ -375,6 +390,8 @@ public sealed class TypingEngine
     {
         _injecting = true;
         _injectStartedAt = Now;
+        // Windows needs about 1 ms per injected event; allow for slow machines.
+        _injectTimeoutMs = InjectTimeoutMs + 4L * 2 * (plan.Backspaces + plan.Insert.Length);
         _host.Inject(plan);
     }
 
@@ -451,14 +468,15 @@ public sealed class TypingEngine
     {
         long now = Now;
         long next = long.MaxValue;
-        if (_injecting) next = Math.Min(next, _injectStartedAt + InjectTimeoutMs);
+        if (_injecting) next = Math.Min(next, _injectStartedAt + _injectTimeoutMs);
         if (_deferred is not null) next = Math.Min(next, now + DeferRetryMs);
         if (_holding)
         {
             if (!_workingShown) next = Math.Min(next, _holdStartedAt + WorkingNoticeDelayMs);
             next = Math.Min(next, _holdStartedAt + _options.EnterHoldMaxMs);
         }
-        if (_pauseArmed && _options.FixOnPause) next = Math.Min(next, _lastTextAt + _options.PauseMs);
+        // While busy, AfterResult checks the pause; a past deadline here would spin the timer.
+        if (_pauseArmed && _options.FixOnPause && Idle) next = Math.Min(next, _lastTextAt + _options.PauseMs);
         _host.RequestTick(next == long.MaxValue ? -1 : (int)Math.Clamp(next - now, 1, int.MaxValue));
     }
 
@@ -526,6 +544,9 @@ public sealed class TypingEngine
         _checkedUpTo = Math.Max(0, _checkedUpTo - cut);
         _lastFix = null;
     }
+
+    private static bool SameFirstLetter(string a, string b) =>
+        b.Length > 0 && char.ToLowerInvariant(a[0]) == char.ToLowerInvariant(b[0]);
 
     internal static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c is '\'' or '’' or '-' or '_';
 }
