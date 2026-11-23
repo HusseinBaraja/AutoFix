@@ -2,34 +2,32 @@
 
 ## AutoFix invariants
 
-AutoFix is a native Windows text-correction app. Preserve these boundaries in
-runtime changes: use only text typed in the current session; keep read-only
-informative context separate from editable executable context; never change
-text after the caret; block password and secure fields; preserve the clipboard
-and app-level undo.
+AutoFix is a native Windows AI autocorrect (.NET 8, WPF). Preserve these rules in runtime changes:
 
-Use `README.md` and the relevant component documentation to distinguish
-implemented behavior from planned capabilities.
+- Use only text typed in the current field since the last caret move or focus change. Never read the document.
+- Send earlier text only as read-only context; edit only the target text.
+- Never change text after the caret. Drop any answer whose text changed while it was in flight.
+- Never read or send password fields; skip blocked and elevated apps.
+- Keep the clipboard intact (selection fixes restore it) and keep Backspace-undo working.
+- Hook callbacks on the input thread must stay fast: no network, UI Automation, disk, or UI work there.
+- Never lose or reorder user input: keys pressed during an edit or an Enter hold are replayed in order.
+
+See `README.md` for behavior and limits.
 
 ## Code organization
 
-For Rust module placement or refactoring, use
-`.agents/skills/vertical-codebase/SKILL.md`. Keep feature behavior and its tests
-together, and expose narrow interfaces between features.
+- `src/AutoFix.Core`: platform-free logic with unit tests. Prefer putting decisions here.
+- `src/AutoFix`: thin Windows adapters (hooks, SendInput, UI Automation, clipboard, UI).
+- Keep the app small. Add settings only when users need the choice.
 
 Use `.agents/skills/caveman/SKILL.md` in lite mode for responses.
 
 ## Verification
 
-For code changes, add or update focused tests when they protect the changed
-behavior. Run the affected tests and builds, fix failures caused by the change,
-and rerun them. Address warnings and errors at their source; do not hide them.
-For runtime behavior changes, run the app and inspect the affected flow when
-feasible. Report any check that could not be completed and why.
-Documentation-only changes need no app build or launch.
-
-Useful entry points: `cargo test`, `dotnet test .\AutoFix.sln`,
-`dotnet build .\AutoFix.sln`, and `.\scripts\run-app.ps1`.
+Add or update focused tests for changed behavior. Run `dotnet test .\tests\AutoFix.Tests` and
+`dotnet build .\AutoFix.sln` (warnings are errors). For input, injection, focus or UI changes, run
+`.\scripts\test-e2e.ps1` (it takes keyboard focus) and inspect screenshots for visual changes.
+Report any check that could not be completed and why.
 
 ## Git
 

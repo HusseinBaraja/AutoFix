@@ -1,209 +1,82 @@
 # AutoFix
 
-AutoFix is a native Windows typo-correction app for text fields. It is designed to run quietly from the system tray, correct only the text the user typed in the current session, and avoid changing text after the caret.
+AI autocorrect for every app on Windows. Paste an API key, then type normally:
+AutoFix fixes your typos in place, in any text box, as fast as your AI provider answers.
 
-Implemented capabilities include:
+```
+You type:     i hav a problm wiht teh code. |
+A moment later: i have a problem with the code. |     ✓ hav → have · problm wiht teh → problem with the
+```
 
-- Configurable shortcut, word-count, and character triggers.
-- Local rule and API-backed correction engines.
-- Typos-only and typos-plus-grammar modes.
-- Custom dictionaries, app rules, blocklists, and allowlists.
-- App-level undo and secure-field blocking.
+## Get started
 
-**Word-count correction** is optional and defaults to every 10 completed words.
-Under **Triggers**, enable or disable it and configure the threshold. A word is
-completed by whitespace; an unfinished word does not trigger correction. Only
-the current executable context counts. At the threshold, AutoFix freezes that
-segment and runs correction on its worker while new typing starts a fresh
-executable context. App rules and secure-field blocks apply before execution
-and again before replacement. Completion requires the same session and control,
-an exact live pre-caret range, and no input conflict during validation or mutation.
-New typing and text after the caret are preserved.
+1. Run `AutoFix.exe`. The settings window opens.
+2. Choose a provider (DeepSeek is the default), paste your API key, and click **Save and test**.
+   Pasting a key tests it right away. Keys that start with `sk-ant-`, `gsk_`, `AIza` or `sk-or-`
+   select their provider automatically.
+3. Type in the **Try it** box, or in any app. AutoFix runs in the tray.
 
-High-confidence results apply silently by default. Medium confidence follows
-the saved policy; automatic suggestion behavior currently skips because suggestion
-acceptance is planned. Low confidence never applies. A verified no-change or
-confidence-suppressed word-count result commits the original as informative
-context and clears its pending segment without an undo entry. Changed segments
-record app-level undo. Failed, timed-out, stale or unsafe work returns to executable
-context for a later trigger. Logs contain metadata only.
+Supported providers: DeepSeek, OpenAI, Anthropic Claude, Google Gemini, Groq, OpenRouter,
+Mistral, Ollama (local, no key), and any other OpenAI-compatible server.
 
-**Character correction** is optional and defaults to `.`. Under **Triggers**,
-configure the character list (for example `.`, `?`, `!`, or `。`). Configured
-sequences can span keystrokes. Typing a configured boundary at the end of the
-active executable context freezes that completed segment for asynchronous
-correction; subsequent typing starts a new executable context. Earlier skipped
-boundaries remain in the active segment so unchecked text is preserved.
+## When AutoFix fixes text
 
-Character results use the same conservative live validation, app rules, security
-blocks and confidence settings as word-count results. High confidence applies
-silently by default; medium confidence follows settings and low confidence never
-applies. A verified no-change or confidence skip commits the original. Corrected
-or unchanged text becomes informative context, which shrinks to its configured
-budget without editing the document. Failed or unsafe results stay executable.
-New typing and text after the caret remain untouched; changed text supports
-app-level undo, and logs contain metadata only.
+| When | What happens |
+| --- | --- |
+| You finish a sentence (`.` `!` `?` then a space) | That sentence is fixed while you keep typing. |
+| You pause typing (default 1 s) | Text typed so far is fixed. Good for chat. |
+| You press Enter | Enter waits for the fix (at most 3 s), so messages are sent corrected. Shift+Enter is never held. |
+| You press **Ctrl+Alt+Space** | Fixes the selected text, or what you just typed. |
 
-Caret uncertainty waits for typing to resume. Backward movement within known
-typing keeps the context. Forward movement of up to
-`context.forward_movement_word_limit` words (default **5**) retains that context
-and adds skipped text as read-only information. Corrections target each typed
-span separately and preserve the skipped text. Longer moves run a final check
-on eligible old typing, then continue with a fresh segment at the new caret.
-Moving away from pending work cancels its old result and permits one final check
-when the old span is still proved before the caret. A different field or an
-unproved range re-anchors safely. Final checks use the configured engine, mode,
-language, confidence, and app rules; text after the caret is never changed.
+**Undo:** press Backspace right after a fix. The original text comes back, and its words go to
+**Words to keep** so AutoFix leaves them alone next time.
 
-Local ML correction, suggestion acceptance, IME composition, and direct text API
-or UI Automation mutation remain planned. App-level undo restores only recorded
-corrections whose exact span and caret can still be verified.
+Modes: **Spelling only** (default; keeps your grammar, slang, capitalization and punctuation)
+or **Spelling and grammar**.
 
-Undo defaults to **Ctrl+Alt+Z**. Under **Shortcuts**, configure the hotkey and
-**Undo history entries** (default 10, range 1–1000). Each session keeps its own
-history in memory and deletes it with the session. Repeated undo restores the
-latest recorded correction first, preserving newly typed text and text after
-the caret. Restored originals become informative context; only new typing stays
-executable. AutoFix replaces the verified corrected span directly instead of
-sending the target application's Ctrl+Z.
+## How it is fast
 
-**Dictionary** settings edit words and phrases that AutoFix must never correct,
-plus specific pairs such as `teh` → `the` that must never be applied. Entries live
-in `%LOCALAPPDATA%\AutoFix\autofix.sqlite`, with a language tag and optional app
-process scope. `und` protects all languages; an empty app scope applies everywhere.
+- AutoFix watches the keys you type, so it knows the text before the caret without reading the app.
+- A fix is typed directly: AutoFix deletes back only to the first changed character and retypes the rest.
+  No clipboard, no polling, and no extra round trip.
+- Keys you press while a fix is typed are held for a few milliseconds and replayed in order, so nothing is lost.
+- The HTTPS connection to the provider stays open, and the password-field check starts when you
+  begin typing. A fix costs one API round trip plus about 1 ms per typed key event.
 
-**Languages** defaults to automatic detection. Set a global preferred BCP 47
-language tag, optional app overrides, and policies for uncertain or mixed text.
-App overrides take priority. **Engines** configures local/API routing, provider,
-custom endpoint, model, timeouts and local fallback. Manage provider keys through
-the masked Windows Credential Manager editor; keys are excluded from config
-exports. **Logs / Debug** displays the latest 500 metadata events and can clear
-metadata and debug logs. Full-text debug requires an explicit privacy warning,
-including through config import; redacted debug remains available separately.
+## Privacy and safety
 
-Learning defaults to **Off — undo only**. App-level undo only restores the
-correction unless you choose **Ask after undo** or **Automatically learn**.
-Ask shows “Don't correct this again?” after a successful undo; only Yes saves an
-exclusion. Choose whether to protect the original word/phrase or only the rejected
-pair, and whether learning applies just to that app. Existing exclusions stay
-active when learning is off. Native Ctrl+Z and suggestion rejection are not tracked;
-use AutoFix's undo shortcut to reject an applied correction.
+- Only the text you just typed (and up to 400 earlier characters as context) is sent, and only when a fix runs.
+- Password fields are never read. Single tokens such as emails, links, and codes are never sent.
+- Terminals, code editors, password managers and remote desktops are off by default. Turn AutoFix
+  off for any app from the tray menu or in settings.
+- AutoFix never changes text after the caret. If you click, move the caret, or switch windows, it
+  forgets what you typed, and late answers are dropped.
+- Answers that change too much (for example, the model answered a question instead of fixing it) are ignored.
+- API keys are stored in Windows Credential Manager. Settings are in
+  `%LOCALAPPDATA%\AutoFix\settings.json`. The log (`autofix.log`, same folder) holds timings and errors, never text.
 
-Native clipboard replacement preserves all readable formats and restores them
-before reporting success. Disable it under **Privacy & Security > Use clipboard for
-correction** or set `replacement.clipboard_enabled = false` in settings TOML.
-See [the engine documentation](app-core-rust/README.md) for runtime boundaries.
+## Build from source
 
-**Feedback** keeps AutoFix quiet by default. The tray always stays available,
-with idle, active, correcting, blocked and error states. Successful automatic
-corrections show no popup. Manual failures, blocked actions and manual API
-timeouts use a small notice that never takes focus. Repeated notices coalesce
-and disappear after 2.5 seconds, new typing or a focus change. Secure fields do
-not receive correction notices.
-
-You can enable correction-applied notices, skipped reasons, and read-only manual
-medium-confidence suggestion previews. Suggestions never apply edits; acceptance
-remains planned. Blocked-action and timeout notices can be disabled independently.
-Optional near-caret placement uses the Windows native caret when available,
-otherwise the notice appears in the current monitor's work-area corner. Turning
-off tray state keeps the tray icon and its settings/Exit menu available. Existing
-saved preferences are preserved; new feedback options default to off.
-
-When safer methods are unavailable or clipboard correction is disabled, SendInput
-can replace a verified pre-caret span in supported Unicode Edit controls. Unknown
-controls, unsafe selections and security refusals skip correction and log only
-failure metadata.
-
-**App Rules** adds layered terminal/editor safety. New terminal and editor rules
-disable manual, word-count and character triggers. Enable **Manual** explicitly;
-editors also require **Editor prose**. **Safety** defaults to automatic detection,
-or can classify a custom app as `terminal` or `code_editor`. Known apps cannot be
-downgraded by choosing `auto`.
-
-Manual requests in these apps require selected prose. Heuristics reject commands,
-flags, paths, URLs, identifiers, code and uncertain fragments before either engine
-runs. Editor automatic correction requires explicit trigger and prose opt-ins,
-and a whole segment of recognizable line-comment prose. Terminal automatic
-requests still skip because the shell context cannot be proven safe.
-Existing permissions survive migration; the new editor prose permission starts
-off. Selected correction requires both UI Automation and the native caret to
-prove the selection ends at the caret. Manual-only rules do not enable
-continuous typed-input capture.
-
-The manual correction shortcut (default **Ctrl+Alt+Space**) checks security,
-app rules, selection ownership and session validity before sending read-only
-informative context and editable executable context to the selected engine.
-Confidence policy controls whether the result applies, previews or skips.
-Successful replacement changes only the proved executable span before the caret,
-moves the corrected text into informative context, clears executable context,
-records app-level undo and writes metadata without document text.
-
-Selected text must belong to the current typed segment unless **Correct arbitrary
-selection** is enabled under **Privacy & Security**. Even with that option, backward
-selections and selections without reliable caret proof skip correction. Text after
-the caret stays untouched. Unchanged or suppressed selections retain their context
-and selection; suggestion acceptance remains planned.
-
-## Run App
-
-The settings search bar finds names, descriptions, choices and config paths
-across every page, including Privacy & Security and nested Context limits.
-Use Ctrl+F, then try `word count threshold`, `timeout` or `cancel oldest`.
-Matching settings are filtered and highlighted. Clear search or press Escape in
-the search box to browse again. Keys, typed text and saved dictionary contents
-are excluded from the search index.
-
-**Advanced → Settings import/export** exports a ZIP containing `settings.toml`,
-app rules, the custom dictionary and language overrides. Learned pair rules are
-optional and excluded by default. Import validates a ZIP bundle or legacy TOML
-file, previews the replacements, and applies only after confirmation. Successful
-imports reload the background process. Bundles exclude API keys, logs, typed
-session data and correction-history text; keys remain in Windows Credential
-Manager on the current device.
-
-Interrupted imports recover automatically before settings are loaded: SQLite
-durably records whether to restore the old settings or finish the committed
-import. Correction remains blocked while recovery is pending. Settings and rule
-data therefore resume from the same committed import, even if the settings file
-did not survive shutdown. See [the settings documentation](ui/settings-ui/README.md)
-for the recovery protocol and failure reporting.
-
-From the repository root, build and run AutoFix:
+Requires the .NET 8 SDK on Windows 10 or 11.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-app.ps1
+.\scripts\run.ps1                 # build and start
+dotnet test .\tests\AutoFix.Tests # unit tests
+.\scripts\test-e2e.ps1            # end-to-end: real app, mock AI server, real key events (takes focus ~20 s)
+.\scripts\publish.ps1             # dist\AutoFix.exe, one self-contained file
 ```
 
-`Autofix.exe` owns the Windows tray icon and supervises the background engine.
-The same executable hosts every normal runtime role so Windows can group the
-processes together:
+## Project layout
 
-```powershell
-.\ui\settings-ui\bin\Debug\net8.0-windows\Autofix.exe
-.\ui\settings-ui\bin\Debug\net8.0-windows\Autofix.exe --engine
-```
+- `src/AutoFix.Core` — platform-free logic: the typing engine (state machine), edit planning, prompt,
+  provider clients, response checks, settings. Fully unit tested.
+- `src/AutoFix` — the Windows app: keyboard and mouse hooks on a dedicated input thread, `SendInput`
+  edits, password and caret detection, clipboard-safe selection fixes, tray, settings window.
+- `tests/AutoFix.Tests` — unit tests. `tests/AutoFix.E2E` — end-to-end harness.
 
-The Rust engine is loaded through `autofix_core.dll`. AutoFix keeps running until
-you choose `Exit` from the tray menu.
+## Limits
 
-The app creates its settings file at:
-
-```text
-%LOCALAPPDATA%\AutoFix\settings.toml
-```
-
-## Repository Structure
-
-- `app-core-rust/` - Rust background engine and shared core logic.
-- `ui/settings-ui/` - WPF settings application.
-- `shared-schema/` - Shared config schemas, IPC contracts, and documentation.
-- `installer/` - Installer scripts and packaging assets later.
-- `docs/` - Architecture and design notes.
-
-## Rust testing
-
-Use `#[cfg(test)]` for test modules, unit tests placed next to the code, and helper functions or mock types that exist only for tests. Do not use it for integration tests in the `tests/` directory, normal production logic, public APIs, or alternate implementations that make code behave differently in tests than it does in real builds.
-
-## When you are unsure
-
-use context7 to get the official documentation and check official internet sources if you need them.
+- Text entered with an IME (Chinese, Japanese, Korean) is not tracked.
+- Apps that run as administrator cannot be corrected unless AutoFix also runs as administrator.
+- Editors that change text by themselves while you type (for example, their own autocorrect) can
+  make AutoFix skip a fix.
