@@ -8,24 +8,6 @@ permissions:
   contents: read
 
 jobs:
-  rust:
-    name: Rust checks
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - name: Install Rust tools
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup default stable
-      - name: Check Rust formatting
-        run: cargo fmt --all -- --check
-      - name: Lint Rust targets
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - name: Test Rust workspace
-        run: cargo test --workspace --all-features --locked
-
   windows:
     name: Windows build and tests
     runs-on: windows-latest
@@ -33,16 +15,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - name: Install Rust toolchain
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '8.0.x'
-      - name: Restore .NET packages
+      - name: Restore
         run: dotnet restore .\AutoFix.sln
-      - name: Build WPF app and Rust DLL
+      - name: Build
         run: dotnet build .\AutoFix.sln --configuration Release --no-restore
-      - name: Test .NET solution
-        run: dotnet test .\AutoFix.sln --configuration Release --no-build
+      - name: Unit tests
+        run: dotnet test .\tests\AutoFix.Tests\AutoFix.Tests.csproj --configuration Release --no-build
+      - name: Publish single-file app
+        run: .\scripts\publish.ps1
+        shell: pwsh

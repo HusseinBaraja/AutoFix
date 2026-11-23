@@ -1,0 +1,220 @@
+<Window x:Class="AutoFix.UI.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AutoFix" Width="600" Height="820" MinWidth="480" MinHeight="420"
+        WindowStartupLocation="CenterScreen" Background="{DynamicResource WindowBrush}"
+        FontFamily="{StaticResource UiFont}" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
+
+    <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" Focusable="False">
+        <StackPanel Margin="28,24,28,20">
+
+            <!-- Header -->
+            <Grid Margin="0,0,0,20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Image Source="pack://application:,,,/Assets/autofix-logo-64.png" Width="40" Height="40" Margin="0,0,14,0"
+                       RenderOptions.BitmapScalingMode="HighQuality" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="AutoFix" Style="{StaticResource Title}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                        <Ellipse x:Name="StatusDot" Width="8" Height="8" Margin="0,0,7,0" VerticalAlignment="Center" />
+                        <TextBlock x:Name="StatusText" Style="{StaticResource Caption}" />
+                    </StackPanel>
+                </StackPanel>
+                <CheckBox x:Name="EnabledSwitch" Grid.Column="2" Style="{StaticResource Switch}" VerticalAlignment="Center"
+                          AutomationProperties.Name="AutoFix on or off" Content="On" Click="OnEnabledClick" />
+            </Grid>
+
+            <!-- Provider -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Text="Connect your AI" Style="{StaticResource SectionTitle}" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,16"
+                               Text="Paste an API key and AutoFix is ready. Fixes take only as long as your provider needs to answer." />
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="14" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Provider" Style="{StaticResource FieldLabel}" />
+                            <ComboBox x:Name="ProviderBox" DisplayMemberPath="Name" SelectionChanged="OnProviderChanged"
+                                      AutomationProperties.Name="Provider" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Model" Style="{StaticResource FieldLabel}" />
+                            <ComboBox x:Name="ModelBox" IsEditable="True" AutomationProperties.Name="Model"
+                                      LostKeyboardFocus="OnModelCommitted" SelectionChanged="OnModelSelected" />
+                        </StackPanel>
+                    </Grid>
+
+                    <StackPanel x:Name="BaseUrlPanel" Margin="0,14,0,0" Visibility="Collapsed">
+                        <TextBlock Text="Server address" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="BaseUrlBox" Tag="https://example.com/v1" AutomationProperties.Name="Server address"
+                                 LostKeyboardFocus="OnBaseUrlCommitted" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="KeyPanel" Margin="0,14,0,0">
+                        <Grid Margin="0,0,0,6">
+                            <TextBlock Text="API key" Style="{StaticResource FieldLabel}" Margin="0" />
+                            <Button x:Name="GetKeyLink" Style="{StaticResource LinkButton}" HorizontalAlignment="Right"
+                                    Content="Get a key" Click="OnGetKey" />
+                        </Grid>
+                        <PasswordBox x:Name="KeyBox" AutomationProperties.Name="API key" PasswordChanged="OnKeyChanged" />
+                        <TextBlock x:Name="KeyHint" Style="{StaticResource Caption}" Margin="0,6,0,0"
+                                   Text="Stored securely in Windows Credential Manager. Never written to disk in plain text." />
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                        <Button x:Name="TestButton" Style="{StaticResource PrimaryButton}" Content="Save and test" Click="OnTest" />
+                        <TextBlock x:Name="TestResult" VerticalAlignment="Center" Margin="14,0,0,0" FontSize="13" TextWrapping="Wrap"
+                                   MaxWidth="360" AutomationProperties.LiveSetting="Polite" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Try it -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Text="Try it" Style="{StaticResource SectionTitle}" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,12"
+                               Text="Type a sentence with mistakes and end it with a period and a space. Press Backspace right after a fix to undo it." />
+                    <TextBox x:Name="TryBox" Height="76" TextWrapping="Wrap" AcceptsReturn="True" VerticalContentAlignment="Top"
+                             Tag="i hav a problm wiht teh code. " AutomationProperties.Name="Try AutoFix here"
+                             GotKeyboardFocus="OnTryFocus" LostKeyboardFocus="OnTryBlur" />
+                </StackPanel>
+            </Border>
+
+            <!-- Behavior -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Text="How AutoFix works" Style="{StaticResource SectionTitle}" />
+
+                    <TextBlock Text="Fix" Style="{StaticResource FieldLabel}" Margin="0,10,0,6" />
+                    <Border Background="{DynamicResource SegmentTrackBrush}" CornerRadius="8" Padding="3" HorizontalAlignment="Left">
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="SpellingMode" Style="{StaticResource Segment}" GroupName="Mode"
+                                         Content="Spelling only" Click="OnModeClick" />
+                            <RadioButton x:Name="GrammarMode" Style="{StaticResource Segment}" GroupName="Mode"
+                                         Content="Spelling and grammar" Click="OnModeClick" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Divider}" />
+                    <CheckBox x:Name="SentenceSwitch" Style="{StaticResource Switch}" Click="OnBehaviorClick">
+                        <StackPanel>
+                            <TextBlock Text="When I finish a sentence" Style="{StaticResource Body}" />
+                            <TextBlock Text="After . ! or ? and a space" Style="{StaticResource Caption}" />
+                        </StackPanel>
+                    </CheckBox>
+
+                    <Border Style="{StaticResource Divider}" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <CheckBox x:Name="PauseSwitch" Grid.ColumnSpan="2" Style="{StaticResource Switch}" Click="OnBehaviorClick">
+                            <StackPanel>
+                                <TextBlock Text="When I pause typing" Style="{StaticResource Body}" />
+                                <TextBlock Text="Good for chat messages without punctuation" Style="{StaticResource Caption}" />
+                            </StackPanel>
+                        </CheckBox>
+                    </Grid>
+                    <StackPanel x:Name="PausePanel" Orientation="Horizontal" Margin="0,8,0,0">
+                        <TextBlock Text="Pause length" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <ComboBox x:Name="PauseBox" Width="110" SelectionChanged="OnPauseChanged" AutomationProperties.Name="Pause length" />
+                    </StackPanel>
+
+                    <Border Style="{StaticResource Divider}" />
+                    <CheckBox x:Name="EnterSwitch" Style="{StaticResource Switch}" Click="OnBehaviorClick">
+                        <StackPanel>
+                            <TextBlock Text="Before I press Enter" Style="{StaticResource Body}" />
+                            <TextBlock Text="Enter waits for the fix (at most 3 seconds), so messages are sent corrected"
+                                       Style="{StaticResource Caption}" />
+                        </StackPanel>
+                    </CheckBox>
+
+                    <Border Style="{StaticResource Divider}" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,16,0">
+                            <TextBlock Text="Shortcut" Style="{StaticResource Body}" />
+                            <TextBlock Text="Fixes the selected text, or what you just typed. Click the box and press new keys to change it."
+                                       Style="{StaticResource Caption}" />
+                        </StackPanel>
+                        <TextBox x:Name="HotkeyBox" Grid.Column="1" Width="160" IsReadOnly="True" IsReadOnlyCaretVisible="False"
+                                 VerticalAlignment="Center" HorizontalContentAlignment="Center" AutomationProperties.Name="Shortcut"
+                                 PreviewKeyDown="OnHotkeyKeyDown" GotKeyboardFocus="OnHotkeyFocus" LostKeyboardFocus="OnHotkeyBlur" />
+                    </Grid>
+
+                    <Border Style="{StaticResource Divider}" />
+                    <CheckBox x:Name="PopupSwitch" Style="{StaticResource Switch}" Click="OnBehaviorClick">
+                        <StackPanel>
+                            <TextBlock Text="Show what changed" Style="{StaticResource Body}" />
+                            <TextBlock Text="A small note near the text after each fix" Style="{StaticResource Caption}" />
+                        </StackPanel>
+                    </CheckBox>
+                </StackPanel>
+            </Border>
+
+            <!-- Apps -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Text="Apps where AutoFix stays off" Style="{StaticResource SectionTitle}" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,12"
+                               Text="Terminals, code editors and password managers are off by default. You can also turn AutoFix off for an app from the tray icon." />
+                    <WrapPanel x:Name="AppChips" />
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <ComboBox x:Name="AddAppBox" Width="240" IsEditable="True" AutomationProperties.Name="App to turn off"
+                                  DropDownOpened="OnAddAppOpened" KeyDown="OnAddAppKey" />
+                        <Button Style="{StaticResource SecondaryButton}" Content="Add" Margin="8,0,0,0" Click="OnAddApp" />
+                        <Button Style="{StaticResource LinkButton}" Content="Reset to defaults" Margin="14,0,0,0"
+                                VerticalAlignment="Center" Click="OnResetApps" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Dictionary -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Text="Words to keep" Style="{StaticResource SectionTitle}" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,12"
+                               Text="AutoFix never changes these words. When you undo a fix, the original words are added here." />
+                    <WrapPanel x:Name="WordChips" />
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBox x:Name="WordBox" Width="240" Tag="Name, slang or brand" AutomationProperties.Name="Word to keep"
+                                 KeyDown="OnWordKey" />
+                        <Button Style="{StaticResource SecondaryButton}" Content="Add" Margin="8,0,0,0" Click="OnAddWord" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- General -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <CheckBox x:Name="StartupSwitch" Style="{StaticResource Switch}" Click="OnBehaviorClick">
+                        <TextBlock Text="Start AutoFix when I sign in to Windows" Style="{StaticResource Body}" />
+                    </CheckBox>
+                    <Border Style="{StaticResource Divider}" />
+                    <TextBlock Text="Privacy" Style="{StaticResource Body}" FontWeight="SemiBold" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0"
+                               Text="AutoFix sends only the text you just typed (plus a few earlier sentences for context) to the provider you chose, and only when a fix runs. Password fields and the apps above are never read. Nothing you type is saved." />
+                </StackPanel>
+            </Border>
+
+            <Grid Margin="2,0,2,0">
+                <TextBlock x:Name="VersionText" Style="{StaticResource Caption}" />
+                <Button Style="{StaticResource LinkButton}" Content="Open log folder" HorizontalAlignment="Right" Click="OnOpenLogs" />
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</Window>
